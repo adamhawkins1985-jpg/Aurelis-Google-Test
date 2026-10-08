@@ -130,6 +130,13 @@ jobs:
               assert not state["executionReady"] and not state["permissions"]["sign"]
               assert not state["permissions"]["transfer"]
               print("PASS wallet provider:", provider)
-          print("STAGING_API_READY: pluggable wallet interface; public discovery; synthetic scan")
+          for bot in ("hunter", "trade_radar", "signal_desk", "live_bet", "arbitrage", "grid", "dca"):
+              with urlopen(base + "/paper-prepare?bot=" + bot + "&venue=hyperliquid&asset=BTC&side=long&notional=25", timeout=3) as response:
+                  proposal = json.load(response)
+              assert proposal["bot"] == bot and proposal["type"] == "review_only"
+              assert not proposal["executionReady"] and not proposal["orderSubmitted"]
+              assert not proposal["signingAllowed"] and not proposal["transferAllowed"]
+              print("PASS paper prepare:", bot)
+          print("STAGING_API_READY: shared paper proposals; pluggable wallet interface; public discovery")
           PY
           REMOTE
