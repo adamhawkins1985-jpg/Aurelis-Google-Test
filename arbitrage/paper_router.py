@@ -25,7 +25,7 @@ def _money(value):
 def prepare(bot, venue, asset, side, notional_usd):
     if bot not in BOT_IDS:
         raise ValueError("unknown_bot")
-    if not isinstance(venue, str) or venue not in {"hyperliquid", "dydx", "lighter", "paradex"}:
+    if not isinstance(venue, str) or venue not in {"hyperliquid", "dydx", "lighter", "paradex", "extended"}:
         raise ValueError("unsupported_venue")
     if not isinstance(asset, str) or not (2 <= len(asset) <= 20) or not all(c.isalnum() or c in "-_" for c in asset) or asset != asset.upper():
         raise ValueError("invalid_asset")
