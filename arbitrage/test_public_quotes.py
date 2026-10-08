@@ -24,6 +24,10 @@ class PublicQuoteTests(unittest.TestCase):
                                          "status": "active", "market_id": 1}]}
             if "paradex" in url:
                 return {"market": "BTC-USD-PERP", "bids": [["98", "2"]], "asks": [["103", "2"]]}
+            if "extended.exchange" in url:
+                if url.endswith("/info/markets"):
+                    return {"status": "OK", "data": [{"name": "BTC-USD", "type": "PERPETUAL", "status": "ACTIVE"}]}
+                return {"status": "OK", "data": {"market": "BTC-USD", "bid": [{"price": "96", "qty": "3"}], "ask": [{"price": "105", "qty": "2"}]}}
             return {"bids": [{"price": "99", "size": "1"}],
                     "asks": [{"price": "102", "size": "1"}]}
         with patch.object(public_quotes, "_json", side_effect=fixture):
@@ -35,13 +39,15 @@ class PublicQuoteTests(unittest.TestCase):
         self.assertEqual(result["quotes"]["lighter"]["bid"], 97)
         self.assertEqual(result["quotes"]["lighter"]["asks"], [[104.0, 3.0]])
         self.assertEqual(result["quotes"]["paradex"]["bid"], 98)
+        self.assertEqual(result["quotes"]["extended"]["bid"], 96)
+        self.assertEqual(result["quotes"]["extended"]["asks"], [[105.0, 2.0]])
         self.assertEqual(result["quotes"]["paradex"]["asks"], [[103.0, 2.0]])
         self.assertTrue(all(not x["executionReady"] for x in result["quotes"].values()))
 
     def test_venues_start_in_parallel(self):
         entered = set()
         lock = threading.Lock()
-        barrier = threading.Barrier(4, timeout=2)
+        barrier = threading.Barrier(5, timeout=2)
 
         def parallel_fetch(url, data=None):
             if "hyperliquid" in url:
@@ -50,6 +56,8 @@ class PublicQuoteTests(unittest.TestCase):
                 name = "dydx"
             elif "paradex" in url:
                 name = "paradex"
+            elif "extended.exchange" in url:
+                name = "extended"
             else:
                 name = "lighter"
             with lock:
@@ -59,7 +67,7 @@ class PublicQuoteTests(unittest.TestCase):
 
         with patch.object(public_quotes, "_json", side_effect=parallel_fetch):
             result = public_quotes.public_quotes("BTC")
-        self.assertEqual(entered, {"hyperliquid", "dydx", "paradex", "lighter"})
+        self.assertEqual(entered, {"hyperliquid", "dydx", "paradex", "lighter", "extended"})
         self.assertTrue(all(not quote["executionReady"]
                             for quote in result["quotes"].values()))
 
@@ -70,6 +78,7 @@ class PublicQuoteTests(unittest.TestCase):
         self.assertIsNone(result["quotes"]["dydx"]["ask"])
         self.assertIsNone(result["quotes"]["paradex"]["ask"])
         self.assertIsNone(result["quotes"]["lighter"]["ask"])
+        self.assertIsNone(result["quotes"]["extended"]["ask"])
         self.assertFalse(result["executionReady"])
 
     def test_reject_unknown_asset(self):
