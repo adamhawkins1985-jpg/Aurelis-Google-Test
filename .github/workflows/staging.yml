@@ -65,4 +65,47 @@ jobs:
           # Only user-owned staging directory. Never touch /opt/aurelis.
           $SSH "aurelisdeploy@$HOST" "set -eu; umask 077; mkdir -p 'aurelis-staging/releases/$RELEASE'"
           cat "$RUNNER_TEMP/aurelis-paper-staging.tgz" | $SSH "aurelisdeploy@$HOST" "set -eu; tar -xzf - -C 'aurelis-staging/releases/$RELEASE'"
-          $SSH "aurelisdeploy@$HOST" "set -eu; (cd 'aurelis-staging/releases/$RELEASE' && python3 -m unittest discover -s arbitrage -p 'test_*.py' -v); ln -sfn 'releases/$RELEASE' 'aurelis-staging/current.next'; mv -Tf 'aurelis-staging/current.next' 'aurelis-staging/current'; echo STAGING_SOURCE_READY"
+          $SSH "aurelisdeploy@$HOST" bash -se -- "$RELEASE" <<'REMOTE'
+          set -eu
+          release="$1"
+          root="$HOME/aurelis-staging"
+          (cd "$root/releases/$release" && python3 -m unittest discover -s arbitrage -p 'test_*.py' -v)
+          ln -sfn "releases/$release" "$root/current.next"
+          mv -Tf "$root/current.next" "$root/current"
+          # Restart only the service owned by the restricted deploy account.
+          if test -f "$root/staging-api.pid"; then
+            previous="$(cat "$root/staging-api.pid")"
+            case "$previous" in *[!0-9]*|'') previous=0;; esac
+            if test "$previous" -gt 1 && test -r "/proc/$previous/cmdline" && tr '\\0' ' ' < "/proc/$previous/cmdline" | grep -Fq 'arbitrage/staging_api.py'; then
+              kill "$previous" || true
+            fi
+          fi
+          mkdir -p "$root/logs"
+          nohup python3 "$root/current/arbitrage/staging_api.py" --port 8895 </dev/null >"$root/logs/staging-api.log" 2>&1 &
+          echo "$!" > "$root/staging-api.pid"
+          python3 - <<'PY'
+          import json
+          import time
+          from urllib.request import urlopen
+          base = "http://127.0.0.1:8895"
+          for _ in range(30):
+              try:
+                  with urlopen(base + "/health", timeout=2) as response:
+                      health = json.load(response)
+                  break
+              except Exception:
+                  time.sleep(0.5)
+          else:
+              raise SystemExit("Staging health check timed out")
+          assert health["ok"] and health["paperMode"] and not health["liveTradingEnabled"]
+          assert health["dataSource"] == "synthetic"
+          for endpoint in ("/scan?target=25", "/dex-scan?target=25", "/status", "/treasury"):
+              with urlopen(base + endpoint, timeout=3) as response:
+                  data = json.load(response)
+              assert data.get("mode") == "paper"
+              if endpoint.startswith(("/scan", "/dex-scan")):
+                  assert data["dataSource"] == "synthetic" and data["opportunities"] == []
+              print("PASS", endpoint)
+          print("STAGING_API_READY: loopback 127.0.0.1:8895; synthetic only")
+          PY
+          REMOTE
