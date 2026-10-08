@@ -1,0 +1,61 @@
+name: AURELIS Python CI
+on:
+  push:
+    paths:
+      - 'arbitrage/**'
+      - '.github/workflows/python-ci.yml'
+  pull_request:
+    paths:
+      - 'arbitrage/**'
+      - '.github/workflows/python-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check Python syntax without running exchange code
+        run: |
+          python3 - <<'PY'
+          import ast
+          from pathlib import Path
+          files = sorted(Path('arbitrage').glob('*.py'))
+          if not files:
+              raise SystemExit('No arbitrage Python files found')
+          for path in files:
+              ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+              print('PASS', path)
+          PY
+      - name: Test paper calculations without imports or network\n        run: python3 -m unittest discover -s arbitrage -p 'test_*.py' -v\n      - name: Reject runtime files and obvious embedded credentials
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import re
+          import subprocess
+          paths = subprocess.check_output(['git', 'ls-files', '-z', 'arbitrage']).decode().split('\0')
+          forbidden = ('.env', '.pem', '.key', '.sqlite', '.db')
+          bad = []
+          for filename in filter(None, paths):
+              path = pathlib.PurePosixPath(filename)
+              if any(part in ('.venv', 'node_modules', '__pycache__') for part in path.parts) or path.name == '.env' or path.name.startswith('.env.') or path.suffix in forbidden:
+                  bad.append(f'Forbidden committed file: {filename}')
+                  continue
+              if path.suffix == '.py':
+                  data = pathlib.Path(filename).read_text(encoding='utf-8')
+                  for label, pattern in {
+                      'PEM private key': r'-----BEGIN [A-Z ]*PRIVATE KEY-----',
+                      'AWS key': r'AKIA[0-9A-Z]{16}',
+                      'common live secret': r'sk_live_[A-Za-z0-9]+',
+                  }.items():
+                      if re.search(pattern, data):
+                          bad.append(f'{label}: {filename}')
+          if bad:
+              print('\n'.join(bad))
+              raise SystemExit(1)
+          print('Basic repository hygiene checks passed; not a comprehensive secrets audit.')
+          PY
