@@ -19,11 +19,11 @@ class SpreadTests(unittest.TestCase):
         self.assertIsNone(positive["estimatedNetSpreadPct"])
         self.assertFalse(positive["tradeReady"])
 
-    def test_verified_costs_deducted(self):
+    def test_untrusted_cost_flags_cannot_certify_profit(self):
         result = compare("ETH", 25, {"hyperliquid": book(99, 100, fees=True), "dydx": book(103, 104, fees=True)}, now=100)
         positive = next(x for x in result["candidates"] if x["buyVenue"] == "hyperliquid")
-        self.assertTrue(positive["costsVerified"])
-        self.assertLess(positive["estimatedNetSpreadPct"], positive["grossSpreadPct"])
+        self.assertFalse(positive["costsVerified"])
+        self.assertIsNone(positive["estimatedNetSpreadPct"])
         self.assertFalse(positive["orderSubmitted"])
 
     def test_stale_or_insufficient_depth_excluded(self):
