@@ -12,6 +12,7 @@ from quote_assessment import assess
 from spread_comparison import compare
 from funding_observations import observed_funding
 from book_validation import validate_book
+from dex_route_selector import select_paper_route
 from onekey_session import staging_status
 
 HOST = "127.0.0.1"
@@ -26,6 +27,17 @@ def payload(path, query):
             return 200, observed_funding(asset)
         except ValueError:
             return 400, {"ok": False, "error": "invalid_asset"}
+    if path == "/paper-dex-route":
+        bot = query.get("bot", ["hunter"])[0]
+        asset = query.get("asset", ["BTC"])[0]
+        side = query.get("side", ["long"])[0]
+        notional = query.get("notional", ["25"])[0]
+        try:
+            prepare(bot, "hyperliquid", asset, side, notional)
+            quotes = public_quotes(asset)["quotes"]
+            return 200, select_paper_route(bot, asset, side, notional, quotes)
+        except ValueError:
+            return 400, {"ok": False, "error": "invalid_dex_route"}
     if path == "/paper-spreads":
         asset = query.get("asset", ["BTC"])[0].upper()
         notional = query.get("notional", ["25"])[0]
@@ -48,7 +60,7 @@ def payload(path, query):
         notional = query.get("notional", ["25"])[0]
         try:
             draft = prepare(bot, venue, asset, side, notional)
-            if venue not in ("hyperliquid", "dydx", "paradex", "lighter"):
+            if venue not in ("hyperliquid", "dydx", "paradex", "lighter", "extended"):
                 return 200, assess(bot, venue, asset, side, notional)
             quote = public_quotes(asset)["quotes"].get(venue, {})
             checked = validate_book(venue, asset, quote, quote.get("receivedAt"))
