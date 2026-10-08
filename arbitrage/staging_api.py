@@ -11,6 +11,7 @@ from paper_router import prepare
 from quote_assessment import assess
 from spread_comparison import compare
 from funding_observations import observed_funding
+from book_validation import validate_book
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8895
@@ -32,8 +33,12 @@ def payload(path, query):
             snapshots = public_quotes(asset)["quotes"]
             # Stamp ingestion time, not exchange time. This is not a verified exchange timestamp.
             received = time.time()
-            return 200, compare(asset, notional,
-                {venue: dict(book, receivedAt=received) for venue, book in snapshots.items()})
+            accepted = {}
+            for venue, book in snapshots.items():
+                checked = validate_book(venue, asset, book, received)
+                if checked["quoteUsable"]:
+                    accepted[venue] = checked
+            return 200, compare(asset, notional, accepted)
         except ValueError:
             return 400, {"ok": False, "error": "invalid_comparison"}
     if path == "/paper-quote-review":
@@ -47,8 +52,9 @@ def payload(path, query):
             if venue not in ("hyperliquid", "dydx"):
                 return 200, assess(bot, venue, asset, side, notional)
             quote = public_quotes(asset)["quotes"].get(venue, {})
-            snapshot = dict(quote, venue=venue, asset=asset, receivedAt=time.time())
-            return 200, assess(bot, venue, asset, side, notional, snapshot)
+            checked = validate_book(venue, asset, quote, time.time())
+            return 200, assess(bot, venue, asset, side, notional,
+                               checked if checked["quoteUsable"] else None)
         except ValueError:
             return 400, {"ok": False, "error": "invalid_trade_proposal"}
     if path == "/paper-prepare":
