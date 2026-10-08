@@ -3,9 +3,10 @@
 No wallet access, API keys, private endpoints or order submission.
 """
 import json
+import re
 from urllib.request import Request, urlopen
 
-ASSETS = ("BTC", "ETH", "SOL")
+ASSETS = ("BTC", "ETH", "SOL")  # Initial smoke-test assets; dynamic symbols also accepted.
 
 
 def _json(url, data=None):
@@ -33,8 +34,8 @@ def _top(levels, price_field="price", size_field="size"):
 
 
 def public_quotes(asset):
-    if asset not in ASSETS:
-        raise ValueError("Unsupported asset")
+    if not isinstance(asset, str) or not re.fullmatch(r"[A-Z0-9_-]{2,20}", asset):
+        raise ValueError("Invalid asset symbol")
     sources = {}
     try:
         book = _json("https://api.hyperliquid.xyz/info", {"type": "l2Book", "coin": asset})
