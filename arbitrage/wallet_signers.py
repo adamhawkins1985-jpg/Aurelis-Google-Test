@@ -40,7 +40,13 @@ class OneKeyProvider:
             return PublicWalletState(provider=self.name)
         try:
             data = self._status_reader()
-            authenticated = data.get("authStatus") == "authenticated" and bool(data.get("authenticated"))
+            address = data.get("displayAddress")
+            # Require explicit session confirmation and a valid public EVM address.
+            authenticated = (data.get("authStatus") == "authenticated"
+                             and data.get("authenticated") is True
+                             and isinstance(address, str)
+                             and len(address) == 42 and address.startswith("0x")
+                             and all(ch in "0123456789abcdefABCDEF" for ch in address[2:]))
             return PublicWalletState(
                 provider=self.name,
                 authenticated=authenticated,
