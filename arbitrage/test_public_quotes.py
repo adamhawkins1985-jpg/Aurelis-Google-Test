@@ -33,7 +33,7 @@ class PublicQuoteTests(unittest.TestCase):
 
     def test_reject_unknown_asset(self):
         with self.assertRaises(ValueError):
-            public_quotes.public_quotes("DOGE")
+            public_quotes.public_quotes("../../etc/passwd")
 
 
 if __name__ == "__main__":
