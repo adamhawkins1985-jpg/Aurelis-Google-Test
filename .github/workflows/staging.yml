@@ -1,29 +1,68 @@
-name: AURELIS staging preflight
+name: AURELIS Python staging deployment
+
 on:
+  workflow_run:
+    workflows: ["AURELIS Python CI"]
+    types: [completed]
   workflow_dispatch:
+
 permissions:
   contents: read
+
+concurrency:
+  group: aurelis-python-staging
+  cancel-in-progress: false
+
 jobs:
-  staging-preflight:
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
+  deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v4
-      - name: Verify staging source exists
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
+      - name: Validate paper source and isolated tests
         run: |
-          test -f arbitrage/Cargo.toml || { echo 'Staging blocked: source not imported'; exit 1; }
-          test -f arbitrage/Cargo.lock || { echo 'Staging blocked: lockfile missing'; exit 1; }
-      - name: Check remote staging directory access (no changes)
+          set -eu
+          test -f arbitrage/app.py
+          test -f arbitrage/test_paper_calculations.py
+          python3 -m unittest discover -s arbitrage -p 'test_*.py' -v
+          python3 - <<'PY'
+          import ast
+          from pathlib import Path
+          for path in Path('arbitrage').glob('*.py'):
+              ast.parse(path.read_text(), filename=str(path))
+          PY
+      - name: Bundle source only, no runtime files or credentials
+        run: |
+          set -eu
+          tar -czf "$RUNNER_TEMP/aurelis-paper-staging.tgz" arbitrage/*.py
+          tar -tzf "$RUNNER_TEMP/aurelis-paper-staging.tgz"
+      - name: Deploy isolated release to restricted VPS user
         env:
           HOST: ${{ secrets.VPS_HOST }}
           KEY: ${{ secrets.VPS_SSH_KEY }}
           KNOWN: ${{ secrets.VPS_KNOWN_HOSTS }}
+          RELEASE: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           set -eu
+          test -n "$HOST" && test -n "$KEY" && test -n "$KNOWN"
           umask 077
           mkdir -p "$HOME/.ssh"
           trap 'rm -f "$HOME/.ssh/aurelis_deploy" "$HOME/.ssh/known_hosts"' EXIT
           python3 -c 'import os,pathlib; pathlib.Path.home().joinpath(".ssh/aurelis_deploy").write_text(os.environ["KEY"].replace(chr(92)+"n",chr(10)).rstrip()+chr(10))'
+          unset KEY
           ssh-keygen -y -P '' -f "$HOME/.ssh/aurelis_deploy" >/dev/null
           printf '%s\n' "$KNOWN" > "$HOME/.ssh/known_hosts"
-          ssh -i "$HOME/.ssh/aurelis_deploy" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 -- "aurelisdeploy@$HOST" 'whoami; test -d /opt/aurelis-staging && test -w /opt/aurelis-staging && echo STAGING_READY'
+          case "$RELEASE" in *[!0-9a-f]*|'') echo "Invalid release SHA"; exit 1;; esac
+          SSH="ssh -i $HOME/.ssh/aurelis_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10"
+          # Only user-owned staging directory. Never touch /opt/aurelis.
+          $SSH "aurelisdeploy@$HOST" "set -eu; umask 077; mkdir -p '\$HOME/aurelis-staging/releases/$RELEASE'"
+          cat "$RUNNER_TEMP/aurelis-paper-staging.tgz" | $SSH "aurelisdeploy@$HOST" "set -eu; tar -xzf - -C '\$HOME/aurelis-staging/releases/$RELEASE'"
+          $SSH "aurelisdeploy@$HOST" "set -eu; cd '\$HOME/aurelis-staging/releases/$RELEASE'; python3 -m unittest discover -s arbitrage -p 'test_*.py' -v; ln -sfn 'releases/$RELEASE' '\$HOME/aurelis-staging/current.next'; mv -Tf '\$HOME/aurelis-staging/current.next' '\$HOME/aurelis-staging/current'; echo STAGING_SOURCE_READY"
