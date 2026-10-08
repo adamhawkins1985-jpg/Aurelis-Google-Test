@@ -480,17 +480,32 @@ export const AiScreen: React.FC<AiScreenProps> = ({
         </button>
       </div>
 
-      <section className="mb-3 rounded-xl border border-white/10 bg-surface-panel/50 p-3" aria-label="AURELIS central bot trade manager">
+      <section className="mb-3 rounded-xl border border-white/10 bg-surface-panel/50 p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h3 className="text-[12px] font-headline font-bold text-text-primary">Central Bot Trade Manager</h3>
-            <p className="text-[10px] text-text-muted">OneKey Agent Money · all seven strategies · read-only venue monitoring</p>
-          </div>
-          <span className="rounded-md border border-amber-400/30 px-2 py-1 text-[10px] font-mono text-amber-300">LIVE EXECUTION LOCKED</span>
+          <h3 className="text-xs font-bold text-text-primary">Central Bot Trade Manager</h3>
+          <span className="text-[10px] text-amber-300">LIVE EXECUTION LOCKED</span>
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <div className="rounded-lg border border-white/5 bg-surface-base/50 p-2"><p className="text-[9px] text-text-muted">Bot Wallet</p><p className="text-xs font-bold text-text-primary">{botWalletAddress?'Connected':'Disconnected'}</p></div>
-          <div className="rounded-lg border border-white/5 bg-surface-base/50 p-2"><p className="text-[9px] text-text-muted">Hyperliquid perps value</p><p className="text-xs font-bold text-text-primary">{venueAccount?.perpsAccountValueUsd==null?'Not verified':'
+        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="rounded-md border border-white/10 p-2 text-xs">Bot Wallet: {botWalletAddress?'Connected':'Disconnected'}</div>
+          <div className="rounded-md border border-white/10 p-2 text-xs">Hyperliquid value: {venueAccount?.perpsAccountValueUsd??'Not verified'}</div>
+          <div className="rounded-md border border-white/10 p-2 text-xs">Open positions: {venueAccount?.openPerpPositions??'Not verified'}</div>
+          <div className="rounded-md border border-white/10 p-2 text-xs">Other venue P/L: Not connected</div>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button type="button" disabled={venueLoading} onClick={()=>void readBotAddress().then(loadVenueAccount)} className="rounded-md border border-white/10 px-2 py-1 text-xs">Refresh exchange</button>
+          <span className="text-[10px] text-text-muted">Hyperliquid Mainnet · {venueCheckedAt||'Not checked'}</span>
+          {venueError&&<span className="text-[10px] text-red-400">{venueError}</span>}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-text-primary">Funding preference:</span>
+          <button type="button" onClick={()=>selectFundingPolicy('manual')} className="rounded border border-white/10 px-2 py-1 text-xs">Manual {fundingPolicy==='manual'?'✓':''}</button>
+          <button type="button" onClick={()=>selectFundingPolicy('review')} className="rounded border border-white/10 px-2 py-1 text-xs">Review before funding {fundingPolicy==='review'?'✓':''}</button>
+          <button type="button" disabled className="rounded border border-white/10 px-2 py-1 text-xs opacity-40">Stop all live orders</button>
+          <button type="button" disabled className="rounded border border-white/10 px-2 py-1 text-xs opacity-40">Emergency exit</button>
+        </div>
+        <p className="mt-2 text-[10px] text-text-muted">Monitoring only. No automatic swaps, transfers, profit sweeps, order cancellation or emergency closes are active. Preferences do not authorize transactions.</p>
+      </section>
+
       {/* ========================================================================= */}
       {isBotExpanded && typeof document !== 'undefined' && document.getElementById('hudWidget')
         ? createPortal(botPanel, document.getElementById('hudWidget')!)
