@@ -123,6 +123,13 @@ jobs:
               assert not wallet["authenticated"] and not wallet["executionReady"]
               assert not wallet["permissions"]["sign"] and not wallet["permissions"]["transfer"]
               print("PASS agent wallet:", bot)
-          print("STAGING_API_READY: read-only wallet boundary; public discovery; synthetic scan")
+          for provider in ("onekey", "safe", "offline"):
+              with urlopen(base + "/agent-wallet?bot=arbitrage&provider=" + provider, timeout=3) as response:
+                  state = json.load(response)
+              assert state["provider"] == provider
+              assert not state["executionReady"] and not state["permissions"]["sign"]
+              assert not state["permissions"]["transfer"]
+              print("PASS wallet provider:", provider)
+          print("STAGING_API_READY: pluggable wallet interface; public discovery; synthetic scan")
           PY
           REMOTE
