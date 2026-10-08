@@ -153,10 +153,10 @@ export const WalletScreen: React.FC<WalletScreenProps> = ({
           if (!active) return;
         }
 
-        // OneKey sessions must resolve to the pinned Agent Money account.
-        // Never silently use another OneKey account or wallet.
-        if (walletConnectBrand.id === 'onekey' && approved.address.toLowerCase() !== '0xd2919c82e5fecbb0c4be7a7c37bfc066579f233e') {
-          throw new Error('OneKey connected to a different account. Select Agent Money in OneKey and retry.');
+        // Agent Money is reserved for the dedicated Bot WalletConnect session.
+        // Main Wallet can connect other OneKey accounts or supported wallets.
+        if (approved.address.toLowerCase() === '0xd2919c82e5fecbb0c4be7a7c37bfc066579f233e') {
+          throw new Error('Agent Money is reserved for Bots. Select another account in Main Wallet.');
         }
 
         // Mark the wallet connected immediately after WalletConnect approval.
