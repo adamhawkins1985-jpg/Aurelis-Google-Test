@@ -23,13 +23,28 @@ class WalletBoundaryTests(unittest.TestCase):
 
     def test_no_secrets_returned(self):
         status = wallet_status("arbitrage", lambda: {
-            "authenticated": True, "displayAddress": "0xpublic",
+            "authenticated": True, "authStatus": "authenticated", "displayAddress": "0xpublic",
             "walletKind": "hd", "hasSecrets": True,
             "privateKey": "never", "mnemonic": "never", "token": "never"
         })
         self.assertEqual(status["address"], "0xpublic")
         self.assertFalse(set(status) & {"privateKey", "mnemonic", "token", "hasSecrets"})
         self.assertFalse(status["executionReady"])
+
+    def test_alternative_provider_remains_offline(self):
+        for provider in ("safe", "offline"):
+            state = wallet_status("arbitrage", provider=provider)
+            self.assertEqual(state["provider"], provider)
+            self.assertFalse(state["authenticated"])
+            self.assertFalse(state["executionReady"])
+            self.assertFalse(authorize("arbitrage", "sign"))
+        with self.assertRaises(ValueError):
+            wallet_status("arbitrage", provider="untrusted")
+
+    def test_onekey_provider_rejects_inconsistent_session(self):
+        status = wallet_status("hunter", lambda: {"authenticated": True, "authStatus": "pending", "displayAddress": "0xpublic"})
+        self.assertFalse(status["authenticated"])
+        self.assertIsNone(status["address"])
 
     def test_unknown_bot_denied(self):
         self.assertFalse(authorize("unknown", "read"))
