@@ -214,10 +214,8 @@ export default function App() {
         })
         .catch(() => {
           const savedExternal = getSavedExternalWalletAddress();
-          if (savedExternal) {
-            setWalletAddress(savedExternal);
-            setIsWalletConnected(true);
-          }
+          setWalletAddress(savedExternal);
+          setIsWalletConnected(Boolean(savedExternal));
         });
     };
     const refreshWalletHoldings = () => {
@@ -239,7 +237,7 @@ export default function App() {
             }))
           );
         })
-        .catch(() => {});
+        .catch(() => setWalletHoldings([]));
     };
     const onWalletAuthenticated = () => {
       refreshWalletAddresses();
@@ -528,7 +526,7 @@ export default function App() {
   // Wallet & Trade Handlers
   const handleConnectWallet = (address?: string, provider?: string) => {
     const addr = address || walletAddress;
-    if (!addr) return;
+    if (!addr || isBotOnlyAddress(addr)) return;
     setIsWalletConnected(true);
     setWalletAddress(addr);
     try {
