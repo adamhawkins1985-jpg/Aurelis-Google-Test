@@ -1,6 +1,7 @@
 """Read-only cross-venue paper spread review with explicit cost uncertainty."""
 import math
 import time
+from decimal import Decimal
 from quote_assessment import assess
 
 
@@ -35,7 +36,7 @@ def compare(asset, notional_usd, quotes, now=None):
             net = None
             if costs_verified:
                 costs = buy["estimatedCosts"]["estimatedTotalCostsUsd"] + sell["estimatedCosts"]["estimatedTotalCostsUsd"]
-                net = gross - costs / float(notional_usd) * 100
+                net = gross - costs / float(Decimal(str(notional_usd))) * 100
             candidates.append({
                 "asset": asset, "buyVenue": buy_venue, "sellVenue": sell_venue,
                 "buyVwapUsd": round(a, 8), "sellVwapUsd": round(b, 8),
