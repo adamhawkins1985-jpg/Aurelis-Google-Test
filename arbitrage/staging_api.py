@@ -1,18 +1,35 @@
 """Isolated staging HTTP API. Synthetic fixtures only; no wallets, credentials or orders."""
 import argparse
 import json
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
 from public_quotes import public_quotes
 from market_discovery import discover
 from agent_wallet_service import wallet_status
 from paper_router import prepare
+from quote_assessment import assess
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8895
 
 
 def payload(path, query):
+    if path == "/paper-quote-review":
+        bot = query.get("bot", ["arbitrage"])[0]
+        venue = query.get("venue", ["hyperliquid"])[0]
+        asset = query.get("asset", ["BTC"])[0]
+        side = query.get("side", ["long"])[0]
+        notional = query.get("notional", ["25"])[0]
+        try:
+            draft = prepare(bot, venue, asset, side, notional)
+            if venue not in ("hyperliquid", "dydx"):
+                return 200, assess(bot, venue, asset, side, notional)
+            quote = public_quotes(asset)["quotes"].get(venue, {})
+            snapshot = dict(quote, venue=venue, asset=asset, receivedAt=time.time())
+            return 200, assess(bot, venue, asset, side, notional, snapshot)
+        except ValueError:
+            return 400, {"ok": False, "error": "invalid_trade_proposal"}
     if path == "/paper-prepare":
         try:
             return 200, prepare(
