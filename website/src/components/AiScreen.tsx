@@ -23,6 +23,7 @@ import { CoinData, Timeframe, NavigationTab } from '../types';
 import { playHudSound, formatCurrency } from '../services/marketData';
 import { getBotWalletConnectSession } from '../services/walletConnectService';
 import { DEX_VENUES, canUseLiveOrders, canUseAutomatedFunding } from '../services/dexVenueRegistry';
+import { fetchHyperliquidObservation } from '../services/hyperliquidReadOnlyAdapter';
 
 // Bot Views
 import { TradeRadarView } from './trade/TradeRadarView';
@@ -116,10 +117,13 @@ export const AiScreen: React.FC<AiScreenProps> = ({
     if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {setVenueAccount(null);setVenueError('Connect Bot Wallet to check Hyperliquid.');return;}
     setVenueLoading(true);setVenueError('');
     try {
-      const response=await fetch('/api/bots/hyperliquid-account?'+new URLSearchParams({wallet:address}),{cache:'no-store'});
-      const result=await response.json();
-      if (!response.ok || result?.ok===false) throw Error(result?.error||'Venue account unavailable');
-      setVenueAccount(result);setVenueCheckedAt(new Date().toLocaleTimeString());
+      const snapshot=await fetchHyperliquidObservation(address);
+      setVenueAccount({
+        perpsAccountValueUsd:snapshot.accountValueUsd ?? null,
+        openPerpPositions:snapshot.openPositionCount ?? null,
+        verifiedFields:snapshot.verifiedFields ?? [],
+      });
+      setVenueCheckedAt(new Date(snapshot.checkedAt).toLocaleTimeString());
     }catch(e:any){setVenueError(e?.message||'Venue account unavailable');setVenueAccount(null);}
     finally{setVenueLoading(false);}
   };
