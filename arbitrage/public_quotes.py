@@ -5,6 +5,7 @@ No wallet access, API keys, private endpoints or order submission.
 import json
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from urllib.request import Request, urlopen
 
 ASSETS = ("BTC", "ETH", "SOL")  # Initial smoke-test assets; dynamic symbols also accepted.
@@ -48,9 +49,7 @@ def _levels(rows, price_field="price", size_field="size"):
     return out
 
 
-def public_quotes(asset):
-    if not isinstance(asset, str) or not re.fullmatch(r"[A-Z0-9_-]{2,20}", asset):
-        raise ValueError("Invalid asset symbol")
+def _fetch_hyperliquid(asset):
     sources = {}
     try:
         book = _json("https://api.hyperliquid.xyz/info", {"type": "l2Book", "coin": asset})
@@ -65,6 +64,11 @@ def public_quotes(asset):
     except Exception as error:
         sources["hyperliquid"] = {"bid": None, "ask": None, "error": type(error).__name__,
                                    "executionReady": False}
+    return sources["hyperliquid"]
+
+
+def _fetch_dydx(asset):
+    sources = {}
     try:
         book = _json(f"https://indexer.dydx.trade/v4/orderbooks/perpetualMarket/{asset}-USD")
         fetched_at = time.time()
@@ -74,6 +78,11 @@ def public_quotes(asset):
     except Exception as error:
         sources["dydx"] = {"bid": None, "ask": None, "error": type(error).__name__,
                             "executionReady": False}
+    return sources["dydx"]
+
+
+def _fetch_paradex(asset):
+    sources = {}
     try:
         # Paradex public orderbook uses BTC-USD-PERP-style symbols.
         market = f"{asset}-USD-PERP"
@@ -88,6 +97,11 @@ def public_quotes(asset):
     except Exception as error:
         sources["paradex"] = {"bid": None, "ask": None,
                               "error": type(error).__name__, "executionReady": False}
+    return sources["paradex"]
+
+
+def _fetch_lighter(asset):
+    sources = {}
     try:
         # Lighter markets are keyed by numeric market_id, not ticker symbols.
         catalog = _json("https://mainnet.zklighter.elliot.ai/api/v1/orderBooks")
@@ -114,5 +128,28 @@ def public_quotes(asset):
     except Exception as error:
         sources["lighter"] = {"bid": None, "ask": None,
                               "error": type(error).__name__, "executionReady": False}
+    return sources["lighter"]
+
+
+def public_quotes(asset):
+    if not isinstance(asset, str) or not re.fullmatch(r"[A-Z0-9_-]{2,20}", asset):
+        raise ValueError("Invalid asset symbol")
+    workers = {
+        "hyperliquid": _fetch_hyperliquid,
+        "dydx": _fetch_dydx,
+        "paradex": _fetch_paradex,
+        "lighter": _fetch_lighter,
+    }
+    # Each call has its own network timeout; wait for all to finish, never reuse
+    # a prior snapshot or claim a failed venue is available.
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {name: executor.submit(fn, asset) for name, fn in workers.items()}
+        sources = {}
+        for name, future in futures.items():
+            try:
+                sources[name] = future.result()
+            except Exception as error:
+                sources[name] = {"bid": None, "ask": None,
+                                 "error": type(error).__name__, "executionReady": False}
     return {"mode": "paper", "asset": asset, "dataSource": "public_read_only",
             "executionReady": False, "quotes": sources}
