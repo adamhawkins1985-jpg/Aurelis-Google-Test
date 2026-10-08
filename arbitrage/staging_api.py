@@ -5,12 +5,19 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
 from public_quotes import public_quotes
 from market_discovery import discover
+from agent_wallet_service import wallet_status
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8895
 
 
 def payload(path, query):
+    if path == "/agent-wallet":
+        bot = query.get("bot", ["arbitrage"])[0]
+        try:
+            return 200, wallet_status(bot)
+        except ValueError:
+            return 400, {"ok": False, "error": "unknown_bot"}
     if path == "/markets":
         return 200, discover()
     if path == "/public-markets":
