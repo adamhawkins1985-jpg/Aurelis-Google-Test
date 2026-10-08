@@ -1,0 +1,30 @@
+name: AURELIS Rust CI
+on:
+  push:
+    paths:
+      - 'arbitrage/**'
+      - '.github/workflows/rust-ci.yml'
+  pull_request:
+    paths:
+      - 'arbitrage/**'
+      - '.github/workflows/rust-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require committed Rust sources
+        run: test -f arbitrage/Cargo.toml || { echo 'No vetted arbitrage/Cargo.toml uploaded yet'; exit 1; }
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build and test with constrained resources
+        working-directory: arbitrage
+        env:
+          CARGO_BUILD_JOBS: '2'
+          CARGO_INCREMENTAL: '0'
+          CARGO_PROFILE_TEST_DEBUG: '0'
+        run: cargo test --workspace --locked -- --test-threads=2
