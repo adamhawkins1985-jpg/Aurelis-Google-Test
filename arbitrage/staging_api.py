@@ -16,6 +16,7 @@ from dex_route_selector import select_paper_route
 from dex_batch_scan import scan as scan_dex_batch
 from dex_signal_risk import analyze as assess_dex_signal
 from dex_strategy_observations import inspect as inspect_dex_strategy
+from dex_paper_risk import review as review_paper_risk
 from onekey_session import staging_status
 
 HOST = "127.0.0.1"
@@ -30,6 +31,19 @@ def payload(path, query):
             return 200, observed_funding(asset)
         except ValueError:
             return 400, {"ok": False, "error": "invalid_asset"}
+    if path == "/paper-risk-review":
+        try:
+            return 200, review_paper_risk(
+                query.get("bot", ["hunter"])[0],
+                query.get("venue", ["hyperliquid"])[0],
+                query.get("asset", ["BTC"])[0],
+                query.get("side", ["long"])[0],
+                query.get("notional", ["25"])[0],
+                query.get("entry", ["100"])[0],
+                query.get("stop", ["98"])[0],
+                query.get("leverage", ["2"])[0])
+        except ValueError:
+            return 400, {"ok": False, "error": "invalid_paper_risk"}
     if path == "/paper-dex-strategy":
         bot = query.get("bot", ["hunter"])[0]
         asset = query.get("asset", ["BTC"])[0]
