@@ -43,9 +43,30 @@ def discover(force=False):
         venues["dydx"] = {"assets": sorted(symbols), "ok": True}
     except Exception as exc:
         venues["dydx"] = {"assets": [], "ok": False, "error": type(exc).__name__}
+    try:
+        data = _json("https://mainnet.zklighter.elliot.ai/api/v1/orderBooks")
+        rows = data.get("order_books") or []
+        symbols = {_symbol(row.get("symbol")) for row in rows
+                   if isinstance(row, dict) and row.get("market_type") == "perp"
+                   and row.get("status") == "active"}
+        venues["lighter"] = {"assets": sorted(symbols - {None}), "ok": True}
+    except Exception as exc:
+        venues["lighter"] = {"assets": [], "ok": False, "error": type(exc).__name__}
+    try:
+        data = _json("https://api.prod.paradex.trade/v1/markets")
+        symbols = {_symbol(row.get("base_currency")) for row in data.get("results", [])
+                   if isinstance(row, dict) and row.get("asset_kind") == "PERP"
+                   and row.get("quote_currency") == "USD"}
+        venues["paradex"] = {"assets": sorted(symbols - {None}), "ok": True}
+    except Exception as exc:
+        venues["paradex"] = {"assets": [], "ok": False, "error": type(exc).__name__}
     all_assets = set().union(*(set(x["assets"]) for x in venues.values()))
     # Overlap is what matters for cross-venue arbitrage.
-    overlap = set(venues["hyperliquid"]["assets"]) & set(venues["dydx"]["assets"])
+    counts = {}
+    for item in venues.values():
+        for asset in item["assets"]:
+            counts[asset] = counts.get(asset, 0) + 1
+    overlap = {asset for asset, count in counts.items() if count >= 2}
     result = {"mode": "paper", "dataSource": "public_read_only",
               "venues": venues, "assetCount": len(all_assets),
               "assets": sorted(all_assets)[:MAX_ASSETS],
