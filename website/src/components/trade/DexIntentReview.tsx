@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { getReusableWalletConnectSession, testOneKeyTypedDataCapability } from '../../services/walletConnectService';
+import { disconnectBotWalletConnect, getBotWalletConnectSession, startBotWalletConnectPairing, waitForBotWalletConnectApproval, testOneKeyTypedDataCapability } from '../../services/walletConnectService';
+import { QRCodeSVG } from 'qrcode.react';
 
 const bots: Record<string,string> = {radar:'trade_radar',hunter:'hunter',scope:'hunter',dca:'dca',grid:'grid',arbitrage:'arbitrage',live:'live_bet',signals:'signal_desk'};
 const venues = ['hyperliquid','dydx','lighter','paradex','extended'];
@@ -12,6 +13,7 @@ export function DexIntentReview({tab}:{tab:string}) {
   const [publicAddress,setPublicAddress]=useState('');
   const [agentAddress,setAgentAddress]=useState('');
   const [connected,setConnected]=useState(false);
+  const [pairingUri,setPairingUri]=useState('');
   const [walletSession,setWalletSession]=useState<{address:string;chainId:number;session:any}|null>(null);
   const [busy,setBusy]=useState('');
   const [error,setError]=useState('');
@@ -21,14 +23,33 @@ export function DexIntentReview({tab}:{tab:string}) {
   const refreshWallet=async()=>{
     setError('');
     try {
-      const current=await getReusableWalletConnectSession('onekey');
+      const current=await getBotWalletConnectSession();
       setWalletSession(current);
       setConnected(Boolean(current));
       if(current?.address) setPublicAddress(current.address);
     } catch(e:any) {setConnected(false);setWalletSession(null);setError(e?.message||'Wallet session unavailable')}
   };
-  useEffect(()=>{void refreshWallet();const onAuth=()=>void refreshWallet();window.addEventListener('aurelis:wallet-authenticated',onAuth);return ()=>window.removeEventListener('aurelis:wallet-authenticated',onAuth)},[]);
+  useEffect(()=>{void refreshWallet();const onAuth=()=>void refreshWallet();window.addEventListener('aurelis:bot-wallet-connected',onAuth);return ()=>window.removeEventListener('aurelis:bot-wallet-connected',onAuth)},[]);
 
+  const connectBot=async()=>{
+    setBusy('pair');setError('');setResult(null);setPairingUri('');
+    try {
+      const {uri}=await startBotWalletConnectPairing();
+      setPairingUri(uri);
+      const active=await waitForBotWalletConnectApproval();
+      setPairingUri('');
+      setWalletSession(active);
+      setPublicAddress(active.address);
+      setConnected(true);
+    } catch(e:any) {setError(e?.message||'Bot WalletConnect pairing failed');}
+    finally {setBusy('');}
+  };
+  const disconnectBot=async()=>{
+    setBusy('disconnect');setError('');
+    try {await disconnectBotWalletConnect();setConnected(false);setWalletSession(null);setPairingUri('');}
+    catch(e:any){setError(e?.message||'Could not disconnect Bot WalletConnect');}
+    finally{setBusy('');}
+  };
   const request=async(kind:string,path:string,params:Record<string,string>)=>{
     setBusy(kind);setError('');setResult(null);
     try {
@@ -48,7 +69,8 @@ export function DexIntentReview({tab}:{tab:string}) {
   const testSignature=async()=>{
     setBusy('sign');setError('');setResult(null);
     try {
-      const signed=await testOneKeyTypedDataCapability(walletSession || undefined);
+      if (!walletSession) throw new Error('Connect Bot Wallet before testing signing.');
+      const signed=await testOneKeyTypedDataCapability(walletSession);
       setResult({kind:'sign',data:{address:signed.address,chainId:signed.chainId}});
     }catch(e:any){setError(e?.message||'OneKey signature test failed')}
     finally{setBusy('')}
@@ -63,10 +85,25 @@ export function DexIntentReview({tab}:{tab:string}) {
       <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200">REVIEW ONLY</span>
     </div>
     <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900">
-      <div className="flex items-center justify-between gap-2"><strong>1. Wallet connection</strong><button type="button" onClick={()=>void refreshWallet()} className={button}>Refresh connection</button></div>
-      <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{connected?'OneKey WalletConnect session detected':'OneKey not connected in this browser. Connect it from Wallet first.'}</p>
-      <label className="mt-2 block text-xs">Public wallet address
-        <input aria-label="Public OneKey wallet address" value={publicAddress} onChange={e=>{setPublicAddress(e.target.value);setConnected(false);setWalletSession(null)}} placeholder="Connect OneKey or enter a public address" className={'mt-1 w-full font-mono '+field}/>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <strong>1. Dedicated Bot Wallet</strong>
+        <span className={'rounded-full px-2 py-1 text-[10px] font-bold '+(connected?'bg-emerald-100 text-emerald-900 dark:bg-emerald-900 dark:text-emerald-100':'bg-slate-200 text-slate-700 dark:bg-slate-700 dark:text-slate-200')}>{connected?'BOT WALLET CONNECTED':'BOT WALLET DISCONNECTED'}</span>
+      </div>
+      <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">Main Wallet is for balances, sending, receiving and swaps. Bot Wallet connects OneKey Agent Money separately for signing tests and future bot operations. Connecting or disconnecting Bots does not disconnect Main Wallet.</p>
+      <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">Two connections to the same account do not separate funds or keys. Trading-agent approval and live orders are still disabled.</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button" disabled={disabled || connected} onClick={()=>void connectBot()} className={button}>Connect Bot Wallet</button>
+        <button type="button" disabled={disabled} onClick={()=>void refreshWallet()} className={button}>Refresh Bot Status</button>
+        <button type="button" disabled={disabled || !connected} onClick={()=>void disconnectBot()} className={button}>Disconnect Bot Only</button>
+      </div>
+      {pairingUri&&<div className="mt-3 inline-flex flex-col items-center gap-2 rounded-lg bg-white p-3 text-slate-900">
+        <QRCodeSVG value={pairingUri} size={196} />
+        <span className="text-xs font-semibold">Scan with OneKey Agent Money</span>
+        <span className="text-[11px]">Approve the separate Bot WalletConnect connection on your phone.</span>
+      </div>}
+      <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">{connected?'Active signing session: OneKey Agent Money':'No dedicated Bot signing session. Main Wallet addresses are not treated as Bot connections.'}</p>
+      <label className="mt-2 block text-xs">Public address for DEX read-only checks
+        <input aria-label="Bot public wallet address" value={publicAddress} onChange={e=>{setPublicAddress(e.target.value);setConnected(false);setWalletSession(null)}} placeholder="Bot connection fills this automatically; public address may be entered for read-only checks" className={'mt-1 w-full font-mono '+field}/>
       </label>
     </div>
     <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900">
@@ -84,7 +121,7 @@ export function DexIntentReview({tab}:{tab:string}) {
       <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">No trading agent is authorized by this screen. Signing approvals and live orders remain disabled.</p>
       {venue==='hyperliquid'&&<div className="mt-2 flex flex-wrap gap-2">
         <button className={button} disabled={disabled||!addressOk(publicAddress)} onClick={()=>void registry()}>Check testnet agents</button>
-        <button className={button} disabled={disabled} onClick={()=>void testSignature()}>Test OneKey signing</button>
+        <button className={button} disabled={disabled||!connected} onClick={()=>void testSignature()}>Test OneKey signing</button>
       </div>}
       <details className="mt-3" open={advanced} onToggle={e=>setAdvanced(e.currentTarget.open)}>
         <summary className="cursor-pointer text-xs font-semibold">Advanced technical checks</summary>
