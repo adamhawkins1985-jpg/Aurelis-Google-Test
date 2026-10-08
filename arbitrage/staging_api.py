@@ -13,6 +13,7 @@ from spread_comparison import compare
 from funding_observations import observed_funding
 from book_validation import validate_book
 from dex_route_selector import select_paper_route
+from dex_batch_scan import scan as scan_dex_batch
 from onekey_session import staging_status
 
 HOST = "127.0.0.1"
@@ -27,6 +28,16 @@ def payload(path, query):
             return 200, observed_funding(asset)
         except ValueError:
             return 400, {"ok": False, "error": "invalid_asset"}
+    if path == "/paper-dex-batch":
+        bot = query.get("bot", ["hunter"])[0]
+        symbols = query.get("assets", ["BTC,ETH,SOL"])[0]
+        side = query.get("side", ["long"])[0]
+        notional = query.get("notional", ["25"])[0]
+        try:
+            assets = symbols.split(",")
+            return 200, scan_dex_batch(bot, assets, side, notional)
+        except ValueError:
+            return 400, {"ok": False, "error": "invalid_dex_batch"}
     if path == "/paper-dex-route":
         bot = query.get("bot", ["hunter"])[0]
         asset = query.get("asset", ["BTC"])[0]
