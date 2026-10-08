@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { CoinData, Timeframe, NavigationTab } from '../types';
 import { playHudSound, formatCurrency } from '../services/marketData';
+import { getBotWalletConnectSession } from '../services/walletConnectService';
 
 // Bot Views
 import { TradeRadarView } from './trade/TradeRadarView';
@@ -101,30 +102,39 @@ export const AiScreen: React.FC<AiScreenProps> = ({
   const [activeBotTab, setActiveBotTab] = useState<AiBotTab>('radar');
   const [isBotExpanded, setIsBotExpanded] = useState<boolean>(false);
   const [pendingTradeSetup, setPendingTradeSetup] = useState<SetupCandidate | null>(null);
-  const [krakenBalances, setKrakenBalances] = useState<{asset:string;amount:number}[]>([]);
-  const [krakenBalanceLoading, setKrakenBalanceLoading] = useState<boolean>(true);
-  const [krakenBalanceError, setKrakenBalanceError] = useState<string>('');
-
-  const loadKrakenBalances = async () => {
-    setKrakenBalanceLoading(true);
+  const [botWalletAddress,setBotWalletAddress] = useState('');
+  const [botBalances,setBotBalances] = useState<{asset:string;amount:number;network:string;valueUsd:number|null}[]>([]);
+  const [botBalanceLoading,setBotBalanceLoading] = useState(true);
+  const [botBalanceError,setBotBalanceError] = useState('');
+  const loadBotBalances = async () => {
+    setBotBalanceLoading(true);
     try {
-      const res = await fetch('/api/kraken/balances', { cache: 'no-store' });
-      const data = await res.json();
-      if (!res.ok || !data?.ok || !Array.isArray(data.balances)) throw new Error(data?.detail || data?.error || 'Kraken balance unavailable');
-      setKrakenBalances(data.balances);
-      setKrakenBalanceError('');
-    } catch (error:any) {
-      setKrakenBalanceError(error?.message || 'Kraken balance unavailable');
-    } finally {
-      setKrakenBalanceLoading(false);
-    }
+      const active = await getBotWalletConnectSession();
+      if (!active) {
+        setBotWalletAddress('');setBotBalances([]);setBotBalanceError('');
+        return;
+      }
+      setBotWalletAddress(active.address);
+      const res=await fetch('/api/wallet/external-evm-portfolio?'+new URLSearchParams({address:active.address}),{cache:'no-store'});
+      const data=await res.json();
+      if (!res.ok || !data?.ok || !Array.isArray(data.assets)) throw Error(data?.error||'Balance lookup unavailable');
+      setBotBalances(data.assets.map((item:any)=>({
+        asset:String(item.symbol||'').toUpperCase(),
+        amount:Number(item.amount||0),
+        network:String(item.chain||item.network||'EVM'),
+        valueUsd:Number.isFinite(Number(item.valueUsd)) ? Number(item.valueUsd) : (Number.isFinite(Number(item.balanceUsd))?Number(item.balanceUsd):null),
+      })).filter((item:any)=>item.asset && item.amount>0));
+      setBotBalanceError('');
+    } catch(e:any) {setBotBalanceError(e?.message||'Bot Wallet balances unavailable');setBotBalances([]);}
+    finally {setBotBalanceLoading(false);}
   };
-
-  useEffect(() => {
-    loadKrakenBalances();
-    const timer = window.setInterval(loadKrakenBalances, 30000);
-    return () => window.clearInterval(timer);
-  }, []);
+  useEffect(()=>{
+    void loadBotBalances();
+    const timer=window.setInterval(()=>void loadBotBalances(),60000);
+    const refresh=()=>void loadBotBalances();
+    window.addEventListener('aurelis:bot-wallet-connected',refresh);
+    return ()=>{window.clearInterval(timer);window.removeEventListener('aurelis:bot-wallet-connected',refresh);};
+  },[]);
 
   useEffect(() => {
     if (!initialTradeAlert) return;
@@ -406,27 +416,30 @@ export const AiScreen: React.FC<AiScreenProps> = ({
 
       <div className="mb-2 flex min-w-0 items-center gap-2 rounded-xl border border-white/5 bg-surface-panel/45 px-3 py-2">
         <div className="shrink-0">
-          <div className="text-[8px] font-mono font-bold uppercase tracking-wider text-text-muted">Kraken balances</div>
-          <div className="text-[9px] font-mono text-primary-container">SPOT</div>
+          <div className="text-[8px] font-mono font-bold uppercase tracking-wider text-text-muted">OneKey Agent Money</div>
+          <div className="text-[9px] font-mono text-primary-container">BOT WALLET · ON-CHAIN</div>
         </div>
         <div className="min-w-0 flex-1 overflow-x-auto scrollbar-none">
           <div className="flex min-w-max items-center gap-2">
-            {krakenBalanceLoading && !krakenBalances.length ? (
-              <div className="flex items-center gap-1.5 text-[9px] font-mono text-text-muted"><Loader2 className="h-3 w-3 animate-spin"/>Loading</div>
-            ) : krakenBalanceError ? (
-              <div className="text-[9px] font-mono text-red-400">{krakenBalanceError}</div>
-            ) : krakenBalances.length ? krakenBalances.map((row) => (
-              <div key={row.asset} className="flex items-baseline gap-1 rounded-lg border border-white/5 bg-surface-base/65 px-2 py-1.5">
+            {botBalanceLoading && !botBalances.length ? (
+              <div className="flex items-center gap-1.5 text-[9px] font-mono text-text-muted"><Loader2 className="h-3 w-3 animate-spin"/>Checking Bot Wallet</div>
+            ) : botBalanceError ? (
+              <div className="text-[9px] font-mono text-red-400">{botBalanceError}</div>
+            ) : !botWalletAddress ? (
+              <div className="text-[9px] font-mono text-text-muted">Connect Agent Money in Bots → OneKey · DEX</div>
+            ) : botBalances.length ? botBalances.map((row,i) => (
+              <div key={row.network+row.asset+i} className="flex items-baseline gap-1 rounded-lg border border-white/5 bg-surface-base/65 px-2 py-1.5">
                 <span className="text-[9px] font-mono font-bold text-text-primary">{row.asset}</span>
                 <span className="text-[9px] font-mono tabular-nums text-text-secondary">{row.amount.toLocaleString('en-US',{maximumFractionDigits:8})}</span>
+                <span className="text-[8px] text-text-muted">{row.network}</span>
               </div>
             )) : (
-              <div className="text-[9px] font-mono text-text-muted">No non-zero balances</div>
+              <div className="text-[9px] font-mono text-text-muted">No non-zero Bot Wallet balances detected</div>
             )}
           </div>
         </div>
-        <button type="button" onClick={loadKrakenBalances} className="shrink-0 rounded-lg border border-white/5 bg-surface-base/60 p-1.5 text-text-muted hover:text-text-primary" title="Refresh Kraken balances">
-          <RefreshCw className={`h-3.5 w-3.5 ${krakenBalanceLoading ? 'animate-spin' : ''}`}/>
+        <button type="button" onClick={()=>void loadBotBalances()} className="shrink-0 rounded-lg border border-white/5 bg-surface-base/60 p-1.5 text-text-muted hover:text-text-primary" title="Refresh Bot Wallet balances">
+          <RefreshCw className={`h-3.5 w-3.5 ${botBalanceLoading ? 'animate-spin' : ''}`}/>
         </button>
       </div>
 
