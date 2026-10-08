@@ -137,6 +137,13 @@ jobs:
               assert not proposal["executionReady"] and not proposal["orderSubmitted"]
               assert not proposal["signingAllowed"] and not proposal["transferAllowed"]
               print("PASS paper prepare:", bot)
-          print("STAGING_API_READY: shared paper proposals; pluggable wallet interface; public discovery")
+          with urlopen(base + "/paper-quote-review?bot=arbitrage&venue=hyperliquid&asset=BTC&side=long&notional=25", timeout=25) as response:
+              review = json.load(response)
+          assert review["mode"] == "paper" and not review["executionReady"]
+          assert not review["signingAllowed"] and not review["orderSubmitted"]
+          assert not review["feesVerified"] and not review["liquidityVerified"]
+          assert review["estimatedNetSpreadPct"] is None
+          print("PASS /paper-quote-review", "indicative_available", review["quoteVerified"])
+          print("STAGING_API_READY: read-only quotes and guarded paper reviews")
           PY
           REMOTE
