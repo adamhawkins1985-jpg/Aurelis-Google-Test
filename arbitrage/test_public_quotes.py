@@ -14,6 +14,13 @@ class PublicQuoteTests(unittest.TestCase):
                 self.assertEqual(data, {"type": "l2Book", "coin": "BTC"})
                 return {"levels": [[{"px": "100", "sz": "1"}], [{"px": "101", "sz": "2"}]]}
             self.assertIsNone(data)
+            if "zklighter" in url:
+                if "orderBookOrders" in url:
+                    self.assertIn("market_id=1", url)
+                    return {"code": 200, "bids": [{"price": "97", "remaining_base_amount": "3"}],
+                            "asks": [{"price": "104", "remaining_base_amount": "3"}]}
+                return {"order_books": [{"symbol": "BTC", "market_type": "perp",
+                                         "status": "active", "market_id": 1}]}
             if "paradex" in url:
                 return {"market": "BTC-USD-PERP", "bids": [["98", "2"]], "asks": [["103", "2"]]}
             return {"bids": [{"price": "99", "size": "1"}],
@@ -24,6 +31,8 @@ class PublicQuoteTests(unittest.TestCase):
         self.assertFalse(result["executionReady"])
         self.assertEqual(result["quotes"]["hyperliquid"]["bid"], 100)
         self.assertEqual(result["quotes"]["dydx"]["ask"], 102)
+        self.assertEqual(result["quotes"]["lighter"]["bid"], 97)
+        self.assertEqual(result["quotes"]["lighter"]["asks"], [[104.0, 3.0]])
         self.assertEqual(result["quotes"]["paradex"]["bid"], 98)
         self.assertEqual(result["quotes"]["paradex"]["asks"], [[103.0, 2.0]])
         self.assertTrue(all(not x["executionReady"] for x in result["quotes"].values()))
@@ -34,6 +43,7 @@ class PublicQuoteTests(unittest.TestCase):
         self.assertIsNone(result["quotes"]["hyperliquid"]["bid"])
         self.assertIsNone(result["quotes"]["dydx"]["ask"])
         self.assertIsNone(result["quotes"]["paradex"]["ask"])
+        self.assertIsNone(result["quotes"]["lighter"]["ask"])
         self.assertFalse(result["executionReady"])
 
     def test_reject_unknown_asset(self):
