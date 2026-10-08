@@ -43,7 +43,7 @@ jobs:
         if: steps.source.outputs.available == 'true'
         working-directory: website
         run: |
-          npm ci
+          npm ci --legacy-peer-deps
           npm run build
       - name: Store verified build artifact
         if: steps.source.outputs.available == 'true'
