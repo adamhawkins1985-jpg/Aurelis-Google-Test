@@ -2,11 +2,15 @@ name: AURELIS Rust CI
 on:
   push:
     paths:
-      - 'arbitrage/**'
+      - 'arbitrage/**/*.rs'
+      - 'arbitrage/**/Cargo.toml'
+      - 'arbitrage/Cargo.lock'
       - '.github/workflows/rust-ci.yml'
   pull_request:
     paths:
-      - 'arbitrage/**'
+      - 'arbitrage/**/*.rs'
+      - 'arbitrage/**/Cargo.toml'
+      - 'arbitrage/Cargo.lock'
       - '.github/workflows/rust-ci.yml'
   workflow_dispatch:
 permissions:
