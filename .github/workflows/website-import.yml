@@ -32,8 +32,8 @@ jobs:
           printf '%s\n' "$KNOWN" > "$HOME/.ssh/known_hosts"
           ssh-keygen -y -P '' -f "$HOME/.ssh/aurelis_import" >/dev/null
           ssh -i "$HOME/.ssh/aurelis_import" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 "aurelisdeploy@$HOST" \
-            "curl -fsS --max-time 30 http://127.0.0.1:18777/website-source-635c198687d22ead6c240b7c3425bc6affafbc25f5a63134dc8d678a9cfb484f" > "$RUNNER_TEMP/site.tgz"
-          echo '635c198687d22ead6c240b7c3425bc6affafbc25f5a63134dc8d678a9cfb484f  '"$RUNNER_TEMP/site.tgz" | sha256sum -c -
+            "curl -fsS --max-time 30 http://127.0.0.1:18777/website-source-179c48b21520adf97823e95b9cdff270e2a80c80e0e65e28384a1a9bc2d8d888" > "$RUNNER_TEMP/site.tgz"
+          echo '179c48b21520adf97823e95b9cdff270e2a80c80e0e65e28384a1a9bc2d8d888  '"$RUNNER_TEMP/site.tgz" | sha256sum -c -
           python3 - "$RUNNER_TEMP/site.tgz" <<'PY'
           import sys,tarfile
           with tarfile.open(sys.argv[1],"r:gz") as tf:
