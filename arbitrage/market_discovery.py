@@ -60,6 +60,23 @@ def discover(force=False):
         venues["paradex"] = {"assets": sorted(symbols - {None}), "ok": True}
     except Exception as exc:
         venues["paradex"] = {"assets": [], "ok": False, "error": type(exc).__name__}
+    # Public Extended Starknet perpetual catalog.
+    try:
+        data = _json("https://api.starknet.extended.exchange/api/v1/info/markets")
+        if data.get("status") != "OK" or not isinstance(data.get("data"), list):
+            raise ValueError("invalid_catalog")
+        symbols = set()
+        for row in data["data"]:
+            if not isinstance(row, dict) or row.get("type") != "PERPETUAL" or row.get("status") != "ACTIVE":
+                continue
+            market = row.get("name", "")
+            if isinstance(market, str) and market.endswith("-USD"):
+                symbol = _symbol(market[:-4])
+                if symbol:
+                    symbols.add(symbol)
+        venues["extended"] = {"assets": sorted(symbols), "ok": True}
+    except Exception as exc:
+        venues["extended"] = {"assets": [], "ok": False, "error": type(exc).__name__}
     all_assets = set().union(*(set(x["assets"]) for x in venues.values()))
     # Overlap is what matters for cross-venue arbitrage.
     counts = {}
