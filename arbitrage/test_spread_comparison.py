@@ -26,6 +26,13 @@ class SpreadTests(unittest.TestCase):
         self.assertIsNone(positive["estimatedNetSpreadPct"])
         self.assertFalse(positive["orderSubmitted"])
 
+    def test_async_quotes_excluded_even_when_individually_fresh(self):
+        result = compare("BTC", 25, {
+            "hyperliquid": book(99, 100, at=100),
+            "dydx": book(103, 104, at=105),
+        }, now=106)
+        self.assertEqual(result["candidates"], [])
+
     def test_stale_or_insufficient_depth_excluded(self):
         result = compare("SOL", 25, {"hyperliquid": book(100, 101, at=10), "dydx": book(103, 104)}, now=100)
         self.assertEqual(result["candidates"], [])
