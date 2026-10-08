@@ -117,6 +117,12 @@ jobs:
           assert "overlapCount" in catalog and "assetCount" in catalog
           print("MARKET_DISCOVERY", "assets", catalog["assetCount"], "overlap", catalog["overlapCount"],
                 "venues", {k: len(v["assets"]) for k, v in catalog["venues"].items()})
-          print("STAGING_API_READY: loopback 127.0.0.1:8895; synthetic scan, public market discovery")
+          for bot in ("hunter", "trade_radar", "signal_desk", "live_bet", "arbitrage", "grid", "dca"):
+              with urlopen(base + "/agent-wallet?bot=" + bot, timeout=3) as response:
+                  wallet = json.load(response)
+              assert not wallet["authenticated"] and not wallet["executionReady"]
+              assert not wallet["permissions"]["sign"] and not wallet["permissions"]["transfer"]
+              print("PASS agent wallet:", bot)
+          print("STAGING_API_READY: read-only wallet boundary; public discovery; synthetic scan")
           PY
           REMOTE
