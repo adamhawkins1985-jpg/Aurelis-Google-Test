@@ -28,16 +28,11 @@ jobs:
         run: |
           umask 077
           mkdir -p "$HOME/.ssh"
-          # Normalize secrets copied with literal backslash-n sequences.
-          key_normalized="${KEY//\\n/
-          printf '%s\n' "$KNOWN" > "$HOME/.ssh/known_hosts"
-          trap 'rm -f "$HOME/.ssh/aurelis_deploy" "$HOME/.ssh/known_hosts"' EXIT
-          ssh -i "$HOME/.ssh/aurelis_deploy" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 -- "aurelisdeploy@$HOST" 'printf "Connected as: "; whoami; printf "Host: "; hostname; printf "Home: "; pwd'
-\n'}"
-          printf '%s\n' "$key_normalized" > "$HOME/.ssh/aurelis_deploy"
-          unset key_normalized KEY
+          # Accept either multiline OpenSSH keys or keys containing literal backslash-n.
+          python3 -c 'import os,pathlib; pathlib.Path.home().joinpath(".ssh/aurelis_deploy").write_text(os.environ["KEY"].replace(chr(92)+"n",chr(10)).rstrip()+chr(10))'
+          unset KEY
           if ! ssh-keygen -y -P '' -f "$HOME/.ssh/aurelis_deploy" > /dev/null 2>&1; then
-            echo 'VPS_SSH_KEY is not a valid unencrypted OpenSSH private key. Re-enter the entire multiline private key in GitHub Actions secrets.'
+            echo 'Invalid VPS_SSH_KEY: paste the complete, unencrypted OpenSSH private key into the GitHub secret, preserving its line breaks.'
             exit 1
           fi
           printf '%s\n' "$KNOWN" > "$HOME/.ssh/known_hosts"
