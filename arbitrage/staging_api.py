@@ -3,18 +3,22 @@ import argparse
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
-from public_quotes import ASSETS, public_quotes
+from public_quotes import public_quotes
+from market_discovery import discover
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8895
 
 
 def payload(path, query):
+    if path == "/markets":
+        return 200, discover()
     if path == "/public-markets":
         asset = query.get("asset", ["BTC"])[0].upper()
-        if asset not in ASSETS:
-            return 400, {"ok": False, "error": "unsupported_asset"}
-        return 200, public_quotes(asset)
+        try:
+            return 200, public_quotes(asset)
+        except ValueError:
+            return 400, {"ok": False, "error": "invalid_asset"}
     if path == "/health":
         return 200, {"ok": True, "service": "aurelis-arbitrage-staging",
                      "paperMode": True, "liveTradingEnabled": False,
