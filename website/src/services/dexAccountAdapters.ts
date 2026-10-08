@@ -12,6 +12,10 @@ export interface DexAccountSnapshot {
   positions: readonly { market: string; side: 'long' | 'short'; size: string }[];
   orders: readonly { id: string; market: string; status: string }[];
   fills: readonly { id: string; market: string; size: string }[];
+  accountValueUsd?: string | number | null;
+  openPositionCount?: number | null;
+  /** The existing upstream may expose totals without full order/fill records. */
+  verifiedFields?: readonly string[];
 }
 export interface DexAccountAdapter {
   readonly venue: DexVenueId;
