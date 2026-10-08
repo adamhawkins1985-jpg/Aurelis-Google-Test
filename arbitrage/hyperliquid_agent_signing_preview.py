@@ -20,7 +20,7 @@ def preview(master, agent, name="AURELIS", network="Testnet", nonce=0):
         "nonce":nonce,"signatureChainId":"0x66eee",
         "action":{
             "type":"approveAgent","hyperliquidChain":network,
-            "signatureChainId":"0xa4b1","agentAddress":report["agentAddress"],
+            "signatureChainId":"0x66eee","agentAddress":report["agentAddress"],
             "agentName":name,"nonce":nonce
         },
         "eip712PrimaryType":"HyperliquidTransaction:ApproveAgent",
