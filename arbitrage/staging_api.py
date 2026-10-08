@@ -19,6 +19,7 @@ from dex_strategy_observations import inspect as inspect_dex_strategy
 from dex_paper_risk import review as review_paper_risk
 from dex_trade_intent import prepare_intent
 from hyperliquid_onekey_adapter import inspect_hyperliquid
+from hyperliquid_account_observation import inspect_account
 from onekey_session import staging_status
 
 HOST = "127.0.0.1"
@@ -33,6 +34,13 @@ def payload(path, query):
             return 200, observed_funding(asset)
         except ValueError:
             return 400, {"ok": False, "error": "invalid_asset"}
+    if path == "/hyperliquid-account-observation":
+        try:
+            return 200, inspect_account(query.get("wallet", [""])[0])
+        except ValueError:
+            return 400, {"ok": False, "error": "invalid_public_account"}
+        except Exception:
+            return 502, {"ok": False, "error": "public_account_unavailable"}
     if path == "/hyperliquid-signer-readiness":
         try:
             return 200, inspect_hyperliquid(
