@@ -22,6 +22,18 @@ class StrategyObservationTests(unittest.TestCase):
             self.assertEqual(report["ordersSubmitted"],0)
 
     @patch("dex_strategy_observations.analyze")
+    def test_funding_evidence_remains_unverified(self, base):
+        base.return_value={"venueAssessments":[{"venue":"hyperliquid"}],"qualifiedSignals":[]}
+        book={"hyperliquid":{"bids":[[99,1]],"asks":[[100,1]]}}
+        funding={"venues":{"hyperliquid":{"hourlyFundingRate":"0.0001","observedAt":123,"quoteSource":"metaAndAssetCtxs"}}}
+        result=inspect("hunter","BTC","long",25,book,funding)
+        evidence=result["venueAssessments"][0]["fundingObservation"]
+        self.assertEqual(evidence["hourlyRate"],"0.0001")
+        self.assertFalse(evidence["costsVerified"])
+        self.assertEqual(result["fundingEvidence"],"public_observation_only")
+        self.assertFalse(result["executionReady"])
+
+    @patch("dex_strategy_observations.analyze")
     def test_bad_depth_gives_no_imbalance(self, base):
         base.return_value={"venueAssessments":[{"venue":"extended"}],"qualifiedSignals":[]}
         result=inspect("grid","ETH","short",25,{"extended":{"bids":[["notprice",1]],"asks":[[100,1]]}})
