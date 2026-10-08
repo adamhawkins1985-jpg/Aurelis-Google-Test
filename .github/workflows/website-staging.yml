@@ -95,4 +95,4 @@ jobs:
           digest="$(sha256sum "$RUNNER_TEMP/aurelis-website.tgz" | cut -d' ' -f1)"
           { printf '%s\n' "$digest"; cat "$RUNNER_TEMP/aurelis-website.tgz"; } |
             ssh -i "$HOME/.ssh/aurelis_activate" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 "aurelisdeploy@$HOST" \
-            "python3 -c 'import socket,sys; payload=sys.stdin.buffer.read(); s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.settimeout(90); s.connect("/tmp/aurelis-website-release.sock"); s.sendall(payload); s.shutdown(socket.SHUT_WR); msg=s.recv(4096); print(msg.decode().strip()); sys.exit(0 if msg.startswith(b"DEPLOY_SUCCESS") else 1)'"
+            "python3 -c 'import socket,sys; payload=sys.stdin.buffer.read(); s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.settimeout(90); s.connect(sys.argv[1]); s.sendall(payload); s.shutdown(socket.SHUT_WR); msg=s.recv(4096); print(msg.decode().strip()); sys.exit(0 if msg.startswith(bytes((68,69,80,76,79,89,95,83,85,67,67,69,83,83))) else 1)' /tmp/aurelis-website-release.sock"
