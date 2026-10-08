@@ -22,6 +22,7 @@ import {
 import { CoinData, Timeframe, NavigationTab } from '../types';
 import { playHudSound, formatCurrency } from '../services/marketData';
 import { getBotWalletConnectSession } from '../services/walletConnectService';
+import { DEX_VENUES, canUseLiveOrders, canUseAutomatedFunding } from '../services/dexVenueRegistry';
 
 // Bot Views
 import { TradeRadarView } from './trade/TradeRadarView';
@@ -491,17 +492,16 @@ export const AiScreen: React.FC<AiScreenProps> = ({
           <div className="rounded-md border border-white/10 p-2 text-xs">Open positions: {venueAccount?.openPerpPositions??'Not verified'}</div>
           <div className="rounded-md border border-white/10 p-2 text-xs">Other venue P/L: Not connected</div>
         </div>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5" aria-label="DEX venue account coverage">
-          {[
-            {name:'Hyperliquid',detail:venueAccount?'Public account read':'Public account not checked',enabled:true},
-            {name:'dYdX',detail:'Public market quotes only',enabled:false},
-            {name:'Lighter',detail:'Public market quotes only',enabled:false},
-            {name:'Paradex',detail:'Account adapter not connected',enabled:false},
-            {name:'Extended',detail:'Account adapter not connected',enabled:false},
-          ].map(item=><div key={item.name} className="rounded-md border border-white/10 bg-surface-base/40 p-2">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[10px] font-semibold text-text-primary">DEX network · {DEX_VENUES.length} slots</span>
+          <span className="text-[10px] text-text-muted">Read-only monitoring and candidates are not live integrations</span>
+        </div>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-5" aria-label="DEX venue account coverage">
+          {DEX_VENUES.map(item => <div key={item.id} className="rounded-md border border-white/10 bg-surface-base/40 p-2">
             <p className="text-[11px] font-bold text-text-primary">{item.name}</p>
-            <p className="mt-1 text-[10px] text-text-muted">{item.detail}</p>
-            <p className="mt-1 text-[9px] text-amber-300">Live orders and funding disabled</p>
+            <p className="mt-1 text-[9px] text-text-muted">{item.network}</p>
+            <p className="mt-1 text-[10px] text-text-muted">{item.id==='hyperliquid' && !venueAccount ? 'Public account not checked' : item.note}</p>
+            <p className="mt-1 text-[9px] text-amber-300">{canUseLiveOrders(item) ? 'Verified live order controls' : 'Live orders disabled'} · {canUseAutomatedFunding(item) ? 'Funding enabled' : 'Funding disabled'}</p>
           </div>)}
         </div>
         <p className="mt-2 text-[10px] text-text-muted">Public market-price feeds are not exchange account connections. Other DEX balances, orders, fills, P/L and cancellation remain unverified until their authenticated account adapters are integrated.</p>
