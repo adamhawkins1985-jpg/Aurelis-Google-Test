@@ -21,6 +21,7 @@ from dex_trade_intent import prepare_intent
 from hyperliquid_onekey_adapter import inspect_hyperliquid
 from hyperliquid_account_observation import inspect_account
 from hyperliquid_agent_preflight import preflight as agent_preflight
+from hyperliquid_agent_registry import authorized_agents
 from onekey_session import staging_status
 
 HOST = "127.0.0.1"
@@ -35,6 +36,15 @@ def payload(path, query):
             return 200, observed_funding(asset)
         except ValueError:
             return 400, {"ok": False, "error": "invalid_asset"}
+    if path == "/hyperliquid-agent-registry":
+        try:
+            return 200, authorized_agents(
+                query.get("master", [""])[0],
+                query.get("network", ["Testnet"])[0])
+        except ValueError:
+            return 400, {"ok": False, "error": "invalid_agent_registry_request"}
+        except Exception:
+            return 502, {"ok": False, "error": "agent_registry_unavailable"}
     if path == "/hyperliquid-agent-preflight":
         try:
             return 200, agent_preflight(
