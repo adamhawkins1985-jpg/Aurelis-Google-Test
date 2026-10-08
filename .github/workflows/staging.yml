@@ -109,7 +109,7 @@ jobs:
           with urlopen(base + "/public-markets?asset=BTC", timeout=20) as response:
               market = json.load(response)
           assert market["mode"] == "paper" and market["dataSource"] == "public_read_only"
-          assert not market["executionReady"] and set(market["quotes"]) == {"hyperliquid", "dydx", "paradex", "lighter"}
+          assert not market["executionReady"] and set(market["quotes"]) == {"hyperliquid", "dydx", "paradex", "lighter", "extended"}
           print("PASS /public-markets?asset=BTC", {k: "ok" if v.get("bid") and v.get("ask") else "unavailable" for k, v in market["quotes"].items()})
           with urlopen(base + "/markets", timeout=20) as response:
               catalog = json.load(response)
@@ -152,6 +152,12 @@ jobs:
           assert spreads["mode"] == "paper" and not spreads["executionReady"]
           assert all(not row["tradeReady"] and row["estimatedNetSpreadPct"] is None for row in spreads["candidates"])
           print("PASS /paper-spreads", len(spreads["candidates"]), "indicative candidates")
+          with urlopen(base + "/paper-dex-route?bot=hunter&asset=BTC&side=long&notional=25", timeout=25) as response:
+              route = json.load(response)
+          assert route["mode"] == "paper" and route["wallet"] == "onekey"
+          assert not route["executionReady"] and route["ordersSubmitted"] == 0
+          assert all(row["venue"] != "kraken" for row in route["candidates"])
+          print("PASS shared paper DEX route")
           with urlopen(base + "/funding-observations?asset=BTC", timeout=25) as response:
               funding = json.load(response)
           assert funding["mode"] == "paper" and not funding["executionReady"]
