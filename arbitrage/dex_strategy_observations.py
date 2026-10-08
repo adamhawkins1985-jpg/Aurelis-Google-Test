@@ -15,7 +15,7 @@ def _d(value):
     except (ValueError, TypeError, InvalidOperation):
         return None
 
-def inspect(bot, asset, side, notional_usd, quotes):
+def inspect(bot, asset, side, notional_usd, quotes, funding=None):
     report = analyze(bot, asset, side, notional_usd, quotes)
     for item in report["venueAssessments"]:
         quote = quotes.get(item["venue"], {})
@@ -39,6 +39,15 @@ def inspect(bot, asset, side, notional_usd, quotes):
         item["marketObservation"] = "buy_side_heavier" if imbalance is not None and imbalance > Decimal("0.15") else ("sell_side_heavier" if imbalance is not None and imbalance < Decimal("-0.15") else "inconclusive")
         item["directionalSignalVerified"] = False
         item["paperScore"] = None
+        evidence = (funding or {}).get("venues", {}).get(item["venue"], {})
+        item["fundingObservation"] = {
+            "hourlyRate": evidence.get("hourlyFundingRate"),
+            "nextRate": evidence.get("nextFundingRate"),
+            "observedAt": evidence.get("observedAt"),
+            "source": evidence.get("quoteSource"),
+            "costsVerified": False,
+        }
+    report["fundingEvidence"] = "public_observation_only" if funding else "unavailable"
     report["strategy"] = "depth_imbalance_observation"
     report["strategyQualified"] = False
     report["qualifiedSignals"] = []
