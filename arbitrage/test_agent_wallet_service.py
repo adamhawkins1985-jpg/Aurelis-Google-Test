@@ -23,11 +23,11 @@ class WalletBoundaryTests(unittest.TestCase):
 
     def test_no_secrets_returned(self):
         status = wallet_status("arbitrage", lambda: {
-            "authenticated": True, "authStatus": "authenticated", "displayAddress": "0xpublic",
+            "authenticated": True, "authStatus": "authenticated", "displayAddress": "0x1111111111111111111111111111111111111111",
             "walletKind": "hd", "hasSecrets": True,
             "privateKey": "never", "mnemonic": "never", "token": "never"
         })
-        self.assertEqual(status["address"], "0xpublic")
+        self.assertEqual(status["address"], "0x1111111111111111111111111111111111111111")
         self.assertFalse(set(status) & {"privateKey", "mnemonic", "token", "hasSecrets"})
         self.assertFalse(status["executionReady"])
 
@@ -42,7 +42,7 @@ class WalletBoundaryTests(unittest.TestCase):
             wallet_status("arbitrage", provider="untrusted")
 
     def test_onekey_provider_rejects_inconsistent_session(self):
-        status = wallet_status("hunter", lambda: {"authenticated": True, "authStatus": "pending", "displayAddress": "0xpublic"})
+        status = wallet_status("hunter", lambda: {"authenticated": True, "authStatus": "pending", "displayAddress": "0x1111111111111111111111111111111111111111"})
         self.assertFalse(status["authenticated"])
         self.assertIsNone(status["address"])
 
