@@ -147,6 +147,11 @@ jobs:
               assert review["depthAdjustedVwapUsd"] is not None
           assert review["estimatedNetSpreadPct"] is None
           print("PASS /paper-quote-review", "indicative_available", review["quoteVerified"])
-          print("STAGING_API_READY: read-only quotes and guarded paper reviews")
+          with urlopen(base + "/paper-spreads?asset=BTC&notional=25", timeout=25) as response:
+              spreads = json.load(response)
+          assert spreads["mode"] == "paper" and not spreads["executionReady"]
+          assert all(not row["tradeReady"] and row["estimatedNetSpreadPct"] is None for row in spreads["candidates"])
+          print("PASS /paper-spreads", len(spreads["candidates"]), "indicative candidates")
+          print("STAGING_API_READY: cross-DEX paper comparisons; no trading")
           PY
           REMOTE
