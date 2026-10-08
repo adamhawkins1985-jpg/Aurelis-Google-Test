@@ -152,6 +152,11 @@ jobs:
           assert spreads["mode"] == "paper" and not spreads["executionReady"]
           assert all(not row["tradeReady"] and row["estimatedNetSpreadPct"] is None for row in spreads["candidates"])
           print("PASS /paper-spreads", len(spreads["candidates"]), "indicative candidates")
-          print("STAGING_API_READY: cross-DEX paper comparisons; no trading")
+          with urlopen(base + "/funding-observations?asset=BTC", timeout=25) as response:
+              funding = json.load(response)
+          assert funding["mode"] == "paper" and not funding["executionReady"]
+          assert all(not item["costsVerified"] for item in funding["venues"].values())
+          print("PASS public funding observations")
+          print("STAGING_API_READY: read-only funding and paper comparisons")
           PY
           REMOTE
