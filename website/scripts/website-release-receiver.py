@@ -59,7 +59,10 @@ def deploy(payload, expected):
             total=0
             for m in members:
                 p=pathlib.PurePosixPath(m.name)
-                if not m.isfile() or p.is_absolute() or '..' in p.parts or not (
+                if p.is_absolute() or '..' in p.parts or not p.parts:
+                    raise RuntimeError('disallowed release path')
+                if m.isdir() and p.parts[0]=='dist': continue
+                if not m.isfile() or not (
                     str(p) in ALLOWED or (p.parts[0]=='dist' and len(p.parts)>1)
                 ): raise RuntimeError('disallowed release entry')
                 total+=m.size
