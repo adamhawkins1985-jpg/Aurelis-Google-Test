@@ -1,0 +1,30 @@
+name: DEX adapter safety
+on:
+  push:
+    paths:
+      - 'website/src/services/dexVenueRegistry.ts'
+      - 'website/src/services/dexAccountAdapters.ts'
+      - 'website/src/components/AiScreen.tsx'
+      - 'website/scripts/test_dex_adapters.ts'
+      - 'website/package.json'
+      - '.github/workflows/dex-adapters.yml'
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Test DEX registry and adapters
+        run: npm run test:dex
+      - name: Type check
+        run: npm run lint
+      - name: Build
+        run: npm run build
