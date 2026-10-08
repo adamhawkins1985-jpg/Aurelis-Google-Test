@@ -6,12 +6,23 @@ from urllib.parse import urlsplit, parse_qs
 from public_quotes import public_quotes
 from market_discovery import discover
 from agent_wallet_service import wallet_status
+from paper_router import prepare
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8895
 
 
 def payload(path, query):
+    if path == "/paper-prepare":
+        try:
+            return 200, prepare(
+                query.get("bot", ["arbitrage"])[0],
+                query.get("venue", ["hyperliquid"])[0],
+                query.get("asset", ["BTC"])[0],
+                query.get("side", ["long"])[0],
+                query.get("notional", ["25"])[0])
+        except ValueError:
+            return 400, {"ok": False, "error": "invalid_trade_proposal"}
     if path == "/agent-wallet":
         bot = query.get("bot", ["arbitrage"])[0]
         try:
