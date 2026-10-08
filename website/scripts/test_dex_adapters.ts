@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { DEX_VENUES, canUseAutomatedFunding, canUseEmergencyClose, canUseLiveOrders } from '../src/services/dexVenueRegistry';
 import { observeDexAccount, registerDexAccountAdapter } from '../src/services/dexAccountAdapters';
+import { fetchHyperliquidObservation } from '../src/services/hyperliquidReadOnlyAdapter';
 
 async function test(): Promise<void> {
   assert.equal(DEX_VENUES.length, 10);
@@ -25,6 +26,20 @@ async function test(): Promise<void> {
   const snapshot=await observeDexAccount('hyperliquid',wallet);
   assert.equal(snapshot.venue,'hyperliquid');
   assert.equal(invoked,true);
+  const priorFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      ok:true,perpsAccountValueUsd:'105.20',openPerpPositions:2,
+    }), {status:200,headers:{'Content-Type':'application/json'}});
+    const read=await fetchHyperliquidObservation(wallet);
+    assert.equal(read.accountValueUsd,'105.20');
+    assert.equal(read.openPositionCount,2);
+    assert.deepEqual(read.verifiedFields,['accountValueUsd','openPositionCount']);
+    assert.deepEqual(read.orders,[]);
+    globalThis.fetch = async () => new Response(JSON.stringify({ok:false,error:'unavailable'}),{status:502});
+    await assert.rejects(fetchHyperliquidObservation(wallet),/hyperliquid_observation_http_502/);
+    await assert.rejects(fetchHyperliquidObservation('bad'),/invalid_bot_wallet_address/);
+  } finally { globalThis.fetch = priorFetch; }
   console.log('DEX registry and read-only adapter checks passed');
 }
 test().catch(error=>{console.error(error);process.exitCode=1;});
