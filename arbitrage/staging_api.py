@@ -22,6 +22,7 @@ from hyperliquid_onekey_adapter import inspect_hyperliquid
 from hyperliquid_account_observation import inspect_account
 from hyperliquid_agent_preflight import preflight as agent_preflight
 from hyperliquid_agent_registry import authorized_agents
+from hyperliquid_agent_signing_preview import preview as signing_preview
 from onekey_session import staging_status
 
 HOST = "127.0.0.1"
@@ -36,6 +37,16 @@ def payload(path, query):
             return 200, observed_funding(asset)
         except ValueError:
             return 400, {"ok": False, "error": "invalid_asset"}
+    if path == "/hyperliquid-agent-signing-preview":
+        try:
+            return 200, signing_preview(
+                query.get("master", [""])[0],
+                query.get("agent", [""])[0],
+                query.get("name", ["AURELIS"])[0],
+                "Testnet",
+                int(query.get("nonce", ["0"])[0]))
+        except (ValueError, TypeError):
+            return 400, {"ok": False, "error": "invalid_signing_preview"}
     if path == "/hyperliquid-agent-registry":
         try:
             return 200, authorized_agents(
