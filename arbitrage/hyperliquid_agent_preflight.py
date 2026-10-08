@@ -13,7 +13,16 @@ def preflight(bot, asset, side, notional_usd, master_address, agent_address=None
         inspect_hyperliquid(bot,asset,side,notional_usd,agent_address)
         if master_address and agent_address.lower()==master_address.lower():
             raise ValueError("agent_must_differ_from_master")
+    prerequisites = [
+        {"id":"dedicated_agent_address","met":agent_address is not None,"detail":"Enter the public address of a separately controlled agent wallet"},
+        {"id":"agent_key_custody","met":False,"detail":"Agent key custody not independently verified"},
+        {"id":"master_wallet_approval","met":False,"detail":"OneKey EIP-712 approval has not been requested"},
+        {"id":"venue_authorization","met":False,"detail":"Hyperliquid has not confirmed agent authorization"},
+        {"id":"revocation_test","met":False,"detail":"Testnet revocation has not been tested"},
+    ]
     return {
+        "prerequisites": prerequisites,
+        "remainingRequirements": sum(not item["met"] for item in prerequisites),
         "mode":"paper", "action":"agent_authorization_preflight",
         "masterAddress":ready["publicWalletAddress"],
         "agentAddress":agent_address.lower() if agent_address else None,
