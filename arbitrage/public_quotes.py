@@ -131,6 +131,36 @@ def _fetch_lighter(asset):
     return sources["lighter"]
 
 
+def _fetch_extended(asset):
+    """Extended public orderbook; reject unverified markets and RFQ books."""
+    try:
+        market = f"{asset}-USD"
+        catalog = _json("https://api.starknet.extended.exchange/api/v1/info/markets")
+        markets = catalog.get("data")
+        if catalog.get("status") != "OK" or not isinstance(markets, list):
+            raise ValueError("invalid_catalog")
+        match = next((row for row in markets if isinstance(row, dict)
+                      and row.get("name") == market and row.get("type") == "PERPETUAL"
+                      and row.get("status") == "ACTIVE"), None)
+        if match is None:
+            raise ValueError("unsupported_market")
+        if match.get("tradingMode") == "RFQ" or match.get("isRfq") is True:
+            raise ValueError("indicative_rfq_book")
+        book = _json(f"https://api.starknet.extended.exchange/api/v1/info/markets/{market}/orderbook")
+        data = book.get("data") or {}
+        if book.get("status") != "OK" or data.get("market") != market:
+            raise ValueError("market_mismatch")
+        bids = sorted(_levels(data.get("bid", []), "price", "qty"), key=lambda x: x[0], reverse=True)
+        asks = sorted(_levels(data.get("ask", []), "price", "qty"), key=lambda x: x[0])
+        if not bids or not asks:
+            raise ValueError("empty_book")
+        return {"bid": bids[0][0], "ask": asks[0][0], "bids": bids, "asks": asks,
+                "receivedAt": time.time(), "source": "public_l2", "executionReady": False}
+    except Exception as error:
+        return {"bid": None, "ask": None, "error": type(error).__name__,
+                "executionReady": False}
+
+
 def public_quotes(asset):
     if not isinstance(asset, str) or not re.fullmatch(r"[A-Z0-9_-]{2,20}", asset):
         raise ValueError("Invalid asset symbol")
@@ -139,10 +169,11 @@ def public_quotes(asset):
         "dydx": _fetch_dydx,
         "paradex": _fetch_paradex,
         "lighter": _fetch_lighter,
+        "extended": _fetch_extended,
     }
     # Each call has its own network timeout; wait for all to finish, never reuse
     # a prior snapshot or claim a failed venue is available.
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:
         futures = {name: executor.submit(fn, asset) for name, fn in workers.items()}
         sources = {}
         for name, future in futures.items():
