@@ -1,0 +1,56 @@
+name: AURELIS website build
+on:
+  push:
+    paths:
+      - 'website/**'
+      - '.github/workflows/website-ci.yml'
+  pull_request:
+    paths:
+      - 'website/**'
+      - '.github/workflows/website-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check complete website source
+        id: source
+        run: |
+          if test -f website/package-lock.json && test -f website/package.json && test -f website/server.ts; then
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'Website import not complete. No deployment is attempted.'
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-node@v4
+        if: steps.source.outputs.available == 'true'
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Verify no runtime files entered GitHub
+        if: steps.source.outputs.available == 'true'
+        run: |
+          if git ls-files website | grep -E '(^|/)(\.env($|\.)|.*\.sqlite($|-)|.*\.db$|node_modules/|dist/|server\.js$|.*\.log$|.*\.pem$|.*\.key$)'; then
+            echo 'Rejected: runtime, credentials or build artifacts in repository'
+            exit 1
+          fi
+      - name: Build website
+        if: steps.source.outputs.available == 'true'
+        working-directory: website
+        run: |
+          npm ci
+          npm run build
+      - name: Store verified build artifact
+        if: steps.source.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: aurelis-website-build
+          path: |
+            website/dist/
+            website/server.js
+          retention-days: 7
