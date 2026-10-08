@@ -27,7 +27,7 @@ class WalletBoundaryTests(unittest.TestCase):
             "walletKind": "hd", "hasSecrets": True,
             "privateKey": "never", "mnemonic": "never", "token": "never"
         })
-        self.assertEqual(status["address"], "0x1111111111111111111111111111111111111111")
+        self.assertEqual(status["address"], "0xd2919c82e5fecbb0c4Be7A7C37bFC066579F233e")
         self.assertFalse(set(status) & {"privateKey", "mnemonic", "token", "hasSecrets"})
         self.assertFalse(status["executionReady"])
 
