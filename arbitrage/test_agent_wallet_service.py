@@ -23,7 +23,7 @@ class WalletBoundaryTests(unittest.TestCase):
 
     def test_no_secrets_returned(self):
         status = wallet_status("arbitrage", lambda: {
-            "authenticated": True, "authStatus": "authenticated", "displayAddress": "0x1111111111111111111111111111111111111111",
+            "authenticated": True, "authStatus": "authenticated", "displayAddress": "0xd2919c82e5fecbb0c4Be7A7C37bFC066579F233e",
             "walletKind": "hd", "hasSecrets": True,
             "privateKey": "never", "mnemonic": "never", "token": "never"
         })
@@ -45,6 +45,25 @@ class WalletBoundaryTests(unittest.TestCase):
         status = wallet_status("hunter", lambda: {"authenticated": True, "authStatus": "pending", "displayAddress": "0x1111111111111111111111111111111111111111"})
         self.assertFalse(status["authenticated"])
         self.assertIsNone(status["address"])
+
+    def test_different_wallet_is_never_authenticated(self):
+        other = "0x2222222222222222222222222222222222222222"
+        for bot in BOT_IDS:
+            result = wallet_status(bot, lambda: {
+                "authenticated": True, "authStatus": "authenticated",
+                "displayAddress": other, "walletKind": "hd"
+            })
+            self.assertFalse(result["authenticated"])
+            self.assertIsNone(result["address"])
+            self.assertFalse(result["permissions"]["sign"])
+
+    def test_expected_address_case_insensitive(self):
+        result = wallet_status("hunter", lambda: {
+            "authenticated": True, "authStatus": "authenticated",
+            "displayAddress": "0xd2919c82e5fecbb0c4be7a7c37bfc066579f233e"
+        })
+        self.assertTrue(result["authenticated"])
+        self.assertFalse(result["executionReady"])
 
     def test_unknown_bot_denied(self):
         self.assertFalse(authorize("unknown", "read"))
