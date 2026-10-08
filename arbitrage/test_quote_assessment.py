@@ -25,6 +25,17 @@ class AssessmentTests(unittest.TestCase):
                 self.assertFalse(result["quoteVerified"])
                 self.assertFalse(result["executionReady"])
 
+    def test_depth_adjusted_review_cannot_trade(self):
+        result = assess("arbitrage", "hyperliquid", "BTC", "long", 25,
+                        {"venue": "hyperliquid", "asset": "BTC", "ask": 100, "bid": 99,
+                         "asks": [[100, 0.1], [110, 1]], "receivedAt": 1000},
+                        now=1001)
+        self.assertTrue(result["liquidityVerified"])
+        self.assertGreater(result["depthAdjustedVwapUsd"], 100)
+        self.assertFalse(result["feesVerified"])
+        self.assertFalse(result["executionReady"])
+        self.assertIsNone(result["estimatedNetSpreadPct"])
+
     def test_wrong_side_does_not_use_ask(self):
         result = assess("grid", "dydx", "SOL", "sell", 10,
                         {"venue": "dydx", "asset": "SOL", "ask": 110, "receivedAt": 1000}, now=1000)
