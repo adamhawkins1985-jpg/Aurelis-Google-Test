@@ -74,5 +74,19 @@ def public_quotes(asset):
     except Exception as error:
         sources["dydx"] = {"bid": None, "ask": None, "error": type(error).__name__,
                             "executionReady": False}
+    try:
+        # Paradex public orderbook uses BTC-USD-PERP-style symbols.
+        market = f"{asset}-USD-PERP"
+        book = _json(f"https://api.prod.paradex.trade/v1/orderbook/{market}?depth=20")
+        fetched_at = time.time()
+        if book.get("market") != market:
+            raise ValueError("market_mismatch")
+        bids, asks = _levels(book["bids"]), _levels(book["asks"])
+        sources["paradex"] = {"bid": _top(bids), "ask": _top(asks),
+                              "bids": bids, "asks": asks, "receivedAt": fetched_at,
+                              "source": "public_l2", "executionReady": False}
+    except Exception as error:
+        sources["paradex"] = {"bid": None, "ask": None,
+                              "error": type(error).__name__, "executionReady": False}
     return {"mode": "paper", "asset": asset, "dataSource": "public_read_only",
             "executionReady": False, "quotes": sources}
