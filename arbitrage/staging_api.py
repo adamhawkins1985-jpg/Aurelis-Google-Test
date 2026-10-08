@@ -12,6 +12,7 @@ from quote_assessment import assess
 from spread_comparison import compare
 from funding_observations import observed_funding
 from book_validation import validate_book
+from onekey_session import staging_status
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8895
@@ -69,7 +70,7 @@ def payload(path, query):
         bot = query.get("bot", ["arbitrage"])[0]
         try:
             provider = query.get("provider", ["onekey"])[0]
-            return 200, wallet_status(bot, provider=provider)
+            return 200, wallet_status(bot, status_provider=staging_status if provider == "onekey" else None, provider=provider)
         except ValueError:
             return 400, {"ok": False, "error": "unknown_bot"}
     if path == "/markets":
