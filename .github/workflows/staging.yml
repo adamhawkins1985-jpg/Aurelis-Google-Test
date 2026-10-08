@@ -109,7 +109,7 @@ jobs:
           with urlopen(base + "/public-markets?asset=BTC", timeout=20) as response:
               market = json.load(response)
           assert market["mode"] == "paper" and market["dataSource"] == "public_read_only"
-          assert not market["executionReady"] and set(market["quotes"]) == {"hyperliquid", "dydx", "paradex"}
+          assert not market["executionReady"] and set(market["quotes"]) == {"hyperliquid", "dydx", "paradex", "lighter"}
           print("PASS /public-markets?asset=BTC", {k: "ok" if v.get("bid") and v.get("ask") else "unavailable" for k, v in market["quotes"].items()})
           with urlopen(base + "/markets", timeout=20) as response:
               catalog = json.load(response)
