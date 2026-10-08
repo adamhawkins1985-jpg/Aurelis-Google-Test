@@ -4,6 +4,7 @@ No wallet access, API keys, private endpoints or order submission.
 """
 import json
 import re
+import time
 from urllib.request import Request, urlopen
 
 ASSETS = ("BTC", "ETH", "SOL")  # Initial smoke-test assets; dynamic symbols also accepted.
@@ -53,9 +54,11 @@ def public_quotes(asset):
     sources = {}
     try:
         book = _json("https://api.hyperliquid.xyz/info", {"type": "l2Book", "coin": asset})
+        fetched_at = time.time()
         levels = book["levels"]
         sources["hyperliquid"] = {"bid": _top(levels[0], "px", "sz"),
                                    "ask": _top(levels[1], "px", "sz"),
+                                   "receivedAt": fetched_at,
                                    "bids": _levels(levels[0], "px", "sz"),
                                    "asks": _levels(levels[1], "px", "sz"),
                             "source": "public_l2", "executionReady": False}
@@ -64,7 +67,8 @@ def public_quotes(asset):
                                    "executionReady": False}
     try:
         book = _json(f"https://indexer.dydx.trade/v4/orderbooks/perpetualMarket/{asset}-USD")
-        sources["dydx"] = {"bid": _top(book["bids"]), "ask": _top(book["asks"]),
+        fetched_at = time.time()
+        sources["dydx"] = {"receivedAt": fetched_at, "bid": _top(book["bids"]), "ask": _top(book["asks"]),
                             "bids": _levels(book["bids"]), "asks": _levels(book["asks"]),
                             "source": "public_l2", "executionReady": False}
     except Exception as error:
