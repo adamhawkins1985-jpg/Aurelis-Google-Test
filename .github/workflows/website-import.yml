@@ -45,7 +45,7 @@ jobs:
       - name: Build imported website
         working-directory: website
         run: |
-          npm ci
+          npm ci --legacy-peer-deps
           npm run build
       - name: Commit source into private repository
         run: |
