@@ -12,6 +12,8 @@ class AgentPreflightTests(unittest.TestCase):
         for bot in BOT_IDS:
             result=preflight(bot,"BTC","long",25,M,A,"Testnet")
             self.assertFalse(result["signingRequested"])
+            self.assertEqual(result["remainingRequirements"],4)
+            self.assertFalse(result["prerequisites"][2]["met"])
             self.assertFalse(result["exchangeRequestSent"])
             self.assertFalse(result["executionReady"])
             self.assertFalse(result["authorizationVerified"])
