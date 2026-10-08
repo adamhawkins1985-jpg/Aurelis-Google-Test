@@ -31,11 +31,9 @@ def payload(path, query):
         try:
             prepare("arbitrage", "hyperliquid", asset, "buy", notional)
             snapshots = public_quotes(asset)["quotes"]
-            # Stamp ingestion time, not exchange time. This is not a verified exchange timestamp.
-            received = time.time()
             accepted = {}
             for venue, book in snapshots.items():
-                checked = validate_book(venue, asset, book, received)
+                checked = validate_book(venue, asset, book, book.get("receivedAt"))
                 if checked["quoteUsable"]:
                     accepted[venue] = checked
             return 200, compare(asset, notional, accepted)
@@ -52,7 +50,7 @@ def payload(path, query):
             if venue not in ("hyperliquid", "dydx"):
                 return 200, assess(bot, venue, asset, side, notional)
             quote = public_quotes(asset)["quotes"].get(venue, {})
-            checked = validate_book(venue, asset, quote, time.time())
+            checked = validate_book(venue, asset, quote, quote.get("receivedAt"))
             return 200, assess(bot, venue, asset, side, notional,
                                checked if checked["quoteUsable"] else None)
         except ValueError:
