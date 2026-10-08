@@ -294,7 +294,7 @@ class AurelisServerWalletProvider implements AurelisWalletProvider {
     if (externalAddress || Object.keys(watch).length || profiles.length) {
       const addresses: WalletAddressMap = {};
       const put = (key: string, value: string) => {
-        if (key && value && !addresses[key]) addresses[key] = value;
+        if (key && value && !isBotOnlyAddress(value) && !addresses[key]) addresses[key] = value;
       };
       if (externalAddress) {
         for (const key of ['ETH','ethereum','evm--1','BASE','base','evm--8453','ARBITRUM','arbitrum','evm--42161','OPTIMISM','optimism','evm--10','BSC','bsc','evm--56','POLYGON','polygon','evm--137','AVAX','avalanche','evm--43114']) {
@@ -322,7 +322,7 @@ class AurelisServerWalletProvider implements AurelisWalletProvider {
     if (!res.ok || !data?.ok || !data.addresses) {
       throw new Error(data?.error || 'AURELIS wallet addresses unavailable');
     }
-    return data.addresses;
+    return Object.fromEntries(Object.entries(data.addresses).filter(([,value]) => !isBotOnlyAddress(String(value)))) as WalletAddressMap;
   }
 
   async getPortfolio(): Promise<WalletPortfolioAsset[]> {
