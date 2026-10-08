@@ -4,6 +4,8 @@ import time
 from decimal import Decimal
 from quote_assessment import assess
 
+MAX_PAIR_SKEW_SECONDS = 3
+
 
 def compare(asset, notional_usd, quotes, now=None):
     """Compare asks against bids across distinct venues, never authorize execution."""
@@ -25,6 +27,12 @@ def compare(asset, notional_usd, quotes, now=None):
             if buy_venue == sell_venue:
                 continue
             buy, sell = entry["buy"], exit_["sell"]
+            buy_time = quotes[buy_venue].get("receivedAt")
+            sell_time = quotes[sell_venue].get("receivedAt")
+            if not all(isinstance(t, (int, float)) and not isinstance(t, bool) and math.isfinite(t) for t in (buy_time, sell_time)):
+                continue
+            if abs(buy_time - sell_time) > MAX_PAIR_SKEW_SECONDS:
+                continue
             a, b = buy["depthAdjustedVwapUsd"], sell["depthAdjustedVwapUsd"]
             if not (buy["liquidityVerified"] and sell["liquidityVerified"]):
                 continue
