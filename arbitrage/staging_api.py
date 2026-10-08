@@ -47,7 +47,7 @@ def payload(path, query):
         notional = query.get("notional", ["25"])[0]
         try:
             draft = prepare(bot, venue, asset, side, notional)
-            if venue not in ("hyperliquid", "dydx"):
+            if venue not in ("hyperliquid", "dydx", "paradex"):
                 return 200, assess(bot, venue, asset, side, notional)
             quote = public_quotes(asset)["quotes"].get(venue, {})
             checked = validate_book(venue, asset, quote, quote.get("receivedAt"))
