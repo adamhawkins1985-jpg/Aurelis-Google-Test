@@ -14,6 +14,8 @@ class PublicQuoteTests(unittest.TestCase):
                 self.assertEqual(data, {"type": "l2Book", "coin": "BTC"})
                 return {"levels": [[{"px": "100", "sz": "1"}], [{"px": "101", "sz": "2"}]]}
             self.assertIsNone(data)
+            if "paradex" in url:
+                return {"market": "BTC-USD-PERP", "bids": [["98", "2"]], "asks": [["103", "2"]]}
             return {"bids": [{"price": "99", "size": "1"}],
                     "asks": [{"price": "102", "size": "1"}]}
         with patch.object(public_quotes, "_json", side_effect=fixture):
@@ -22,6 +24,8 @@ class PublicQuoteTests(unittest.TestCase):
         self.assertFalse(result["executionReady"])
         self.assertEqual(result["quotes"]["hyperliquid"]["bid"], 100)
         self.assertEqual(result["quotes"]["dydx"]["ask"], 102)
+        self.assertEqual(result["quotes"]["paradex"]["bid"], 98)
+        self.assertEqual(result["quotes"]["paradex"]["asks"], [[103.0, 2.0]])
         self.assertTrue(all(not x["executionReady"] for x in result["quotes"].values()))
 
     def test_network_failure_returns_no_quotes(self):
@@ -29,6 +33,7 @@ class PublicQuoteTests(unittest.TestCase):
             result = public_quotes.public_quotes("ETH")
         self.assertIsNone(result["quotes"]["hyperliquid"]["bid"])
         self.assertIsNone(result["quotes"]["dydx"]["ask"])
+        self.assertIsNone(result["quotes"]["paradex"]["ask"])
         self.assertFalse(result["executionReady"])
 
     def test_reject_unknown_asset(self):
