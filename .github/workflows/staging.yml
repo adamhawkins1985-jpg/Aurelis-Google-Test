@@ -63,6 +63,6 @@ jobs:
           case "$RELEASE" in *[!0-9a-f]*|'') echo "Invalid release SHA"; exit 1;; esac
           SSH="ssh -i $HOME/.ssh/aurelis_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10"
           # Only user-owned staging directory. Never touch /opt/aurelis.
-          $SSH "aurelisdeploy@$HOST" "set -eu; umask 077; mkdir -p '\$HOME/aurelis-staging/releases/$RELEASE'"
-          cat "$RUNNER_TEMP/aurelis-paper-staging.tgz" | $SSH "aurelisdeploy@$HOST" "set -eu; tar -xzf - -C '\$HOME/aurelis-staging/releases/$RELEASE'"
-          $SSH "aurelisdeploy@$HOST" "set -eu; cd '\$HOME/aurelis-staging/releases/$RELEASE'; python3 -m unittest discover -s arbitrage -p 'test_*.py' -v; ln -sfn 'releases/$RELEASE' '\$HOME/aurelis-staging/current.next'; mv -Tf '\$HOME/aurelis-staging/current.next' '\$HOME/aurelis-staging/current'; echo STAGING_SOURCE_READY"
+          $SSH "aurelisdeploy@$HOST" "set -eu; umask 077; mkdir -p 'aurelis-staging/releases/$RELEASE'"
+          cat "$RUNNER_TEMP/aurelis-paper-staging.tgz" | $SSH "aurelisdeploy@$HOST" "set -eu; tar -xzf - -C 'aurelis-staging/releases/$RELEASE'"
+          $SSH "aurelisdeploy@$HOST" "set -eu; cd 'aurelis-staging/releases/$RELEASE'; python3 -m unittest discover -s arbitrage -p 'test_*.py' -v; ln -sfn 'releases/$RELEASE' 'aurelis-staging/current.next'; mv -Tf 'aurelis-staging/current.next' 'aurelis-staging/current'; echo STAGING_SOURCE_READY"
