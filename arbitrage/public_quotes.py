@@ -88,5 +88,31 @@ def public_quotes(asset):
     except Exception as error:
         sources["paradex"] = {"bid": None, "ask": None,
                               "error": type(error).__name__, "executionReady": False}
+    try:
+        # Lighter markets are keyed by numeric market_id, not ticker symbols.
+        catalog = _json("https://mainnet.zklighter.elliot.ai/api/v1/orderBooks")
+        rows = catalog.get("order_books") or []
+        match = next(row for row in rows if isinstance(row, dict)
+                     and row.get("symbol") == asset
+                     and row.get("market_type") == "perp"
+                     and row.get("status") == "active")
+        market_id = int(match["market_id"])
+        if market_id < 0 or market_id > 2047:
+            raise ValueError("invalid_market_id")
+        book = _json(f"https://mainnet.zklighter.elliot.ai/api/v1/orderBookOrders?market_id={market_id}&limit=50")
+        fetched_at = time.time()
+        if book.get("code") != 200:
+            raise ValueError("upstream_error")
+        def convert(rows):
+            return _levels([{"price": row["price"], "size": row["remaining_base_amount"]}
+                            for row in rows if isinstance(row, dict)])
+        bids = sorted(convert(book["bids"]), key=lambda row: row[0], reverse=True)
+        asks = sorted(convert(book["asks"]), key=lambda row: row[0])
+        sources["lighter"] = {"bid": _top(bids), "ask": _top(asks),
+                              "bids": bids, "asks": asks, "receivedAt": fetched_at,
+                              "source": "public_l2", "executionReady": False}
+    except Exception as error:
+        sources["lighter"] = {"bid": None, "ask": None,
+                              "error": type(error).__name__, "executionReady": False}
     return {"mode": "paper", "asset": asset, "dataSource": "public_read_only",
             "executionReady": False, "quotes": sources}
