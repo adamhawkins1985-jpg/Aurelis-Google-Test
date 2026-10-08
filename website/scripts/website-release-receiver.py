@@ -23,14 +23,30 @@ def server_pid():
         except (OSError,PermissionError): pass
     if len(found)!=1: raise RuntimeError('expected one live website server, found '+str(len(found)))
     return found[0]
+RUN_ENV = None
 def restart():
-    os.kill(server_pid(),signal.SIGTERM)
-    for i in range(30):
+    global RUN_ENV
+    try: old=server_pid()
+    except RuntimeError: old=None
+    if old is not None:
+        raw=(pathlib.Path('/proc')/str(old)/'environ').read_bytes()
+        env=dict(x.split('=',1) for x in (part.decode('utf-8','surrogateescape') for part in raw.split(b'\0') if b'=' in part))
+        if env.get('PORT')!='8798': raise RuntimeError('refusing to restart unknown website port')
+        RUN_ENV=env
+        os.kill(old,signal.SIGTERM)
+        for _ in range(30):
+            if not pathlib.Path('/proc',str(old)).exists():break
+            time.sleep(0.2)
+    elif RUN_ENV is None: raise RuntimeError('no live website server to inherit configuration from')
+    env=RUN_ENV
+    log_file=open(ROOT/'stage.log','ab',buffering=0)
+    new=subprocess.Popen(['/usr/bin/node',str(ROOT/'server.js')],cwd=ROOT,env=env,
+        stdin=subprocess.DEVNULL,stdout=log_file,stderr=subprocess.STDOUT,start_new_session=True)
+    log_file.close()
+    for _ in range(30):
         time.sleep(1)
-        try:
-            new = server_pid()
-            if health(): return True
-        except RuntimeError: pass
+        if new.poll() is not None: break
+        if health():return True
     return False
 def deploy(payload, expected):
     if hashlib.sha256(payload).hexdigest()!=expected: raise RuntimeError('checksum mismatch')
