@@ -2,6 +2,9 @@ name: AURELIS VPS connection check
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/vps-check.yml'
 
 permissions:
   contents: read
@@ -37,4 +40,4 @@ jobs:
           fi
           printf '%s\n' "$KNOWN" > "$HOME/.ssh/known_hosts"
           trap 'rm -f "$HOME/.ssh/aurelis_deploy" "$HOME/.ssh/known_hosts"' EXIT
-          ssh -i "$HOME/.ssh/aurelis_deploy" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 -- "aurelisdeploy@$HOST" 'printf "Connected as: "; whoami; printf "Host: "; hostname; printf "Home: "; pwd'
+          ssh -i "$HOME/.ssh/aurelis_deploy" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 -- "aurelisdeploy@$HOST" 'printf "Connected as: "; whoami; printf "Host: "; hostname; printf "Home: "; pwd; printf "\nMEMORY\n"; free -m; printf "\nSWAP\n"; cat /proc/swaps; printf "\nOOM COUNTERS\n"; for f in /sys/fs/cgroup/memory.events /sys/fs/cgroup/memory.events.local; do if test -r "$f"; then echo "$f"; cat "$f"; fi; done; printf "\nLOAD\n"; uptime; printf "\nTOP MEMORY PROCESSES\n"; ps -eo pid,comm,rss,%mem --sort=-rss | head -12'
