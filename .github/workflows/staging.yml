@@ -111,6 +111,12 @@ jobs:
           assert market["mode"] == "paper" and market["dataSource"] == "public_read_only"
           assert not market["executionReady"] and set(market["quotes"]) == {"hyperliquid", "dydx"}
           print("PASS /public-markets?asset=BTC", {k: "ok" if v.get("bid") and v.get("ask") else "unavailable" for k, v in market["quotes"].items()})
-          print("STAGING_API_READY: loopback 127.0.0.1:8895; synthetic scan, public read-only market probe")
+          with urlopen(base + "/markets", timeout=20) as response:
+              catalog = json.load(response)
+          assert catalog["mode"] == "paper" and not catalog["executionReady"]
+          assert "overlapCount" in catalog and "assetCount" in catalog
+          print("MARKET_DISCOVERY", "assets", catalog["assetCount"], "overlap", catalog["overlapCount"],
+                "venues", {k: len(v["assets"]) for k, v in catalog["venues"].items()})
+          print("STAGING_API_READY: loopback 127.0.0.1:8895; synthetic scan, public market discovery")
           PY
           REMOTE
