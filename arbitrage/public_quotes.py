@@ -58,7 +58,6 @@ def public_quotes(asset):
                                    "ask": _top(levels[1], "px", "sz"),
                                    "bids": _levels(levels[0], "px", "sz"),
                                    "asks": _levels(levels[1], "px", "sz"),
-                                   "bids": _levels(book["bids"]), "asks": _levels(book["asks"]),
                             "source": "public_l2", "executionReady": False}
     except Exception as error:
         sources["hyperliquid"] = {"bid": None, "ask": None, "error": type(error).__name__,
@@ -66,6 +65,7 @@ def public_quotes(asset):
     try:
         book = _json(f"https://indexer.dydx.trade/v4/orderbooks/perpetualMarket/{asset}-USD")
         sources["dydx"] = {"bid": _top(book["bids"]), "ask": _top(book["asks"]),
+                            "bids": _levels(book["bids"]), "asks": _levels(book["asks"]),
                             "source": "public_l2", "executionReady": False}
     except Exception as error:
         sources["dydx"] = {"bid": None, "ask": None, "error": type(error).__name__,
