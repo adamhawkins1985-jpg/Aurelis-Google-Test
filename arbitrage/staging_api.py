@@ -20,6 +20,7 @@ from dex_paper_risk import review as review_paper_risk
 from dex_trade_intent import prepare_intent
 from hyperliquid_onekey_adapter import inspect_hyperliquid
 from hyperliquid_account_observation import inspect_account
+from hyperliquid_agent_preflight import preflight as agent_preflight
 from onekey_session import staging_status
 
 HOST = "127.0.0.1"
@@ -34,6 +35,18 @@ def payload(path, query):
             return 200, observed_funding(asset)
         except ValueError:
             return 400, {"ok": False, "error": "invalid_asset"}
+    if path == "/hyperliquid-agent-preflight":
+        try:
+            return 200, agent_preflight(
+                query.get("bot", ["hunter"])[0],
+                query.get("asset", ["BTC"])[0],
+                query.get("side", ["long"])[0],
+                query.get("notional", ["25"])[0],
+                query.get("master", [""])[0],
+                query.get("agent", [None])[0],
+                query.get("network", ["Testnet"])[0])
+        except ValueError:
+            return 400, {"ok": False, "error": "invalid_agent_preflight"}
     if path == "/hyperliquid-account-observation":
         try:
             return 200, inspect_account(query.get("wallet", [""])[0])
