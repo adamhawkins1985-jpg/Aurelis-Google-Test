@@ -37,7 +37,7 @@ def payload(path, query):
         notional = query.get("notional", ["25"])[0]
         try:
             prepare(bot, "hyperliquid", asset, side, notional)
-            return 200, inspect_dex_strategy(bot, asset, side, notional, public_quotes(asset)["quotes"])
+            return 200, inspect_dex_strategy(bot, asset, side, notional, public_quotes(asset)["quotes"], observed_funding(asset))
         except ValueError:
             return 400, {"ok": False, "error": "invalid_strategy_review"}
     if path == "/paper-dex-assessment":
