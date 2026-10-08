@@ -1,6 +1,7 @@
 """Public quote safety and parsing tests. Network is fully mocked."""
 import sys
 import unittest
+import threading
 from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent))
@@ -36,6 +37,31 @@ class PublicQuoteTests(unittest.TestCase):
         self.assertEqual(result["quotes"]["paradex"]["bid"], 98)
         self.assertEqual(result["quotes"]["paradex"]["asks"], [[103.0, 2.0]])
         self.assertTrue(all(not x["executionReady"] for x in result["quotes"].values()))
+
+    def test_venues_start_in_parallel(self):
+        entered = set()
+        lock = threading.Lock()
+        barrier = threading.Barrier(4, timeout=2)
+
+        def parallel_fetch(url, data=None):
+            if "hyperliquid" in url:
+                name = "hyperliquid"
+            elif "dydx" in url:
+                name = "dydx"
+            elif "paradex" in url:
+                name = "paradex"
+            else:
+                name = "lighter"
+            with lock:
+                entered.add(name)
+            barrier.wait()
+            raise TimeoutError("controlled fixture")
+
+        with patch.object(public_quotes, "_json", side_effect=parallel_fetch):
+            result = public_quotes.public_quotes("BTC")
+        self.assertEqual(entered, {"hyperliquid", "dydx", "paradex", "lighter"})
+        self.assertTrue(all(not quote["executionReady"]
+                            for quote in result["quotes"].values()))
 
     def test_network_failure_returns_no_quotes(self):
         with patch.object(public_quotes, "_json", side_effect=TimeoutError):
