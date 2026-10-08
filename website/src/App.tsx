@@ -148,6 +148,8 @@ export default function App() {
     return ['bitcoin', 'ethereum', 'solana'];
   });
 
+  // Agent Money is reserved for Bots and must not populate the main wallet.
+  const isBotOnlyAddress = (value: unknown) => String(value || '').trim().toLowerCase() === '0xd2919c82e5fecbb0c4be7a7c37bfc066579f233e';
   // Real AURELIS wallet state. Android supplies a native snapshot; desktop resolves saved wallet addresses.
   const [isWalletConnected, setIsWalletConnected] = useState<boolean>(false);
   const [walletAddress, setWalletAddress] = useState<string>('');
@@ -159,7 +161,7 @@ export default function App() {
     const applySnapshot = (snapshot: any) => {
       if (!snapshot || typeof snapshot !== 'object') return;
       const evm = snapshot.evmAddress || snapshot.address || '';
-      if (evm) {
+      if (evm && !isBotOnlyAddress(evm)) {
         setWalletAddress(evm);
         setIsWalletConnected(true);
       }
@@ -194,7 +196,7 @@ export default function App() {
     const getSavedExternalWalletAddress = () => {
       try {
         const saved = localStorage.getItem('aurelis_wallet_address') || '';
-        return /^0x[a-fA-F0-9]{40}$/.test(saved) ? saved : '';
+        return /^0x[a-fA-F0-9]{40}$/.test(saved) && !isBotOnlyAddress(saved) ? saved : '';
       } catch {
         return '';
       }
@@ -206,7 +208,7 @@ export default function App() {
           const values = Object.values(addresses).filter(Boolean);
           const evm = firstEvmAddress(addresses);
           const savedExternal = getSavedExternalWalletAddress();
-          const nextAddress = evm || values[0] || savedExternal;
+          const nextAddress = [evm,...values,savedExternal].find(value=>value && !isBotOnlyAddress(value)) || '';
           setWalletAddress(nextAddress);
           setIsWalletConnected(Boolean(nextAddress));
         })
@@ -222,7 +224,7 @@ export default function App() {
       getLatestWalletPortfolio()
         .then((assets) => {
           setWalletHoldings(
-            assets.map((item) => ({
+            assets.filter(item => !isBotOnlyAddress(item.accountAddress)).map((item) => ({
               symbol: item.symbol,
               name: item.name,
               amount: item.amount,
@@ -271,7 +273,7 @@ export default function App() {
             return '';
           }
         })();
-        const nextAddress = evm || values[0] || savedExternal;
+        const nextAddress = [evm,...values,savedExternal].find(value=>value && !isBotOnlyAddress(value)) || '';
         if (nextAddress) {
           setWalletAddress((current) => current || nextAddress);
           setIsWalletConnected(true);
@@ -280,7 +282,7 @@ export default function App() {
       .catch(() => {
         try {
           const saved = localStorage.getItem('aurelis_wallet_address') || '';
-          if (/^0x[a-fA-F0-9]{40}$/.test(saved)) {
+          if (/^0x[a-fA-F0-9]{40}$/.test(saved) && !isBotOnlyAddress(saved)) {
             setWalletAddress((current) => current || saved);
             setIsWalletConnected(true);
           }
@@ -291,7 +293,7 @@ export default function App() {
       getLatestWalletPortfolio()
         .then((assets) => {
           setWalletHoldings(
-            assets.map((item) => ({
+            assets.filter(item => !isBotOnlyAddress(item.accountAddress)).map((item) => ({
               symbol: item.symbol,
               name: item.name,
               amount: item.amount,
