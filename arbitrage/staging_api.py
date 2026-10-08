@@ -14,6 +14,7 @@ from funding_observations import observed_funding
 from book_validation import validate_book
 from dex_route_selector import select_paper_route
 from dex_batch_scan import scan as scan_dex_batch
+from dex_signal_risk import analyze as assess_dex_signal
 from onekey_session import staging_status
 
 HOST = "127.0.0.1"
@@ -28,6 +29,17 @@ def payload(path, query):
             return 200, observed_funding(asset)
         except ValueError:
             return 400, {"ok": False, "error": "invalid_asset"}
+    if path == "/paper-dex-assessment":
+        bot = query.get("bot", ["hunter"])[0]
+        asset = query.get("asset", ["BTC"])[0]
+        side = query.get("side", ["long"])[0]
+        notional = query.get("notional", ["25"])[0]
+        try:
+            prepare(bot, "hyperliquid", asset, side, notional)
+            quotes = public_quotes(asset)["quotes"]
+            return 200, assess_dex_signal(bot, asset, side, notional, quotes)
+        except ValueError:
+            return 400, {"ok": False, "error": "invalid_dex_assessment"}
     if path == "/paper-dex-batch":
         bot = query.get("bot", ["hunter"])[0]
         symbols = query.get("assets", ["BTC,ETH,SOL"])[0]
