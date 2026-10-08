@@ -19,6 +19,9 @@ export function DexIntentReview({tab}:{tab:string}) {
   const [error,setError]=useState('');
   const [result,setResult]=useState<{kind:string; data:any}|null>(null);
   const [advanced,setAdvanced]=useState(false);
+  const [accountReview,setAccountReview]=useState<any>(null);
+  const [registryReview,setRegistryReview]=useState<Record<string,any>>({});
+  const [reviewErrors,setReviewErrors]=useState<Record<string,string>>({});
 
   const refreshWallet=async()=>{
     setError('');
@@ -59,6 +62,33 @@ export function DexIntentReview({tab}:{tab:string}) {
       setResult({kind,data});
     }catch(e:any){setError(e?.message||'Review unavailable')}
     finally{setBusy('')}
+  };
+  const inspectHyperliquid=async()=>{
+    const address=publicAddress.trim();
+    if(!addressOk(address)){setError('Connect the Bot Wallet or enter a valid public address.');return;}
+    setBusy('Hyperliquid account and agents');setError('');setAccountReview(null);setRegistryReview({});setReviewErrors({});
+    const tasks=[
+      {key:'account',url:'/api/bots/hyperliquid-account?'+new URLSearchParams({wallet:address})},
+      {key:'Mainnet',url:'/api/bots/hyperliquid-agent-registry?'+new URLSearchParams({master:address,network:'Mainnet'})},
+      {key:'Testnet',url:'/api/bots/hyperliquid-agent-registry?'+new URLSearchParams({master:address,network:'Testnet'})},
+    ];
+    try {
+      const responses=await Promise.all(tasks.map(async task=>{
+        try {
+          const res=await fetch(task.url,{cache:'no-store'});
+          const body=await res.json();
+          if(!res.ok||body?.ok===false) throw Error(body?.error||'Public lookup failed');
+          return {key:task.key,data:body};
+        }catch(e:any){return {key:task.key,error:e?.message||'Unavailable'};}
+      }));
+      const errors:Record<string,string>={};const registries:Record<string,any>={};
+      for(const response of responses){
+        if('error' in response) errors[response.key]=String(response.error);
+        else if(response.key==='account')setAccountReview(response.data);
+        else registries[response.key]=response.data;
+      }
+      setRegistryReview(registries);setReviewErrors(errors);
+    } finally {setBusy('');}
   };
   const intent=()=>request('intent','/api/bots/dex-intent',{bot:bots[tab]||'hunter',venue,asset,side,notional:'25'});
   const account=()=>request('account','/api/bots/hyperliquid-account',{wallet:publicAddress.trim()});
@@ -113,9 +143,17 @@ export function DexIntentReview({tab}:{tab:string}) {
         <label className="text-xs">Asset<select className={'mt-1 block '+field} value={asset} onChange={e=>setAsset(e.target.value)}>{['BTC','ETH','SOL'].map(a=><option key={a}>{a}</option>)}</select></label>
         <label className="text-xs">Side<select className={'mt-1 block '+field} value={side} onChange={e=>setSide(e.target.value)}><option value="long">LONG</option><option value="short">SHORT</option></select></label>
         <button className={button} disabled={disabled} onClick={()=>void intent()}>Review DEX</button>
-        {venue==='hyperliquid'&&<button className={button} disabled={disabled||!addressOk(publicAddress)} onClick={()=>void account()}>Check account</button>}
+        {venue==='hyperliquid'&&<button className={button} disabled={disabled||!addressOk(publicAddress)} onClick={()=>void inspectHyperliquid()}>Check Hyperliquid account + agents</button>}
       </div>
     </div>
+    {venue==='hyperliquid'&&<div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs dark:border-slate-700 dark:bg-slate-900">
+      <strong>Hyperliquid account and agent verification</strong>
+      <p className="mt-1 text-slate-600 dark:text-slate-300">Read-only public queries. Account observation and Mainnet/Testnet agent registries are shown separately. A connected wallet does not mean Hyperliquid trading is authorized.</p>
+      {accountReview&&<p className="mt-2">Account observation (upstream default network): Value ${String(accountReview.perpsAccountValueUsd??'unavailable')} · Withdrawable ${String(accountReview.perpsWithdrawableUsd??'unavailable')} · Open positions {String(accountReview.openPerpPositions??'unavailable')}</p>}
+      {['Mainnet','Testnet'].map(network=><p key={network} className="mt-2">{network} registered agents: {registryReview[network]?String(registryReview[network].agentCount??'Not reported'):reviewErrors[network]?'Lookup failed: '+reviewErrors[network]:'Not checked yet'}. {registryReview[network]?'Registry checked, but agent trading permissions are not assumed.':''}</p>)}
+      {reviewErrors.account&&<p className="mt-1 text-red-600 dark:text-red-400">Account lookup failed: {reviewErrors.account}</p>}
+      {accountReview&&<p className="mt-1 text-slate-600 dark:text-slate-300">This public observation does not prove balances on a different network.</p>}
+    </div>}
     <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900">
       <strong>3. Trading authorization</strong>
       <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">No trading agent is authorized by this screen. Signing approvals and live orders remain disabled.</p>
