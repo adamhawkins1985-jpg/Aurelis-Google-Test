@@ -69,3 +69,30 @@ jobs:
           echo "STAGED_WEBSITE_RELEASE=$release (not live)"
           curl -fsS --max-time 8 http://127.0.0.1:8798/api/health
           REMOTE
+
+      - name: Activate latest verified website release with rollback
+        env:
+          HOST: ${{ secrets.VPS_HOST }}
+          KEY: ${{ secrets.VPS_SSH_KEY }}
+          KNOWN: ${{ secrets.VPS_KNOWN_HOSTS }}
+          RELEASE: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          latest="$(gh api "repos/${{ github.repository }}/git/ref/heads/main" --jq '.object.sha')"
+          if [ "$latest" != "$RELEASE" ]; then
+            echo "Skipping older website release; current main is $latest"
+            exit 0
+          fi
+          test -n "$HOST" && test -n "$KEY" && test -n "$KNOWN"
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          trap 'rm -f "$HOME/.ssh/aurelis_activate" "$HOME/.ssh/known_hosts"' EXIT
+          python3 -c 'import os,pathlib;pathlib.Path.home().joinpath(".ssh/aurelis_activate").write_text(os.environ["KEY"].replace(chr(92)+"n",chr(10)).rstrip()+chr(10))'
+          unset KEY
+          ssh-keygen -y -P '' -f "$HOME/.ssh/aurelis_activate" >/dev/null
+          printf '%s\n' "$KNOWN" > "$HOME/.ssh/known_hosts"
+          digest="$(sha256sum "$RUNNER_TEMP/aurelis-website.tgz" | cut -d' ' -f1)"
+          { printf '%s\n' "$digest"; cat "$RUNNER_TEMP/aurelis-website.tgz"; } |
+            ssh -i "$HOME/.ssh/aurelis_activate" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10 "aurelisdeploy@$HOST" \
+            "python3 -c 'import socket,sys; payload=sys.stdin.buffer.read(); s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM); s.settimeout(90); s.connect("/tmp/aurelis-website-release.sock"); s.sendall(payload); s.shutdown(socket.SHUT_WR); msg=s.recv(4096); print(msg.decode().strip()); sys.exit(0 if msg.startswith(b"DEPLOY_SUCCESS") else 1)'"
