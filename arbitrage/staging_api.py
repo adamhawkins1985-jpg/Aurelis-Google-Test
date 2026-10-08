@@ -15,7 +15,8 @@ def payload(path, query):
     if path == "/agent-wallet":
         bot = query.get("bot", ["arbitrage"])[0]
         try:
-            return 200, wallet_status(bot)
+            provider = query.get("provider", ["onekey"])[0]
+            return 200, wallet_status(bot, provider=provider)
         except ValueError:
             return 400, {"ok": False, "error": "unknown_bot"}
     if path == "/markets":
