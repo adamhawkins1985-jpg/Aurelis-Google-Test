@@ -106,6 +106,11 @@ jobs:
               if endpoint.startswith(("/scan", "/dex-scan")):
                   assert data["dataSource"] == "synthetic" and data["opportunities"] == []
               print("PASS", endpoint)
-          print("STAGING_API_READY: loopback 127.0.0.1:8895; synthetic only")
+          with urlopen(base + "/public-markets?asset=BTC", timeout=20) as response:
+              market = json.load(response)
+          assert market["mode"] == "paper" and market["dataSource"] == "public_read_only"
+          assert not market["executionReady"] and set(market["quotes"]) == {"hyperliquid", "dydx"}
+          print("PASS /public-markets?asset=BTC", {k: "ok" if v.get("bid") and v.get("ask") else "unavailable" for k, v in market["quotes"].items()})
+          print("STAGING_API_READY: loopback 127.0.0.1:8895; synthetic scan, public read-only market probe")
           PY
           REMOTE
