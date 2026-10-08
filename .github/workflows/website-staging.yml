@@ -1,0 +1,71 @@
+name: AURELIS website staging release
+on:
+  workflow_run:
+    workflows: ["AURELIS website build"]
+    types: [completed]
+permissions:
+  contents: read
+concurrency:
+  group: aurelis-website-staging
+  cancel-in-progress: false
+jobs:
+  stage:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Build verified source
+        working-directory: website
+        run: |
+          npm ci --legacy-peer-deps
+          npm run build
+      - name: Package only website deploy artifacts
+        run: |
+          set -eu
+          test -f website/server.js
+          test -f website/dist/index.html
+          tar -czf "$RUNNER_TEMP/aurelis-website.tgz" -C website server.js dist package.json package-lock.json
+          tar -tzf "$RUNNER_TEMP/aurelis-website.tgz"
+      - name: Stage isolated release under restricted VPS user
+        env:
+          HOST: ${{ secrets.VPS_HOST }}
+          KEY: ${{ secrets.VPS_SSH_KEY }}
+          KNOWN: ${{ secrets.VPS_KNOWN_HOSTS }}
+          RELEASE: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -eu
+          test -n "$HOST" && test -n "$KEY" && test -n "$KNOWN"
+          case "$RELEASE" in *[!0-9a-f]*|'') exit 1;; esac
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          trap 'rm -f "$HOME/.ssh/aurelis_site" "$HOME/.ssh/known_hosts"' EXIT
+          python3 -c 'import os,pathlib;pathlib.Path.home().joinpath(".ssh/aurelis_site").write_text(os.environ["KEY"].replace(chr(92)+"n",chr(10)).rstrip()+chr(10))'
+          unset KEY
+          ssh-keygen -y -P '' -f "$HOME/.ssh/aurelis_site" >/dev/null
+          printf '%s\n' "$KNOWN" > "$HOME/.ssh/known_hosts"
+          SSH="ssh -i $HOME/.ssh/aurelis_site -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10"
+          $SSH "aurelisdeploy@$HOST" "mkdir -p 'aurelis-website-staging/releases/$RELEASE'"
+          cat "$RUNNER_TEMP/aurelis-website.tgz" | $SSH "aurelisdeploy@$HOST" "tar -xzf - -C 'aurelis-website-staging/releases/$RELEASE'"
+          $SSH "aurelisdeploy@$HOST" bash -se -- "$RELEASE" <<'REMOTE'
+          set -eu
+          release="$1"
+          root="$HOME/aurelis-website-staging"
+          test -f "$root/releases/$release/server.js"
+          test -f "$root/releases/$release/dist/index.html"
+          ln -sfn "releases/$release" "$root/current.next"
+          mv -Tf "$root/current.next" "$root/current"
+          echo "STAGED_WEBSITE_RELEASE=$release (not live)"
+          curl -fsS --max-time 8 http://127.0.0.1:8798/api/health
+          REMOTE
