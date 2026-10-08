@@ -7,6 +7,7 @@ import math
 import time
 from paper_router import prepare
 from depth_pricing import depth_fill, estimate_costs
+from cost_attestation import verify_costs
 
 MAX_AGE_SECONDS = 15
 
@@ -48,10 +49,12 @@ def assess(bot, venue, asset, side, notional_usd, snapshot=None, now=None):
     depth = depth_fill(snapshot.get("asks" if side in ("buy", "long") else "bids"), notional_usd)
     result["depthAdjustedVwapUsd"] = depth["vwapUsd"] if depth else None
     result["liquidityVerified"] = bool(depth)
-    costs = estimate_costs(notional_usd, snapshot.get("takerFeeBps"), snapshot.get("fundingBps"))
+    # Market data cannot self-certify fee/funding fields or verification flags.
+    attested = verify_costs(venue)
+    costs = estimate_costs(notional_usd, attested.taker_fee_bps, attested.funding_bps) if attested else None
     result["estimatedCosts"] = costs
-    result["feesVerified"] = bool(costs) and bool(snapshot.get("feeSourceVerified"))
-    result["fundingVerified"] = bool(costs) and bool(snapshot.get("fundingSourceVerified"))
+    result["feesVerified"] = bool(attested and costs)
+    result["fundingVerified"] = bool(attested and costs)
     if not depth:
         result["warnings"].append("Insufficient or unavailable order-book depth")
     if not (result["feesVerified"] and result["fundingVerified"]):
