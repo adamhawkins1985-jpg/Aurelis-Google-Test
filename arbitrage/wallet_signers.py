@@ -6,6 +6,9 @@ capabilities in this module. Provider selection is explicit, never auto-elevated
 from dataclasses import dataclass
 from typing import Protocol, Callable, Any
 
+# Public wallet identity only. Never store seed phrases or keys here.
+AGENT_MONEY_ADDRESS = "0xd2919c82e5fecbb0c4Be7A7C37bFC066579F233e"
+
 
 @dataclass(frozen=True)
 class PublicWalletState:
@@ -46,7 +49,8 @@ class OneKeyProvider:
                              and data.get("authenticated") is True
                              and isinstance(address, str)
                              and len(address) == 42 and address.startswith("0x")
-                             and all(ch in "0123456789abcdefABCDEF" for ch in address[2:]))
+                             and all(ch in "0123456789abcdefABCDEF" for ch in address[2:])
+                             and address.lower() == AGENT_MONEY_ADDRESS.lower())
             return PublicWalletState(
                 provider=self.name,
                 authenticated=authenticated,
