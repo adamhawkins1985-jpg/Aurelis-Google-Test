@@ -65,4 +65,4 @@ jobs:
           # Only user-owned staging directory. Never touch /opt/aurelis.
           $SSH "aurelisdeploy@$HOST" "set -eu; umask 077; mkdir -p 'aurelis-staging/releases/$RELEASE'"
           cat "$RUNNER_TEMP/aurelis-paper-staging.tgz" | $SSH "aurelisdeploy@$HOST" "set -eu; tar -xzf - -C 'aurelis-staging/releases/$RELEASE'"
-          $SSH "aurelisdeploy@$HOST" "set -eu; cd 'aurelis-staging/releases/$RELEASE'; python3 -m unittest discover -s arbitrage -p 'test_*.py' -v; ln -sfn 'releases/$RELEASE' 'aurelis-staging/current.next'; mv -Tf 'aurelis-staging/current.next' 'aurelis-staging/current'; echo STAGING_SOURCE_READY"
+          $SSH "aurelisdeploy@$HOST" "set -eu; (cd 'aurelis-staging/releases/$RELEASE' && python3 -m unittest discover -s arbitrage -p 'test_*.py' -v); ln -sfn 'releases/$RELEASE' 'aurelis-staging/current.next'; mv -Tf 'aurelis-staging/current.next' 'aurelis-staging/current'; echo STAGING_SOURCE_READY"
