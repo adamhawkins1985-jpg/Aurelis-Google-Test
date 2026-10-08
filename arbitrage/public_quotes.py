@@ -33,6 +33,20 @@ def _top(levels, price_field="price", size_field="size"):
     return None
 
 
+def _levels(rows, price_field="price", size_field="size"):
+    out = []
+    for row in rows[:50]:
+        try:
+            p = float(row[price_field] if isinstance(row, dict) else row[0])
+            a = float(row[size_field] if isinstance(row, dict) else row[1])
+            if not (0 < p < float("inf") and 0 < a < float("inf")):
+                continue
+            out.append([p, a])
+        except (KeyError, ValueError, TypeError, IndexError):
+            continue
+    return out
+
+
 def public_quotes(asset):
     if not isinstance(asset, str) or not re.fullmatch(r"[A-Z0-9_-]{2,20}", asset):
         raise ValueError("Invalid asset symbol")
@@ -42,7 +56,10 @@ def public_quotes(asset):
         levels = book["levels"]
         sources["hyperliquid"] = {"bid": _top(levels[0], "px", "sz"),
                                    "ask": _top(levels[1], "px", "sz"),
-                                   "source": "public_l2", "executionReady": False}
+                                   "bids": _levels(levels[0], "px", "sz"),
+                                   "asks": _levels(levels[1], "px", "sz"),
+                                   "bids": _levels(book["bids"]), "asks": _levels(book["asks"]),
+                            "source": "public_l2", "executionReady": False}
     except Exception as error:
         sources["hyperliquid"] = {"bid": None, "ask": None, "error": type(error).__name__,
                                    "executionReady": False}
