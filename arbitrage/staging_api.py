@@ -9,12 +9,25 @@ from market_discovery import discover
 from agent_wallet_service import wallet_status
 from paper_router import prepare
 from quote_assessment import assess
+from spread_comparison import compare
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8895
 
 
 def payload(path, query):
+    if path == "/paper-spreads":
+        asset = query.get("asset", ["BTC"])[0].upper()
+        notional = query.get("notional", ["25"])[0]
+        try:
+            prepare("arbitrage", "hyperliquid", asset, "buy", notional)
+            snapshots = public_quotes(asset)["quotes"]
+            # Stamp ingestion time, not exchange time. This is not a verified exchange timestamp.
+            received = time.time()
+            return 200, compare(asset, notional,
+                {venue: dict(book, receivedAt=received) for venue, book in snapshots.items()})
+        except ValueError:
+            return 400, {"ok": False, "error": "invalid_comparison"}
     if path == "/paper-quote-review":
         bot = query.get("bot", ["arbitrage"])[0]
         venue = query.get("venue", ["hyperliquid"])[0]
