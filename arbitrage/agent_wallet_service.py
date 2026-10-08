@@ -5,6 +5,7 @@ A OneKey session is not assumed to exist in staging.
 """
 from dataclasses import dataclass
 from typing import Any, Callable
+from wallet_signers import select_provider
 
 BOT_IDS = frozenset({"hunter", "trade_radar", "signal_desk", "live_bet", "arbitrage", "grid", "dca"})
 
@@ -21,20 +22,22 @@ class BotPolicy:
 POLICIES = {bot: BotPolicy() for bot in BOT_IDS}
 
 
-def wallet_status(bot: str, status_provider: Callable[[], dict[str, Any]] | None = None) -> dict[str, Any]:
+def wallet_status(bot: str, status_provider: Callable[[], dict[str, Any]] | None = None,
+                  provider: str = "onekey") -> dict[str, Any]:
     """Only return public session metadata, never CLI outputs or secrets."""
     if bot not in BOT_IDS:
         raise ValueError("Unknown bot")
     policy = POLICIES[bot]
-    state = status_provider() if status_provider is not None else {"authenticated": False}
-    authenticated = bool(state.get("authenticated"))
+    signer = select_provider(provider, status_provider)
+    state = signer.status()
+    authenticated = state.authenticated
     return {
         "bot": bot,
-        "provider": "onekey",
+        "provider": state.provider,
         "authenticated": authenticated,
         "authStatus": "authenticated" if authenticated else "unauthenticated",
-        "address": state.get("displayAddress") if authenticated else None,
-        "walletKind": state.get("walletKind") if authenticated else None,
+        "address": state.address,
+        "walletKind": state.wallet_kind,
         "permissions": {
             "read": policy.can_read,
             "prepare": policy.can_prepare,
