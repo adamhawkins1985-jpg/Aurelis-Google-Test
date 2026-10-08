@@ -18,6 +18,7 @@ from dex_signal_risk import analyze as assess_dex_signal
 from dex_strategy_observations import inspect as inspect_dex_strategy
 from dex_paper_risk import review as review_paper_risk
 from dex_trade_intent import prepare_intent
+from hyperliquid_onekey_adapter import inspect_hyperliquid
 from onekey_session import staging_status
 
 HOST = "127.0.0.1"
@@ -32,6 +33,16 @@ def payload(path, query):
             return 200, observed_funding(asset)
         except ValueError:
             return 400, {"ok": False, "error": "invalid_asset"}
+    if path == "/hyperliquid-signer-readiness":
+        try:
+            return 200, inspect_hyperliquid(
+                query.get("bot", ["hunter"])[0],
+                query.get("asset", ["BTC"])[0],
+                query.get("side", ["long"])[0],
+                query.get("notional", ["25"])[0],
+                query.get("wallet", [None])[0])
+        except ValueError:
+            return 400, {"ok": False, "error": "invalid_signer_readiness"}
     if path == "/paper-dex-intent":
         try:
             return 200, prepare_intent(
