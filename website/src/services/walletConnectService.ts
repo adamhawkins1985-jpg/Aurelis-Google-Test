@@ -59,7 +59,6 @@ export async function getReusableWalletConnectSession(walletId?: string): Promis
     .sort((a, b) => Number(b?.expiry || 0) - Number(a?.expiry || 0));
 
   const wanted = String(walletId || '').toLowerCase();
-  const agentMoneyAddress = BOT_AGENT_ADDRESS;
   for (const session of candidates) {
     if (wanted && wanted !== 'walletconnect') {
       const peerName = String(session?.peer?.metadata?.name || '').toLowerCase();
@@ -73,7 +72,7 @@ export async function getReusableWalletConnectSession(walletId?: string): Promis
       if (!matches) continue;
     }
     const parsed = parseEvmSession(session);
-    if (parsed && (wanted !== 'onekey' || parsed.address.toLowerCase() === agentMoneyAddress)) return parsed;
+    if (parsed && parsed.address.toLowerCase() !== BOT_AGENT_ADDRESS) return parsed;
   }
 
   return null;
