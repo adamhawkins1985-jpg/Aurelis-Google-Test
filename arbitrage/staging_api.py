@@ -10,12 +10,20 @@ from agent_wallet_service import wallet_status
 from paper_router import prepare
 from quote_assessment import assess
 from spread_comparison import compare
+from funding_observations import observed_funding
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8895
 
 
 def payload(path, query):
+    if path == "/funding-observations":
+        asset = query.get("asset", ["BTC"])[0].upper()
+        try:
+            prepare("arbitrage", "hyperliquid", asset, "buy", 25)
+            return 200, observed_funding(asset)
+        except ValueError:
+            return 400, {"ok": False, "error": "invalid_asset"}
     if path == "/paper-spreads":
         asset = query.get("asset", ["BTC"])[0].upper()
         notional = query.get("notional", ["25"])[0]
