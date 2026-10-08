@@ -8,7 +8,7 @@ from onekey_session import read_onekey_status
 from agent_wallet_service import wallet_status
 
 CLI = "/home/aurelisdeploy/aurelis-staging/onekey-cli"
-ADDR = "0x1111111111111111111111111111111111111111"
+ADDR = "0xd2919c82e5fecbb0c4Be7A7C37bFC066579F233e"
 
 
 class OneKeyStatusTests(unittest.TestCase):
