@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <!-- Aurelis Logo Emblem Vector from uploaded artwork:
+       Top chevron: apex at (50, 4), outer slopes to (84, 64) and (16, 64),
+       bottom arch curve, inner triangular cutout.
+       Bottom swoosh: curved crescent arch spanning from (2, 94) to (98, 94). -->
+  <g fill="#00F5D4">
+    <!-- Upper Chevron -->
+    <path
+      d="M 50 4
+         L 85 64
+         C 65 48, 35 48, 15 64
+         Z
+         M 50 24
+         L 34 50
+         C 43 43, 57 43, 66 50
+         Z"
+      fill-rule="evenodd"
+    />
+    <!-- Lower Crescent Arch -->
+    <path
+      d="M 2 94
+         C 28 66, 72 66, 98 94
+         C 70 77, 30 77, 2 94
+         Z"
+    />
+  </g>
+</svg>

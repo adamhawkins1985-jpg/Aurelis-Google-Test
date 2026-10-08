@@ -1,0 +1,11 @@
+{
+  "theme_name": "Aurelis Cyber Theme for Android",
+  "accent_primary": "#00F5A0",
+  "accent_glow": "#00F5A040",
+  "surface_background": "#070B0F",
+  "surface_card": "#0F1722",
+  "text_primary": "#E6EDF3",
+  "text_secondary": "#8B949E",
+  "recommended_font_display": "Space Grotesk",
+  "recommended_font_mono": "JetBrains Mono"
+}

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Aurelis HUD</title>
+    <meta name="description" content="Cybernetic Windows desktop crypto widget featuring live technical charts, real-time watchlist, market heatmap, and marquee ticker with real market data." />
+    <meta property="og:title" content="Aurelis HUD" />
+    <meta property="og:description" content="Cybernetic Windows desktop crypto widget featuring live technical charts, real-time watchlist, market heatmap, and marquee ticker with real market data." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" type="image/svg+xml" href="/aurelis-icon.svg" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#06080d" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+  </head>
+  <body class="bg-[#06090e] text-[#f3f6f9] antialiased select-none overflow-x-hidden">
+    <script>
+      if (window.AurelisDesktop?.isDesktop || new URLSearchParams(location.search).get("desktop") === "1") {
+        document.documentElement.classList.add("aurelis-desktop-window");
+      }
+      if (window.AurelisDesktop?.isDesktop && typeof window.AurelisDesktop.setWindowShape === "function") {
+        let shapeTimer = 0;
+        const updateAurelisWindowShape = () => {
+          const hud = document.getElementById("hudWidget");
+          if (!hud) return;
+
+          const hudRect = hud.getBoundingClientRect();
+          // Never replace a valid Electron shape with a transient/partial React layout.
+          // This prevents the shell from disappearing while pages such as Signal Desk mount.
+          if (hudRect.width < 500 || hudRect.height < 400) return;
+
+          const elements = [
+            hud,
+            document.querySelector('aside[aria-label="AURELIS utility launchers"]'),
+            document.querySelector('aside[aria-label="Swap widget launchers"]')
+          ].filter(Boolean);
+
+          const rects = elements.map((el) => {
+            const r = el.getBoundingClientRect();
+            return {
+              x: Math.max(0, Math.floor(r.left) - 2),
+              y: Math.max(0, Math.floor(r.top) - 2),
+              width: Math.ceil(r.width) + 4,
+              height: Math.ceil(r.height) + 4
+            };
+          }).filter((r) => r.width > 4 && r.height > 4);
+
+          if (rects.length) window.AurelisDesktop.setWindowShape(rects);
+        };
+
+        const scheduleShapeUpdate = () => {
+          window.clearTimeout(shapeTimer);
+          shapeTimer = window.setTimeout(() => requestAnimationFrame(updateAurelisWindowShape), 80);
+        };
+
+        window.addEventListener("load", scheduleShapeUpdate);
+        window.addEventListener("resize", scheduleShapeUpdate);
+
+        // Do not observe page mutations here. Signal Desk and live charts add/remove DOM
+        // constantly, and feeding those changes into Electron setShape can clip the whole shell.
+        // Shape refreshes now happen only on load, actual window resize, or an explicit request.
+        window.addEventListener("aurelis:refresh-window-shape", scheduleShapeUpdate);
+        setTimeout(scheduleShapeUpdate, 250);
+        setTimeout(scheduleShapeUpdate, 1000);
+      }
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').catch(() => {});
+        });
+      }
+    </script>
+  </body>
+</html>
+

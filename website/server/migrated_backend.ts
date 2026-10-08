@@ -1,0 +1,1800 @@
+import type { Express, Request, Response } from 'express';
+import Database from 'better-sqlite3';
+import path from 'path';
+import fs from 'fs';
+import crypto from 'crypto';
+import { getAddress, verifyMessage } from 'ethers';
+
+const APP_ROOT = path.resolve(process.cwd());
+const DATA_DIR = path.join(APP_ROOT, 'data');
+const ALERT_DB = path.join(DATA_DIR, 'aurelis.sqlite3');
+const AUTH_DB = path.join(DATA_DIR, 'wallet-auth.sqlite3');
+const AUTH_COOKIE_NAME = 'aurelis_wallet_auth';
+const AUTH_CHALLENGE_TTL = 300;
+const AUTH_SESSION_TTL = 43200;
+const ALLOWED_CHAIN_IDS = new Set([1, 10, 137, 8453, 42161]);
+
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
+const db = new Database(ALERT_DB);
+db.pragma('journal_mode = WAL');
+db.exec(`
+CREATE TABLE IF NOT EXISTS mobile_alerts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  alert_type TEXT NOT NULL DEFAULT 'aurelis_guard',
+  data_json TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL,
+  target_token_hash TEXT
+);
+CREATE TABLE IF NOT EXISTS guard_devices (
+  token_hash TEXT PRIMARY KEY,
+  created_at INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS alert_dedupe (
+  alert_key TEXT PRIMARY KEY,
+  last_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mobile_approvals (
+  request_id TEXT PRIMARY KEY,
+  target_token_hash TEXT NOT NULL,
+  wallet_address TEXT NOT NULL,
+  action TEXT NOT NULL,
+  asset TEXT NOT NULL,
+  data_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'pending',
+  result_json TEXT NOT NULL DEFAULT '{}',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS guard_portfolios (
+  token_hash TEXT NOT NULL,
+  asset_key TEXT NOT NULL,
+  symbol TEXT NOT NULL,
+  name TEXT NOT NULL,
+  balance_text TEXT NOT NULL DEFAULT '',
+  price_usd REAL,
+  change_24h REAL,
+  account_address TEXT NOT NULL DEFAULT '',
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY(token_hash, asset_key)
+);
+CREATE TABLE IF NOT EXISTS guard_wallet_addresses (
+  token_hash TEXT NOT NULL,
+  chain_key TEXT NOT NULL,
+  address TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY(token_hash, chain_key)
+);
+`);
+
+const authDb = new Database(AUTH_DB);
+authDb.pragma('journal_mode = WAL');
+authDb.exec(`
+CREATE TABLE IF NOT EXISTS wallet_auth_sessions (
+  session_id TEXT PRIMARY KEY,
+  address TEXT NOT NULL,
+  chain_id INTEGER NOT NULL,
+  origin TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  verified_at REAL NOT NULL,
+  expires_at REAL NOT NULL
+);
+`);
+
+type Challenge = {
+  message: string;
+  address: string;
+  chainId: number;
+  origin: string;
+  purpose: string;
+  expiresAt: number;
+  used: boolean;
+};
+
+const challenges = new Map<string, Challenge>();
+
+function parseCookies(req: Request): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of String(req.headers.cookie || '').split(';')) {
+    const i = part.indexOf('=');
+    if (i <= 0) continue;
+    const key = part.slice(0, i).trim();
+    const value = part.slice(i + 1).trim();
+    if (key) out[key] = decodeURIComponent(value);
+  }
+  return out;
+}
+
+function sessionId(req: Request, res: Response): string {
+  const current = parseCookies(req)[AUTH_COOKIE_NAME] || '';
+  if (/^[A-Za-z0-9_-]{20,128}$/.test(current)) return current;
+  const value = crypto.randomBytes(32).toString('base64url');
+  const secure = String(process.env.AURELIS_WEB_ORIGIN || '').startsWith('https://');
+  res.setHeader(
+    'Set-Cookie',
+    `${AUTH_COOKIE_NAME}=${value}; HttpOnly; Path=/; SameSite=Strict; Max-Age=${AUTH_SESSION_TTL}${secure ? '; Secure' : ''}`
+  );
+  return value;
+}
+
+function authOrigin(req: Request): string {
+  const configured = String(process.env.AURELIS_WEB_ORIGIN || '').trim();
+  if (configured) return new URL(configured).origin;
+  const host = String(req.headers.host || '').trim();
+  if (!host) throw new Error('auth_origin_not_configured');
+  const hostname = host.split(':')[0].replace(/^\[|\]$/g, '').toLowerCase();
+  if (!['127.0.0.1', 'localhost', '::1'].includes(hostname)) throw new Error('auth_origin_not_configured');
+  return `http://${host}`;
+}
+
+function normalizeAddress(value: string): string {
+  try {
+    return getAddress(String(value || '').trim());
+  } catch {
+    throw new Error('invalid_address');
+  }
+}
+
+function getVerifiedSession(req: Request, res: Response): any | null {
+  const sid = sessionId(req, res);
+  const row = authDb.prepare(
+    'SELECT address,chain_id,origin,purpose,verified_at,expires_at FROM wallet_auth_sessions WHERE session_id=?'
+  ).get(sid) as any;
+  if (!row) return null;
+  if (Date.now() / 1000 >= Number(row.expires_at || 0)) {
+    authDb.prepare('DELETE FROM wallet_auth_sessions WHERE session_id=?').run(sid);
+    return null;
+  }
+  return {
+    address: row.address,
+    chainId: Number(row.chain_id),
+    origin: row.origin,
+    purpose: row.purpose,
+    verifiedAt: Number(row.verified_at),
+    expiresAt: Number(row.expires_at),
+  };
+}
+
+export function getVerifiedWalletAddress(req: Request, res: Response): string | null {
+  const verified = getVerifiedSession(req, res);
+  return verified?.address ? String(verified.address) : null;
+}
+
+function saveVerifiedSession(sid: string, value: any) {
+  authDb.prepare(`
+    INSERT INTO wallet_auth_sessions(session_id,address,chain_id,origin,purpose,verified_at,expires_at)
+    VALUES(?,?,?,?,?,?,?)
+    ON CONFLICT(session_id) DO UPDATE SET
+      address=excluded.address,chain_id=excluded.chain_id,origin=excluded.origin,
+      purpose=excluded.purpose,verified_at=excluded.verified_at,expires_at=excluded.expires_at
+  `).run(
+    sid,
+    value.address,
+    value.chainId,
+    value.origin,
+    value.purpose,
+    value.verifiedAt,
+    value.expiresAt
+  );
+}
+
+function requireVerified(req: Request, res: Response): any | null {
+  const verified = getVerifiedSession(req, res);
+  if (!verified) {
+    res.status(401).json({ ok: false, error: 'wallet_auth_required' });
+    return null;
+  }
+  return verified;
+}
+
+function bearerToken(req: Request): string {
+  const raw = String(req.headers.authorization || '');
+  return raw.toLowerCase().startsWith('bearer ') ? raw.slice(7).trim() : '';
+}
+
+function bearerHash(req: Request): string {
+  const token = bearerToken(req);
+  return token ? crypto.createHash('sha256').update(token).digest('hex') : '';
+}
+
+function mobileAiAuthorized(req: Request): boolean {
+  const expected = String(process.env.AURELIS_AI_MOBILE_DEVICE_SHA256 || '').trim().toLowerCase();
+  const actual = bearerHash(req);
+  return !!expected && !!actual && crypto.timingSafeEqual(Buffer.from(actual), Buffer.from(expected));
+}
+
+function mobileGuardAuthorized(req: Request): boolean {
+  const hash = bearerHash(req);
+  if (!hash) return false;
+  const row = db.prepare('SELECT token_hash FROM guard_devices WHERE token_hash=?').get(hash) as any;
+  if (!row) return false;
+  db.prepare('UPDATE guard_devices SET last_seen=? WHERE token_hash=?').run(Math.floor(Date.now() / 1000), hash);
+  return true;
+}
+
+function resolveTokenHashForWallet(address: string): string | null {
+  const lower = address.toLowerCase();
+  const row = db.prepare(
+    'SELECT token_hash,MAX(updated_at) AS u FROM guard_wallet_addresses WHERE lower(address)=? GROUP BY token_hash ORDER BY u DESC LIMIT 1'
+  ).get(lower) as any;
+  if (row?.token_hash) return String(row.token_hash);
+  const row2 = db.prepare(
+    'SELECT token_hash,MAX(updated_at) AS u FROM guard_portfolios WHERE lower(account_address)=? GROUP BY token_hash ORDER BY u DESC LIMIT 1'
+  ).get(lower) as any;
+  return row2?.token_hash ? String(row2.token_hash) : null;
+}
+
+function safeJson(text: any, fallback: any = {}) {
+  try { return JSON.parse(String(text || '')); } catch { return fallback; }
+}
+
+function finiteNumber(v: any): number | null {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseBalanceText(v: any): number {
+  const raw = String(v ?? '').replace(/,/g, '').trim();
+  const m = raw.match(/[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?/);
+  const n = m ? Number(m[0]) : 0;
+  return Number.isFinite(n) ? n : 0;
+}
+
+function sendNoStore(res: Response, body: any, status = 200) {
+  res.setHeader('Cache-Control', 'no-store');
+  return res.status(status).json(body);
+}
+
+async function fetchJson(url: string, init: RequestInit = {}, timeoutMs = 12000): Promise<any> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    const text = await response.text();
+    const data = safeJson(text, null);
+    if (!response.ok) {
+      const err = new Error(`HTTP_${response.status}`);
+      (err as any).status = response.status;
+      (err as any).data = data;
+      throw err;
+    }
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function makeChallenge(address: string, chainId: number, origin: string, purpose: string) {
+  const normalizedAddress = normalizeAddress(address);
+  if (!ALLOWED_CHAIN_IDS.has(chainId)) throw new Error('unsupported_chain');
+  const now = new Date();
+  const expires = new Date(now.getTime() + AUTH_CHALLENGE_TTL * 1000);
+  const nonce = crypto.randomBytes(8).toString('hex');
+  const requestId = crypto.randomBytes(16).toString('hex');
+  const domain = new URL(origin).host;
+  const normalizedPurpose = String(purpose || '').toLowerCase() === 'bots' ? 'bots' : 'web';
+  const purposeLine = normalizedPurpose === 'bots'
+    ? 'Sign in to AURELIS Bots. This request does not authorize transactions.\n\n'
+    : 'Sign in to AURELIS Web. This request does not authorize transactions.\n\n';
+  const message =
+    `${domain} wants you to sign in with your Ethereum account:\n` +
+    `${normalizedAddress}\n\n` +
+    purposeLine +
+    `URI: ${origin}\n` +
+    'Version: 1\n' +
+    `Chain ID: ${chainId}\n` +
+    `Nonce: ${nonce}\n` +
+    `Issued At: ${now.toISOString().replace('.000Z','Z')}\n` +
+    `Expiration Time: ${expires.toISOString().replace('.000Z','Z')}\n` +
+    `Request ID: ${requestId}`;
+  return {
+    message,
+    address: normalizedAddress,
+    chainId,
+    origin,
+    purpose: normalizedPurpose,
+    expiresAt: Date.now() / 1000 + AUTH_CHALLENGE_TTL,
+    used: false,
+  } satisfies Challenge;
+}
+
+function registerAuthRoutes(app: Express) {
+  app.post('/api/auth/challenge', (req, res) => {
+    try {
+      const sid = sessionId(req, res);
+      const origin = authOrigin(req);
+      const challenge = makeChallenge(
+        String(req.body?.address || ''),
+        Number(req.body?.chainId),
+        origin,
+        String(req.body?.purpose || 'web')
+      );
+      challenges.set(sid, challenge);
+      return sendNoStore(res, {
+        ok: true,
+        message: challenge.message,
+        address: challenge.address,
+        chainId: challenge.chainId,
+        expiresIn: AUTH_CHALLENGE_TTL,
+      });
+    } catch (e: any) {
+      return sendNoStore(res, { ok: false, error: e?.message || 'invalid_request' }, 400);
+    }
+  });
+
+  app.post('/api/auth/verify', async (req, res) => {
+    const sid = sessionId(req, res);
+    try {
+      const challenge = challenges.get(sid);
+      if (!challenge) throw new Error('challenge_missing');
+      if (challenge.used) throw new Error('challenge_replayed');
+      challenge.used = true;
+      if (Date.now() / 1000 >= challenge.expiresAt) throw new Error('challenge_expired');
+      const origin = authOrigin(req);
+      const address = normalizeAddress(String(req.body?.address || ''));
+      const chainId = Number(req.body?.chainId);
+      const message = String(req.body?.message || '');
+      const signature = String(req.body?.signature || '');
+      if (message !== challenge.message) throw new Error('message_mismatch');
+      if (address !== challenge.address) throw new Error('address_mismatch');
+      if (chainId !== challenge.chainId) throw new Error('chain_mismatch');
+      if (origin !== challenge.origin) throw new Error('origin_mismatch');
+      const recovered = normalizeAddress(verifyMessage(message, signature));
+      if (recovered !== challenge.address) throw new Error('invalid_signature');
+      const now = Date.now() / 1000;
+      saveVerifiedSession(sid, {
+        address,
+        chainId,
+        origin,
+        purpose: challenge.purpose,
+        verifiedAt: now,
+        expiresAt: now + AUTH_SESSION_TTL,
+      });
+      challenges.delete(sid);
+      return sendNoStore(res, { ok: true, verified: true, address, chainId });
+    } catch (e: any) {
+      return sendNoStore(res, { ok: false, verified: false, error: e?.message || 'invalid_signature' }, 401);
+    }
+  });
+
+  app.post('/api/auth/native-session', (req, res) => {
+    if (!mobileAiAuthorized(req)) return sendNoStore(res, { ok: false, error: 'native_auth_required' }, 401);
+    try {
+      const sid = sessionId(req, res);
+      const origin = authOrigin(req);
+      const address = normalizeAddress(String(req.body?.walletAddress || req.body?.address || ''));
+      const chainId = Number(req.body?.chainId || 1);
+      if (!ALLOWED_CHAIN_IDS.has(chainId)) throw new Error('unsupported_chain');
+      const now = Date.now() / 1000;
+      saveVerifiedSession(sid, {
+        address, chainId, origin, purpose: 'bots', verifiedAt: now, expiresAt: now + AUTH_SESSION_TTL,
+      });
+      return sendNoStore(res, { ok: true, verified: true, native: true, address, chainId, purpose: 'bots' });
+    } catch (e: any) {
+      return sendNoStore(res, { ok: false, error: e?.message || 'invalid_request' }, 400);
+    }
+  });
+
+}
+
+const EVM_NATIVE_RPCS: Record<string,string> = {
+  ethereum: 'https://ethereum-rpc.publicnode.com',
+  base: 'https://base-rpc.publicnode.com',
+  arbitrum: 'https://arbitrum-one-rpc.publicnode.com',
+  optimism: 'https://optimism-rpc.publicnode.com',
+  bsc: 'https://bsc-rpc.publicnode.com',
+  polygon: 'https://polygon-bor-rpc.publicnode.com',
+  avalanche: 'https://avalanche-c-chain-rpc.publicnode.com',
+};
+
+const EVM_NATIVE_META: Record<string,{symbol:string; name:string; coinbase?: string; fallbackPrice?: number}> = {
+  ethereum: { symbol: 'ETH', name: 'Ethereum', coinbase: 'ETH-USD' },
+  base: { symbol: 'ETH', name: 'Base ETH', coinbase: 'ETH-USD' },
+  arbitrum: { symbol: 'ETH', name: 'Arbitrum ETH', coinbase: 'ETH-USD' },
+  optimism: { symbol: 'ETH', name: 'Optimism ETH', coinbase: 'ETH-USD' },
+  bsc: { symbol: 'BNB', name: 'BNB Smart Chain', coinbase: 'BNB-USD' },
+  polygon: { symbol: 'MATIC', name: 'Polygon', coinbase: 'POL-USD' },
+  avalanche: { symbol: 'AVAX', name: 'Avalanche C-Chain', coinbase: 'AVAX-USD' },
+};
+
+const EVM_USDC_CONTRACTS: Record<string,string> = {
+  ethereum: '0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+  base: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+  arbitrum: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+  optimism: '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
+  bsc: '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d',
+  polygon: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
+  avalanche: '0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E',
+};
+
+async function fetchNativeEthBalance(address:string, rpc:string): Promise<number|null> {
+  if (!/^0x[a-fA-F0-9]{40}$/.test(address)) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4500);
+  try {
+    const response = await fetch(rpc, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ jsonrpc:'2.0', id:1, method:'eth_getBalance', params:[address,'latest'] }),
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const body:any = await response.json();
+    const hex = String(body?.result || '');
+    if (!/^0x[0-9a-f]+$/i.test(hex)) return null;
+    return Number(BigInt(hex)) / 1e18;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+
+
+let cachedEthUsdPrice: { price: number; updatedAt: number } | null = null;
+
+async function fetchEthUsdPrice(): Promise<number> {
+  const now = Date.now();
+  if (cachedEthUsdPrice && now - cachedEthUsdPrice.updatedAt < 60000) return cachedEthUsdPrice.price;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4500);
+  try {
+    const response = await fetch('https://api.coinbase.com/v2/prices/ETH-USD/spot', {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (response.ok) {
+      const body:any = await response.json();
+      const price = Number(body?.data?.amount || 0);
+      if (Number.isFinite(price) && price > 0) {
+        cachedEthUsdPrice = { price, updatedAt: now };
+        return price;
+      }
+    }
+  } catch {}
+  finally {
+    clearTimeout(timeout);
+  }
+  return cachedEthUsdPrice?.price || 0;
+}
+
+
+let cachedSpotUsdPrices: Record<string,{ price:number; updatedAt:number }> = {};
+
+async function fetchSpotUsdPrice(pair:string, fallback=0): Promise<number> {
+  const key = String(pair || '').toUpperCase();
+  const now = Date.now();
+  const cached = cachedSpotUsdPrices[key];
+  if (cached && now - cached.updatedAt < 60000) return cached.price;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4500);
+  try {
+    const response = await fetch(`https://api.coinbase.com/v2/prices/${encodeURIComponent(key)}/spot`, {
+      headers: { Accept: 'application/json', 'User-Agent': 'AURELIS-Wallet' },
+      signal: controller.signal,
+    });
+    if (response.ok) {
+      const body:any = await response.json();
+      const price = Number(body?.data?.amount || 0);
+      if (Number.isFinite(price) && price > 0) {
+        cachedSpotUsdPrices[key] = { price, updatedAt: now };
+        return price;
+      }
+    }
+  } catch {}
+  finally {
+    clearTimeout(timeout);
+  }
+  return cached?.price || fallback || 0;
+}
+
+function normalizeWatchQuery(value:any): string[] {
+  const raw = Array.isArray(value) ? value : (value ? [value] : []);
+  return Array.from(new Set(raw.flatMap((item:any) => String(item || '').split(',')).map((item:string) => item.trim()).filter(Boolean))).slice(0, 20);
+}
+
+function isZcashTransparentAddress(address:string): boolean {
+  return /^t[13][A-Za-z0-9]{25,}$/.test(String(address || '').trim());
+}
+
+async function fetchZcashTransparentBalance(address:string): Promise<number|null> {
+  const clean = String(address || '').trim();
+  if (!isZcashTransparentAddress(clean)) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6500);
+  try {
+    const response = await fetch(`https://api.zecblock.com/v1/addresses/${encodeURIComponent(clean)}`, {
+      headers: { Accept: 'application/json', 'User-Agent': 'AURELIS-Wallet' },
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const body:any = await response.json();
+    const data = body?.data || body;
+    const zat = Number(data?.balanceZat ?? data?.balance ?? 0);
+    if (Number.isFinite(zat) && zat > 0) return zat / 1e8;
+    const zec = Number(data?.balanceZec ?? data?.amountZec ?? 0);
+    return Number.isFinite(zec) && zec > 0 ? zec : 0;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+
+type WatchAssetMeta = { symbol:string; name:string; chain:string; coinbase?: string; fallbackPrice?: number; decimals?: number };
+
+const WATCH_ASSET_META: Record<string, WatchAssetMeta> = {
+  btc: { symbol: 'BTC', name: 'Bitcoin', chain: 'bitcoin', coinbase: 'BTC-USD', decimals: 8 },
+  ltc: { symbol: 'LTC', name: 'Litecoin', chain: 'litecoin', coinbase: 'LTC-USD', decimals: 8 },
+  doge: { symbol: 'DOGE', name: 'Dogecoin', chain: 'dogecoin', coinbase: 'DOGE-USD', decimals: 8 },
+  zec: { symbol: 'ZEC', name: 'Zcash', chain: 'zcash', coinbase: 'ZEC-USD', decimals: 8 },
+  sol: { symbol: 'SOL', name: 'Solana', chain: 'solana', coinbase: 'SOL-USD', decimals: 9 },
+  xrp: { symbol: 'XRP', name: 'XRP', chain: 'xrp', coinbase: 'XRP-USD', decimals: 6 },
+  near: { symbol: 'NEAR', name: 'NEAR', chain: 'near', coinbase: 'NEAR-USD', decimals: 24 },
+};
+
+const WATCH_ALIASES: Record<string,string> = {
+  bitcoin: 'btc', litecoin: 'ltc', dogecoin: 'doge', zcash: 'zec', solana: 'sol', ripple: 'xrp'
+};
+
+function formatAssetBalance(value:number, symbol:string, decimals=8): string {
+  const fixed = value.toFixed(Math.min(Math.max(decimals, 2), 8)).replace(/0+$/,'').replace(/\.$/,'');
+  return (fixed || '0') + ' ' + symbol;
+}
+
+async function fetchBlockcypherBalance(network:'btc'|'ltc'|'doge', address:string): Promise<number|null> {
+  const clean = String(address || '').trim();
+  if (!clean || clean.length < 20 || clean.length > 120) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6500);
+  try {
+    const response = await fetch(`https://api.blockcypher.com/v1/${network}/main/addrs/${encodeURIComponent(clean)}/balance`, {
+      headers: { Accept: 'application/json', 'User-Agent': 'AURELIS-Wallet' },
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const body:any = await response.json();
+    const atomic = Number(body?.final_balance ?? body?.balance ?? 0);
+    return Number.isFinite(atomic) && atomic > 0 ? atomic / 1e8 : 0;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchSolanaBalance(address:string): Promise<number|null> {
+  const clean = String(address || '').trim();
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(clean)) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6500);
+  try {
+    const response = await fetch('https://api.mainnet-beta.solana.com', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ jsonrpc:'2.0', id:1, method:'getBalance', params:[clean] }),
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const body:any = await response.json();
+    const lamports = Number(body?.result?.value ?? 0);
+    return Number.isFinite(lamports) && lamports > 0 ? lamports / 1e9 : 0;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchXrpBalance(address:string): Promise<number|null> {
+  const clean = String(address || '').trim();
+  if (!/^r[1-9A-HJ-NP-Za-km-z]{24,34}$/.test(clean)) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6500);
+  try {
+    const response = await fetch(`https://api.xrpscan.com/api/v1/account/${encodeURIComponent(clean)}`, {
+      headers: { Accept: 'application/json', 'User-Agent': 'AURELIS-Wallet' },
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const body:any = await response.json();
+    const xrp = Number(body?.xrpBalance ?? 0);
+    if (Number.isFinite(xrp) && xrp > 0) return xrp;
+    const drops = Number(body?.Balance ?? 0);
+    return Number.isFinite(drops) && drops > 0 ? drops / 1e6 : 0;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchNearBalance(address:string): Promise<number|null> {
+  const clean = String(address || '').trim().toLowerCase();
+  if (!/^(([a-z0-9_-]+\.)*near|[a-f0-9]{64})$/.test(clean)) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 6500);
+  try {
+    const response = await fetch('https://rpc.mainnet.near.org', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ jsonrpc:'2.0', id:'aurelis', method:'query', params:{ request_type:'view_account', finality:'final', account_id:clean } }),
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const body:any = await response.json();
+    const amount = String(body?.result?.amount || '0');
+    if (!/^\d+$/.test(amount)) return null;
+    return Number(BigInt(amount)) / 1e24;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchWatchAssetBalance(symbol:string, address:string): Promise<number|null> {
+  const key = WATCH_ALIASES[symbol.toLowerCase()] || symbol.toLowerCase();
+  if (key === 'zec') return fetchZcashTransparentBalance(address);
+  if (key === 'btc' || key === 'ltc' || key === 'doge') return fetchBlockcypherBalance(key as 'btc'|'ltc'|'doge', address);
+  if (key === 'sol') return fetchSolanaBalance(address);
+  if (key === 'xrp') return fetchXrpBalance(address);
+  if (key === 'near') return fetchNearBalance(address);
+  return null;
+}
+
+async function fetchErc20Balance(address:string, rpc:string, contract:string, decimals:number): Promise<number|null> {
+  if (!/^0x[a-fA-F0-9]{40}$/.test(address) || !/^0x[a-fA-F0-9]{40}$/.test(contract)) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4500);
+  try {
+    const addressWord = address.slice(2).toLowerCase().padStart(64, '0');
+    const data = '0x70a08231' + addressWord;
+    const response = await fetch(rpc, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ jsonrpc:'2.0', id:1, method:'eth_call', params:[{to:contract,data},'latest'] }),
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const body:any = await response.json();
+    const hex = String(body?.result || '');
+    if (!/^0x[0-9a-f]+$/i.test(hex)) return null;
+    return Number(BigInt(hex)) / (10 ** decimals);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+
+async function fetchErc20Decimals(rpc:string, contract:string): Promise<number|null> {
+  if (!/^0x[a-fA-F0-9]{40}$/.test(contract)) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4500);
+  try {
+    const response = await fetch(rpc, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        jsonrpc:'2.0',
+        id:1,
+        method:'eth_call',
+        params:[{ to:contract, data:'0x313ce567' }, 'latest'],
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const body:any = await response.json();
+    const hex = String(body?.result || '');
+    if (!/^0x[0-9a-f]+$/i.test(hex)) return null;
+    const decimals = Number(BigInt(hex));
+    return Number.isInteger(decimals) && decimals >= 0 && decimals <= 36 ? decimals : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function registerWalletRoutes(app: Express) {
+  app.get('/api/wallet/erc20-decimals', async (req, res) => {
+    const verified = requireVerified(req, res);
+    if (!verified) return;
+    const networkRaw = String(req.query.network || '').toLowerCase();
+    const network =
+      networkRaw === 'eth' || networkRaw === 'mainnet' ? 'ethereum' :
+      networkRaw === 'arb' ? 'arbitrum' :
+      networkRaw;
+    const contract = String(req.query.contract || '');
+    const rpc = EVM_NATIVE_RPCS[network];
+    if (!rpc || !/^0x[a-fA-F0-9]{40}$/.test(contract)) {
+      return sendNoStore(res, { ok:false, error:'unsupported_token_network' }, 400);
+    }
+    const decimals = await fetchErc20Decimals(rpc, contract);
+    if (decimals === null) return sendNoStore(res, { ok:false, error:'token_decimals_unavailable' }, 502);
+    return sendNoStore(res, { ok:true, network, contract, decimals });
+  });
+
+  app.get('/api/wallet/external-evm-portfolio', async (req, res) => {
+    const address = String(req.query.address || '').trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
+      return sendNoStore(res, { ok: false, error: 'invalid_external_wallet_address' }, 400);
+    }
+
+    const assets:any[] = [];
+    const skipEvm = String(req.query.skipEvm || '').toLowerCase() === '1';
+    const ethUsdPrice = skipEvm ? 0 : await fetchEthUsdPrice();
+    const nativePriceCache: Record<string, number> = {};
+    if (!skipEvm) await Promise.all(Object.entries(EVM_NATIVE_RPCS).map(async ([chain, rpc]) => {
+      const live = await fetchNativeEthBalance(address, rpc);
+      if (live !== null && live > 0) {
+        const meta = EVM_NATIVE_META[chain] || { symbol: 'ETH', name: 'Ethereum', coinbase: 'ETH-USD' };
+        const nativePrice = nativePriceCache[chain] ?? await fetchSpotUsdPrice(meta.coinbase || 'ETH-USD', meta.symbol === 'ETH' ? ethUsdPrice : 0);
+        nativePriceCache[chain] = nativePrice;
+        assets.push({
+          assetId: chain,
+          chain,
+          symbol: meta.symbol || 'ETH',
+          name: meta.name || (chain === 'ethereum' ? 'Ethereum' : chain.charAt(0).toUpperCase() + chain.slice(1) + ' ETH'),
+          balance: live,
+          amount: live,
+          balanceText: (live.toFixed(8).replace(/0+$/,'').replace(/\.$/,'') || '0') + ' ' + (meta.symbol || 'ETH'),
+          priceUsd: nativePrice,
+          change24h: 0,
+          accountAddress: address,
+          updatedAt: Math.floor(Date.now()/1000),
+        });
+      }
+
+      const usdcContract = EVM_USDC_CONTRACTS[chain];
+      if (usdcContract) {
+        const usdc = await fetchErc20Balance(address, rpc, usdcContract, 6);
+        if (usdc !== null && usdc > 0) {
+          assets.push({
+            assetId: chain + '_usdc',
+            chain,
+            symbol: 'USDC',
+            name: 'USD Coin',
+            balance: usdc,
+            amount: usdc,
+            balanceText: usdc.toFixed(6).replace(/0+$/,'').replace(/\.$/,'') + ' USDC',
+            priceUsd: 1,
+            change24h: 0,
+            accountAddress: address,
+            updatedAt: Math.floor(Date.now()/1000),
+          });
+        }
+      }
+    }));
+
+    const watchTasks: Promise<void>[] = [];
+    for (const [rawKey, meta] of Object.entries(WATCH_ASSET_META)) {
+      const aliasValues = Object.entries(WATCH_ALIASES)
+        .filter(([, canonical]) => canonical === rawKey)
+        .map(([alias]) => req.query[alias]);
+      const watchAddresses = normalizeWatchQuery([req.query[rawKey], ...aliasValues].flat());
+      if (!watchAddresses.length) continue;
+      const pricePromise = meta.coinbase ? fetchSpotUsdPrice(meta.coinbase, meta.fallbackPrice || 0) : Promise.resolve(meta.fallbackPrice || 0);
+      for (const watchAddress of watchAddresses) {
+        watchTasks.push((async () => {
+          const [balance, priceUsd] = await Promise.all([
+            fetchWatchAssetBalance(rawKey, watchAddress),
+            pricePromise,
+          ]);
+          if (balance !== null && balance > 0) {
+            assets.push({
+              assetId: `${meta.chain}_${watchAddress.slice(0, 10)}`,
+              chain: meta.chain,
+              symbol: meta.symbol,
+              name: meta.name,
+              balance,
+              amount: balance,
+              balanceText: formatAssetBalance(balance, meta.symbol, meta.decimals || 8),
+              priceUsd,
+              change24h: 0,
+              accountAddress: watchAddress,
+              source: 'watch_only_' + rawKey,
+              updatedAt: Math.floor(Date.now()/1000),
+            });
+          }
+        })());
+      }
+    }
+    await Promise.all(watchTasks);
+
+    return sendNoStore(res, { ok: true, address, assets, source: 'external_wallet_watch_rpc' });
+  });
+
+  app.get('/api/wallet/native-addresses', (req, res) => {
+    const verified = requireVerified(req, res);
+    if (!verified) return;
+    const tokenHash = resolveTokenHashForWallet(verified.address);
+    if (!tokenHash) return sendNoStore(res, { ok: true, addresses: {}, source: 'native_guard' });
+    const rows = db.prepare(
+      'SELECT chain_key,address,updated_at FROM guard_wallet_addresses WHERE token_hash=? ORDER BY chain_key'
+    ).all(tokenHash) as any[];
+    const addresses: Record<string,string> = {};
+    let updatedAt = 0;
+    for (const row of rows) {
+      addresses[String(row.chain_key)] = String(row.address);
+      addresses[String(row.chain_key).toLowerCase()] = String(row.address);
+      updatedAt = Math.max(updatedAt, Number(row.updated_at || 0));
+    }
+    return sendNoStore(res, { ok: true, addresses, updatedAt, source: 'native_guard' });
+  });
+
+  const portfolioHandler = async (req: Request, res: Response) => {
+    const verified = requireVerified(req, res);
+    if (!verified) return;
+    const tokenHash = resolveTokenHashForWallet(verified.address);
+    if (!tokenHash) console.log('external wallet live portfolio', verified.address);
+    const rows = db.prepare(
+      'SELECT asset_key,symbol,name,balance_text,price_usd,change_24h,account_address,updated_at FROM guard_portfolios WHERE token_hash=? ORDER BY symbol'
+    ).all(tokenHash) as any[];
+    const assets:any[] = rows.map((row) => {
+      const assetId = String(row.asset_key || '');
+      const key = assetId.toLowerCase();
+      const chain =
+        key.startsWith('ethereum') ? 'ethereum' :
+        key.startsWith('arbitrum') ? 'arbitrum' :
+        key.startsWith('base') ? 'base' :
+        key.startsWith('near') ? 'near' :
+        key.startsWith('xrp') ? 'xrp' :
+        (key.split('_')[0] || '');
+      return {
+        assetId,
+        chain,
+        symbol: String(row.symbol || '').toUpperCase(),
+        name: row.name || row.symbol,
+        balance: parseBalanceText(row.balance_text),
+        amount: parseBalanceText(row.balance_text),
+        balanceText: row.balance_text,
+        priceUsd: finiteNumber(row.price_usd) ?? 0,
+        change24h: finiteNumber(row.change_24h) ?? 0,
+        accountAddress: row.account_address || '',
+        updatedAt: row.updated_at,
+      };
+    });
+
+    if (!tokenHash && /^0x[a-fA-F0-9]{40}$/.test(String(verified.address || ''))) {
+      await Promise.all(Object.entries(EVM_NATIVE_RPCS).map(async ([chain, rpc]) => {
+        const live = await fetchNativeEthBalance(String(verified.address), rpc);
+        if (live === null || live <= 0) return;
+        const existing = assets.find((asset:any) => asset.symbol === 'ETH' && String(asset.chain || '').toLowerCase() === chain);
+        if (existing) return;
+        assets.push({
+          assetId: chain,
+          chain,
+          symbol: EVM_NATIVE_META[chain]?.symbol || 'ETH',
+          name: EVM_NATIVE_META[chain]?.name || (chain === 'ethereum' ? 'Ethereum' : chain.charAt(0).toUpperCase() + chain.slice(1) + ' ETH'),
+          balance: live,
+          amount: live,
+          balanceText: (live.toFixed(8).replace(/0+$/,'').replace(/\.$/,'') || '0') + ' ETH',
+          priceUsd: 0,
+          change24h: 0,
+          accountAddress: String(verified.address),
+          updatedAt: Math.floor(Date.now()/1000),
+          isGasReserve: false,
+        });
+      }));
+    }
+
+    await Promise.all(assets.map(async (asset:any) => {
+      if (asset.symbol !== 'ETH') return;
+      const rpc = EVM_NATIVE_RPCS[String(asset.chain || '').toLowerCase()];
+      if (!rpc || !asset.accountAddress) return;
+      const live = await fetchNativeEthBalance(String(asset.accountAddress), rpc);
+      if (live === null) return;
+      asset.balance = live;
+      asset.amount = live;
+      const text = live.toFixed(8).replace(/0+$/,'').replace(/\.$/,'') || '0';
+      asset.balanceText = text + ' ETH';
+      asset.updatedAt = Math.floor(Date.now()/1000);
+      asset.isGasReserve = live * Number(asset.priceUsd || 0) < 0.25;
+    }));
+
+    const evmAddressByChain: Record<string,string> = {};
+    if (/^0x[a-fA-F0-9]{40}$/.test(String(verified.address || ''))) {
+      for (const chain of Object.keys(EVM_NATIVE_RPCS)) evmAddressByChain[chain] = String(verified.address);
+    }
+    for (const asset of assets) {
+      const chain = String(asset.chain || '').toLowerCase();
+      if (EVM_NATIVE_RPCS[chain] && asset.accountAddress && !evmAddressByChain[chain]) {
+        evmAddressByChain[chain] = String(asset.accountAddress);
+      }
+    }
+
+    await Promise.all(Object.entries(EVM_USDC_CONTRACTS).map(async ([chain, contract]) => {
+      const rpc = EVM_NATIVE_RPCS[chain];
+      const accountAddress = evmAddressByChain[chain];
+      if (!rpc || !accountAddress) return;
+      const live = await fetchErc20Balance(accountAddress, rpc, contract, 6);
+      if (live === null) return;
+      const existing = assets.find((asset:any) => asset.symbol === 'USDC' && String(asset.chain || '').toLowerCase() === chain);
+      if (existing) {
+        existing.balance = live;
+        existing.amount = live;
+        existing.balanceText = live.toFixed(6).replace(/0+$/,'').replace(/\.$/,'') + ' USDC';
+        existing.priceUsd = 1;
+        existing.updatedAt = Math.floor(Date.now()/1000);
+      } else if (live > 0) {
+        assets.push({
+          assetId: chain + '_usdc',
+          chain,
+          symbol: 'USDC',
+          name: 'USD Coin',
+          balance: live,
+          amount: live,
+          balanceText: live.toFixed(6).replace(/0+$/,'').replace(/\.$/,'') + ' USDC',
+          priceUsd: 1,
+          change24h: 0,
+          accountAddress,
+          updatedAt: Math.floor(Date.now()/1000),
+        });
+      }
+    }));
+
+    const visibleAssets = assets.filter((x:any) => {
+      if (!x.symbol || !(Number(x.amount) > 0)) return false;
+      if (x.symbol === 'ETH' && x.isGasReserve) return false;
+      if (x.symbol === 'USDC' && Number(x.amount) < 0.50) return false;
+      return true;
+    });
+    return sendNoStore(res, { ok: true, address: verified.address, assets: visibleAssets, source: tokenHash ? 'native_guard+live_rpc+live_usdc' : 'external_wallet+live_rpc+live_usdc' });
+  };
+
+  app.get('/api/wallet/portfolio', portfolioHandler);
+  app.get('/api/wallet/portfolio-latest', portfolioHandler);
+}
+
+function enqueueAlert(title: string, body: string, type='aurelis_guard', data:any={}, targetTokenHash:string|null=null) {
+  const now = Math.floor(Date.now()/1000);
+  const info = db.prepare(
+    'INSERT INTO mobile_alerts(title,body,alert_type,data_json,created_at,target_token_hash) VALUES(?,?,?,?,?,?)'
+  ).run(title, body, type, JSON.stringify(data || {}), now, targetTokenHash);
+  return Number(info.lastInsertRowid);
+}
+
+function registerAlertRoutes(app: Express) {
+  app.get('/api/alerts/recent', (req, res) => {
+    const verified = requireVerified(req, res);
+    if (!verified) return;
+    const limit = Math.max(1, Math.min(100, Number(req.query.limit || 30) || 30));
+    const tokenHash = resolveTokenHashForWallet(verified.address);
+    const rows = tokenHash
+      ? db.prepare(
+          'SELECT id,title,body,alert_type,data_json,created_at FROM mobile_alerts WHERE target_token_hash IS NULL OR target_token_hash=? ORDER BY id DESC LIMIT ?'
+        ).all(tokenHash, limit * 4) as any[]
+      : db.prepare(
+          'SELECT id,title,body,alert_type,data_json,created_at FROM mobile_alerts WHERE target_token_hash IS NULL ORDER BY id DESC LIMIT ?'
+        ).all(limit * 4) as any[];
+    const seen = new Set<string>();
+    const alerts:any[] = [];
+    for (const row of rows) {
+      const data = safeJson(row.data_json, {});
+      if (row.alert_type === 'bets_found') {
+        const bets = Array.isArray(data?.bets) ? data.bets : [];
+        const key = bets.map((x:any)=>`${String(x?.symbol||'').toUpperCase()}:${String(x?.direction||'').toUpperCase()}`).sort().join('|');
+        if (key && seen.has(key)) continue;
+        if (key) seen.add(key);
+      }
+      alerts.push({ id: row.id, title: row.title, body: row.body, type: row.alert_type, data, createdAt: row.created_at });
+      if (alerts.length >= limit) break;
+    }
+    return sendNoStore(res, { ok: true, alerts });
+  });
+
+  app.post('/api/mobile/alerts/register', (req, res) => {
+    if (!mobileAiAuthorized(req)) return sendNoStore(res, { ok:false, error:'unauthorized' }, 401);
+    const tokenHash = String(req.body?.tokenHash || '').trim().toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(tokenHash)) return sendNoStore(res, { ok:false, error:'invalid_guard_token' }, 400);
+    const now = Math.floor(Date.now()/1000);
+    db.prepare(
+      'INSERT INTO guard_devices(token_hash,created_at,last_seen) VALUES(?,?,?) ON CONFLICT(token_hash) DO UPDATE SET last_seen=excluded.last_seen'
+    ).run(tokenHash, now, now);
+    return sendNoStore(res, { ok:true, registered:true });
+  });
+
+  app.get('/api/mobile/alerts/stream', (req, res) => {
+    if (!mobileGuardAuthorized(req)) return sendNoStore(res, { ok:false, error:'unauthorized' }, 401);
+    const tokenHash = bearerHash(req);
+    let lastId = Math.max(0, Number(req.query.since || 0) || 0);
+    res.status(200);
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-store');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+    let alive = true;
+    req.on('close', () => { alive = false; });
+    const tick = () => {
+      if (!alive) return;
+      const rows = db.prepare(
+        'SELECT id,title,body,alert_type,data_json,created_at FROM mobile_alerts WHERE id>? AND (target_token_hash IS NULL OR target_token_hash=?) ORDER BY id ASC LIMIT 100'
+      ).all(lastId, tokenHash) as any[];
+      if (rows.length) {
+        for (const row of rows) {
+          const packet = { id:row.id,title:row.title,body:row.body,type:row.alert_type,data:safeJson(row.data_json,{}),createdAt:row.created_at };
+          res.write('data: ' + JSON.stringify(packet) + '\n\n');
+          lastId = Number(row.id);
+        }
+      } else {
+        res.write(': heartbeat\n\n');
+      }
+    };
+    tick();
+    const timer = setInterval(tick, 10000);
+    setTimeout(() => { clearInterval(timer); if (alive) res.end(); }, 55000);
+  });
+
+  app.post('/api/mobile/alerts/test', (req, res) => {
+    if (!mobileGuardAuthorized(req)) return sendNoStore(res,{ok:false,error:'unauthorized'},401);
+    const alertId = enqueueAlert(
+      'AURELIS Guard connected',
+      'Wallet protection and opportunity alerts are ready on this phone.',
+      'aurelis_guard',
+      { screen:'wallet', kind:'transport_test' },
+      bearerHash(req)
+    );
+    return sendNoStore(res,{ok:true,alertId});
+  });
+
+  app.post('/api/mobile/guard/portfolio', (req, res) => {
+    if (!mobileGuardAuthorized(req)) return sendNoStore(res,{ok:false,error:'unauthorized'},401);
+    const tokenHash = bearerHash(req);
+    const assetsRaw = Array.isArray(req.body?.assets) ? req.body.assets.slice(0,500) : [];
+    const addressesRaw = req.body?.addresses && typeof req.body.addresses === 'object' ? req.body.addresses : {};
+    const assets:any[] = [];
+    const seen = new Set<string>();
+    for (const raw of assetsRaw) {
+      if (!raw || typeof raw !== 'object') continue;
+      const symbol = String(raw.symbol || '').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,24);
+      const assetId = String(raw.assetId || '').trim().slice(0,220);
+      if (!symbol || !assetId || seen.has(assetId)) continue;
+      seen.add(assetId);
+      assets.push({
+        assetId,
+        symbol,
+        name:String(raw.name || symbol).trim().slice(0,120),
+        balance:String(raw.balance || '').trim().slice(0,120),
+        priceUsd:finiteNumber(raw.priceUsd),
+        change24h:finiteNumber(raw.change24h),
+        accountAddress:String(raw.accountAddress || '').trim().slice(0,180),
+      });
+    }
+    const addresses:Record<string,string> = {};
+    for (const [k,v] of Object.entries(addressesRaw).slice(0,100)) {
+      const key = String(k).replace(/[^A-Za-z0-9_-]/g,'').slice(0,64);
+      const value = String(v || '').trim().slice(0,220);
+      if (key && value) addresses[key] = value;
+    }
+    const now = Math.floor(Date.now()/1000);
+    const tx = db.transaction(() => {
+      db.prepare('DELETE FROM guard_portfolios WHERE token_hash=?').run(tokenHash);
+      db.prepare('DELETE FROM guard_wallet_addresses WHERE token_hash=?').run(tokenHash);
+      const ia = db.prepare('INSERT INTO guard_wallet_addresses(token_hash,chain_key,address,updated_at) VALUES(?,?,?,?)');
+      for (const [key,value] of Object.entries(addresses)) ia.run(tokenHash,key,value,now);
+      const ip = db.prepare(
+        'INSERT INTO guard_portfolios(token_hash,asset_key,symbol,name,balance_text,price_usd,change_24h,account_address,updated_at) VALUES(?,?,?,?,?,?,?,?,?)'
+      );
+      for (const item of assets) {
+        ip.run(tokenHash,item.assetId,item.symbol,item.name,item.balance,item.priceUsd,item.change24h,item.accountAddress,now);
+      }
+    });
+    tx();
+    return sendNoStore(res,{ok:true,assets:assets.length,addresses:Object.keys(addresses).length,updatedAt:now});
+  });
+
+  app.post('/api/mobile/approval/respond', (req, res) => {
+    if (!mobileGuardAuthorized(req)) return sendNoStore(res,{ok:false,error:'unauthorized'},401);
+    const requestId = String(req.body?.requestId || '').trim();
+    const decision = String(req.body?.decision || '').trim().toLowerCase();
+    if (!/^[A-Za-z0-9_-]{16,80}$/.test(requestId) || !['approve','deny'].includes(decision)) {
+      return sendNoStore(res,{ok:false,error:'invalid_approval_response'},400);
+    }
+    const status = decision === 'approve' ? 'approved' : 'denied';
+    const result = JSON.stringify({decision,authorizedOnPhone:decision==='approve'});
+    const info = db.prepare(
+      "UPDATE mobile_approvals SET status=?,result_json=?,updated_at=? WHERE request_id=? AND target_token_hash=? AND status='pending'"
+    ).run(status,result,Math.floor(Date.now()/1000),requestId,bearerHash(req));
+    if (!info.changes) return sendNoStore(res,{ok:false,error:'approval_not_pending'},409);
+    return sendNoStore(res,{ok:true,requestId,status});
+  });
+}
+
+const ohlcCache = new Map<string,{at:number,payload:any}>();
+const knownCoinIds:Record<string,string> = {
+  BTC:'bitcoin',ETH:'ethereum',SOL:'solana',XRP:'ripple',BNB:'binancecoin',DOGE:'dogecoin',
+  ADA:'cardano',AVAX:'avalanche-2',DOT:'polkadot',LTC:'litecoin',LINK:'chainlink',TRX:'tron',
+  SUI:'sui',XLM:'stellar',HBAR:'hedera-hashgraph',BCH:'bitcoin-cash',TON:'the-open-network',
+  UNI:'uniswap',SHIB:'shiba-inu',PEPE:'pepe',AAVE:'aave',NEAR:'near',APT:'aptos',ARB:'arbitrum',
+  OP:'optimism',XMR:'monero',TAO:'bittensor'
+};
+
+async function coinOhlc(symbol:string, rangeKey:string) {
+  const key = symbol + ':' + rangeKey;
+  const cached = ohlcCache.get(key);
+  if (cached && Date.now()-cached.at < 25000) return cached.payload;
+  const conf:any = { '4H':['5m',48], '12H':['15m',48], '1D':['30m',48], '7D':['4h',42] }[rangeKey];
+  if (!conf) throw new Error('invalid_request');
+  try {
+    const raw = await fetchJson(
+      'https://api.mexc.com/api/v3/klines?' + new URLSearchParams({symbol:symbol+'USDT',interval:conf[0],limit:String(conf[1])}),
+      { headers:{Accept:'application/json','User-Agent':'AURELIS-Web/1.0'} }, 7000
+    );
+    const candles = (Array.isArray(raw)?raw:[]).map((row:any[])=>({
+      t:Number(row?.[0]),o:Number(row?.[1]),h:Number(row?.[2]),l:Number(row?.[3]),c:Number(row?.[4]),v:Number(row?.[5])
+    })).filter((x:any)=>[x.t,x.o,x.h,x.l,x.c].every(Number.isFinite));
+    if (candles.length) {
+      const payload={ok:true,symbol,range:rangeKey,source:'mexc_ohlc',interval:conf[0],candles};
+      ohlcCache.set(key,{at:Date.now(),payload}); return payload;
+    }
+  } catch {}
+  let coinId=knownCoinIds[symbol];
+  if (!coinId) {
+    const search=await fetchJson('https://api.coingecko.com/api/v3/search?query='+encodeURIComponent(symbol),{headers:{Accept:'application/json'}},6000);
+    const matches=(search?.coins||[]).filter((x:any)=>String(x.symbol||'').toUpperCase()===symbol)
+      .sort((a:any,b:any)=>(a.market_cap_rank||1e9)-(b.market_cap_rank||1e9));
+    coinId=matches?.[0]?.id;
+  }
+  if (!coinId) throw new Error('coin_not_found');
+  const days=rangeKey==='7D'?'7':'1';
+  const raw=await fetchJson(`https://api.coingecko.com/api/v3/coins/${encodeURIComponent(coinId)}/ohlc?vs_currency=usd&days=${days}`,{headers:{Accept:'application/json'}},8000);
+  let candles=(Array.isArray(raw)?raw:[]).map((row:any[])=>({t:Number(row?.[0]),o:Number(row?.[1]),h:Number(row?.[2]),l:Number(row?.[3]),c:Number(row?.[4])}))
+    .filter((x:any)=>[x.t,x.o,x.h,x.l,x.c].every(Number.isFinite));
+  if (['4H','12H'].includes(rangeKey) && candles.length) {
+    const cutoff=candles[candles.length-1].t-(rangeKey==='4H'?4:12)*3600000;
+    candles=candles.filter((x:any)=>x.t>=cutoff);
+  }
+  const payload={ok:true,symbol,range:rangeKey,source:'coingecko_ohlc',candles};
+  ohlcCache.set(key,{at:Date.now(),payload}); return payload;
+}
+
+async function krakenTicker(symbol:string) {
+  const aliases:Record<string,string>={BTC:'XBT',DOGE:'XDG'};
+  const base=aliases[symbol]||symbol;
+  const pairs=await fetchJson('https://api.kraken.com/0/public/AssetPairs?execution_venue=bitnomial_exchange',{headers:{Accept:'application/json'}},10000);
+  const rows=pairs?.result||{};
+  let match:any=null;
+  for (const [pairId,info0] of Object.entries(rows)) {
+    const info:any=info0;
+    const alt=String(info?.altname||pairId).toUpperCase();
+    const ws=String(info?.wsname||'').toUpperCase();
+    const wanted=new Set([`${base}USD:BTNL`,`${symbol}/USD:BTNL`,`${base}/USD:BTNL`].map(x=>x.toUpperCase()));
+    if (wanted.has(alt)||wanted.has(ws)) { match={pairId,...info}; break; }
+  }
+  if (!match) {
+    const normalPair=(symbol==='BTC'?'XBT':symbol)+'USD';
+    const ticker=await fetchJson('https://api.kraken.com/0/public/Ticker?pair='+encodeURIComponent(normalPair),{headers:{Accept:'application/json'}},10000);
+    const row:any=Object.values(ticker?.result||{})[0];
+    if (!row) throw new Error('kraken_ticker_unavailable');
+    return { mark:Number(row.c?.[0]), pair:{pairId:normalPair,altname:normalPair,wsname:symbol+'/USD',lot_decimals:8,pair_decimals:5,leverage_buy:[],leverage_sell:[]}, ticker:row };
+  }
+  const ticker=await fetchJson('https://api.kraken.com/0/public/Ticker?pair='+encodeURIComponent(match.altname),{headers:{Accept:'application/json'}},10000);
+  const row:any=Object.values(ticker?.result||{})[0];
+  if (!row) throw new Error('kraken_ticker_unavailable');
+  return { mark:Number(row.c?.[0]), pair:match, ticker:row };
+}
+
+let krakenNonce=0;
+function krakenCreds() {
+  const key=String(process.env.KRAKEN_API_KEY||'').trim();
+  const secret=String(process.env.KRAKEN_API_SECRET||'').trim();
+  if(!key||!secret) throw new Error('kraken_not_configured');
+  return {key,secret};
+}
+async function krakenPrivate(route:string,payload:Record<string,any>={}) {
+  const {key,secret}=krakenCreds();
+  const nonce=String(Math.max(Date.now(),++krakenNonce));
+  krakenNonce=Number(nonce);
+  const body=new URLSearchParams({...Object.fromEntries(Object.entries(payload).map(([k,v])=>[k,String(v)])),nonce}).toString();
+  const digest=crypto.createHash('sha256').update(nonce+body).digest();
+  const sig=crypto.createHmac('sha512',Buffer.from(secret,'base64')).update(Buffer.concat([Buffer.from(route),digest])).digest('base64');
+  const response=await fetch('https://api.kraken.com'+route,{
+    method:'POST',
+    headers:{'API-Key':key,'API-Sign':sig,'Content-Type':'application/x-www-form-urlencoded','User-Agent':'AURELIS-vNext/1.0'},
+    body
+  });
+  const data:any=await response.json();
+  if(!response.ok || (Array.isArray(data?.error)&&data.error.length)) throw new Error('kraken_api_error:'+(data?.error||[]).join(';'));
+  return data?.result;
+}
+
+type KrakenConfirmation={preview:any,expiresAt:number,used:boolean};
+const krakenConfirmations=new Map<string,KrakenConfirmation>();
+const KRAKEN_CONFIRM_TTL_MS=10*60*1000;
+
+async function prepareKrakenOrder(payload:any) {
+  const asset=String(payload?.asset||payload?.symbol||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  const direction=String(payload?.direction||'').toUpperCase();
+  const amount=Number(payload?.amount), leverage=Number(payload?.leverage), stop=Number(payload?.stopLoss), target=Number(payload?.takeProfit);
+  if(!asset) throw new Error('invalid_asset');
+  if(!['LONG','SHORT'].includes(direction)) throw new Error('invalid_direction');
+  if(![amount,leverage,stop,target].every(x=>Number.isFinite(x)&&x>0)) throw new Error('invalid_order_values');
+  const {mark,pair}=await krakenTicker(asset);
+  const buys=(pair.leverage_buy||[]).map(Number), sells=(pair.leverage_sell||[]).map(Number);
+  const allowed=direction==='LONG'?buys:sells;
+  if(!allowed.includes(leverage)) throw new Error('kraken_leverage_not_supported');
+  if(direction==='LONG' && !(stop<mark && mark<target)) throw new Error('invalid_long_protection');
+  if(direction==='SHORT' && !(target<mark && mark<stop)) throw new Error('invalid_short_protection');
+  const maxNotional=Number(process.env.AURELIS_KRAKEN_MAX_NOTIONAL_USD||1000);
+  const maxLev=Number(process.env.AURELIS_KRAKEN_MAX_LEVERAGE||10);
+  if(amount>maxNotional) throw new Error('kraken_notional_limit');
+  if(leverage>maxLev) throw new Error('kraken_leverage_limit');
+  const trade=await krakenPrivate('/0/private/TradeBalance',{asset:'ZUSD'});
+  const free=Number(trade?.mf||0), margin=amount/leverage;
+  if(free<margin) throw new Error(`kraken_insufficient_free_margin:requires_${margin.toFixed(2)}_USD:available_${free.toFixed(2)}_USD`);
+  const lotDecimals=Number(pair.lot_decimals||8), pairDecimals=Number(pair.pair_decimals||5);
+  const quantity=(amount/mark).toFixed(lotDecimals);
+  const preview={
+    symbol:pair.altname, pairId:pair.pairId, asset,direction,markPrice:String(mark),
+    positionValueUsd:String(amount),estimatedMarginUsd:String(margin),freeMarginUsd:String(free),
+    quantity,leverage:String(Math.trunc(leverage)),stopLoss:stop.toFixed(pairDecimals),
+    takeProfit:target.toFixed(pairDecimals),orderMinimum:pair.ordermin||null,
+    lotDecimals,pairDecimals,broker:'Kraken Derivatives US'
+  };
+  const token=crypto.randomBytes(32).toString('base64url');
+  krakenConfirmations.set(token,{preview,expiresAt:Date.now()+90000,used:false});
+  return {ok:true,provider:'KRAKEN_MARGIN',preview,signal:payload?.signal||{},confirmation:{token,expiresInSeconds:90},execution:{configured:true,readOnlyPreview:false,maxNotionalUsd:String(maxNotional),maxLeverage:String(maxLev)}};
+}
+
+async function submitKrakenOrder(payload:any) {
+  const token=String(payload?.confirmationToken||'');
+  const item=krakenConfirmations.get(token);
+  if(!item || Date.now()>item.expiresAt) throw new Error('trade_confirmation_expired');
+  if(item.used) throw new Error('trade_confirmation_used');
+  item.used=true;
+  const p=item.preview;
+  const side=p.direction==='LONG'?'buy':'sell';
+  const entry=await krakenPrivate('/0/private/AddOrder',{
+    ordertype:'market',type:side,volume:p.quantity,pair:p.symbol,leverage:p.leverage,
+    cl_ord_id:('aur'+Date.now().toString().slice(-8)+token.replace(/[^A-Za-z0-9]/g,'').slice(0,5)).slice(0,18)
+  });
+  return {ok:true,provider:'KRAKEN_MARGIN',entry,preview:p,submittedAt:Date.now()};
+}
+
+const AAVE_MCP_DEFAULT_ENDPOINT='https://mcp.aave.com';
+const AAVE_MCP_TIMEOUT_MS=12000;
+let aaveToolCache:{at:number,names:Set<string>,raw:any}|null=null;
+
+export function isAaveAgentEnabled():boolean {
+  return ['1','true','yes','on'].includes(String(process.env.AURELIS_AAVE_AGENT_ENABLED||'').trim().toLowerCase());
+}
+
+function aaveEndpoint():string {
+  const configured=String(process.env.AURELIS_AAVE_MCP_URL||AAVE_MCP_DEFAULT_ENDPOINT).trim();
+  return configured||AAVE_MCP_DEFAULT_ENDPOINT;
+}
+
+async function aaveFetch(endpoint:string,headers:Record<string,string>,payload:any,timeoutMs=AAVE_MCP_TIMEOUT_MS) {
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),timeoutMs);
+  try {
+    const response=await fetch(endpoint,{
+      method:'POST',
+      headers,
+      body:JSON.stringify(payload),
+      signal:controller.signal,
+    });
+    const text=await response.text();
+    const body=safeJson(text,{});
+    if(response.status===429) throw new Error('aave_mcp_rate_limited');
+    if(response.status===401) throw new Error('aave_mcp_unauthorized');
+    if(!response.ok) throw new Error(String(body?.error?.message||body?.error||'aave_mcp_http_'+response.status));
+    return {response,body};
+  } catch(e:any) {
+    if(e?.name==='AbortError') throw new Error('aave_mcp_timeout');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function aaveSession() {
+  const endpoint=aaveEndpoint();
+  const headers:Record<string,string>={
+    Accept:'application/json, text/event-stream',
+    'Content-Type':'application/json',
+    'User-Agent':'AURELIS-vNext/1.0'
+  };
+  const {response,body}=await aaveFetch(endpoint,headers,{
+    jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'AURELIS-vNext',version:'1.0'}}
+  });
+  const sid=response.headers.get('mcp-session-id');
+  if(!sid||!body?.result) throw new Error('aave_mcp_init_failed');
+  headers['mcp-session-id']=sid;
+  await aaveFetch(endpoint,headers,{jsonrpc:'2.0',method:'notifications/initialized',params:{}},5000).catch(()=>{});
+  return {endpoint,headers};
+}
+
+async function aaveTools(session:any,force=false) {
+  if(!force&&aaveToolCache&&Date.now()-aaveToolCache.at<300000)return aaveToolCache;
+  const {body}=await aaveFetch(session.endpoint,session.headers,{jsonrpc:'2.0',id:2,method:'tools/list',params:{}});
+  const tools=Array.isArray(body?.result?.tools)?body.result.tools:[];
+  const cache={at:Date.now(),names:new Set<string>(tools.map((t:any)=>String(t?.name||'')).filter(Boolean)),raw:tools};
+  aaveToolCache=cache;
+  return cache;
+}
+
+async function aaveTool(session:any,name:string,args:any,id:number) {
+  const capabilities=await aaveTools(session);
+  if(!capabilities.names.has(name))throw new Error('aave_mcp_tool_unavailable:'+name);
+  const {body:env}=await aaveFetch(session.endpoint,session.headers,{jsonrpc:'2.0',id,method:'tools/call',params:{name,arguments:args}});
+  if(env?.error) throw new Error(String(env.error?.message||env.error));
+  const result=env?.result||{};
+  if(result.isError) {
+    const text=(result.content||[]).map((x:any)=>x?.text).filter(Boolean).join(' ');
+    throw new Error(text||'aave_mcp_tool_error');
+  }
+  if(result.structuredContent && typeof result.structuredContent==='object') return result.structuredContent;
+  for(const item of result.content||[]) if(item?.type==='text') { const v=safeJson(item.text,null); if(v) return v; }
+  throw new Error('aave_mcp_no_data');
+}
+
+export async function getAaveAgentCapabilities() {
+  if(!isAaveAgentEnabled())return {enabled:false,endpoint:aaveEndpoint(),tools:[]};
+  const session=await aaveSession();
+  const tools=await aaveTools(session,true);
+  return {
+    enabled:true,
+    endpoint:aaveEndpoint(),
+    tools:Array.from(tools.names).sort(),
+    readOnlyByDefault:true,
+    signing:'external-wallet-required',
+    submissionEnabled:false,
+  };
+}
+
+function aaveRequestedSymbols(message:string):string[] {
+  const known=['USDC','USDT','DAI','GHO','ETH','WETH','WBTC','BTC','AAVE','LINK','UNI','LDO','CRV','USDE','PYUSD','EURC'];
+  const raw=String(message||'');
+  const upper=raw.toUpperCase();
+  return known.filter(sym=>{
+    if(!new RegExp('\b'+sym+'\b').test(upper))return false;
+    if(sym!=='AAVE')return true;
+    return /\$AAVE|AAVE\s+TOKEN|(?:SUPPLY|DEPOSIT|LEND|BORROW|WITHDRAW|REPAY)\s+(?:ANOTHER\s+)?(?:[0-9.,]+\s+)?AAVE/i.test(raw);
+  }).slice(0,4);
+}
+
+function aaveRequestedChainId(message:string):number|undefined {
+  const s=String(message||'').toLowerCase();
+  const pairs:[RegExp,number][]=[
+    [/\\bethereum\\b|\\bmainnet\\b/,1],
+    [/\\barbitrum\\b/,42161],
+    [/\\bbase\\b/,8453],
+    [/\\bavalanche\\b|\\bavax\\b/,43114],
+    [/\\boptimism\\b/,10],
+    [/\\bpolygon\\b/,137],
+    [/\\barc\\b/,5042],
+  ];
+  return pairs.find(([re])=>re.test(s))?.[1];
+}
+
+function aaveActionRequest(message:string):{action:'supply'|'borrow'|'withdraw'|'repay';amount?:string;symbol?:string;max?:boolean}|null {
+  const s=String(message||'').trim();
+  const m=s.match(/\\b(supply|deposit|lend|borrow|withdraw|repay)\\b/i);
+  if(!m)return null;
+  const raw=m[1].toLowerCase();
+  const action=raw==='deposit'||raw==='lend'?'supply':raw as 'supply'|'borrow'|'withdraw'|'repay';
+  const max=/\\b(all|max|maximum|entire)\\b/i.test(s);
+  const after=s.slice((m.index||0)+m[0].length);
+  const amountMatch=after.match(/(?:another\\s+)?([0-9][0-9,]*(?:\\.[0-9]+)?)/i);
+  const amount=amountMatch?amountMatch[1].replace(/,/g,''):undefined;
+  const symbols=aaveRequestedSymbols(s);
+  return {action,amount,symbol:symbols[0],max};
+}
+
+function flattenAaveMarkets(payload:any):any[] {
+  const data=payload?.data||payload||{};
+  const rows:any[]=[];
+  for(const version of ['v4','v3']) {
+    const section=data?.[version];
+    for(const market of section?.markets||[]) {
+      if(version==='v4') rows.push({...market,version});
+      else {
+        for(const reserve of market?.reserves||[]) rows.push({...reserve,version,market:market?.market,chainId:market?.chainId});
+      }
+    }
+  }
+  return rows;
+}
+
+function aaveCapacity(row:any,action:string):number {
+  if(action==='supply') return Number(row?.suppliable ?? row?.availableLiquidity ?? 0);
+  if(action==='borrow') return Number(row?.borrowable ?? row?.availableLiquidity ?? 0);
+  return Number.POSITIVE_INFINITY;
+}
+
+export async function runAaveAgentQuery(message:string,walletAddress?:string|null) {
+  const text=String(message||'').trim();
+  if(!text)return null;
+  const lower=text.toLowerCase();
+  const namesAave=/\baave\b/i.test(text);
+  const protocolIntent=/health factor|lending rate|borrow rate|supply rate|\bapy\b|\byield\b|\bliquidity\b|\bborrow\b|\bsupply\b|\bdeposit\b|\blend\b|\bwithdraw\b|\brepay\b|\bposition(?:s)?\b|\bdebt\b|\bcollateral\b/i.test(text);
+  const asksAave=(namesAave&&protocolIntent)||/health factor|aave position|aave debt|aave collateral/i.test(text);
+  const action=namesAave?aaveActionRequest(text):null;
+  if(!asksAave)return null;
+
+  const session=await aaveSession();
+  let id=2;
+  const chainId=aaveRequestedChainId(text);
+  const symbols=aaveRequestedSymbols(text);
+
+  if(/health factor|health|position|positions|debt|collateral|net worth/i.test(lower)) {
+    if(!walletAddress)return {ok:false,kind:'wallet_required',message:'Connect or authenticate the AURELIS wallet to inspect Aave positions.'};
+    const [summary,positions]=await Promise.all([
+      aaveTool(session,'get_user_summary',{user:walletAddress,version:'all',...(chainId?{chainId}:{})},id++),
+      aaveTool(session,'get_user_positions',{user:walletAddress,version:'all',...(chainId?{chainId}:{})},id++),
+    ]);
+    return {ok:true,kind:'position',source:'Aave MCP',wallet:walletAddress,summary,positions};
+  }
+
+  if(action) {
+    if(!walletAddress)return {ok:false,kind:'wallet_required',message:'Connect or authenticate the AURELIS wallet before simulating or preparing an Aave action.'};
+    if(!action.symbol)return {ok:false,kind:'needs_asset',message:`Specify the asset for the Aave ${action.action} action.`};
+    if(!action.amount && !action.max)return {ok:false,kind:'needs_amount',message:`Specify an amount for the Aave ${action.action} action.`};
+
+    if(action.action==='withdraw'||action.action==='repay') {
+      const positions=await aaveTool(session,'get_user_positions',{user:walletAddress,version:'all',...(chainId?{chainId}:{})},id++);
+      return {
+        ok:true,
+        kind:'position_selection_required',
+        source:'Aave MCP',
+        action:action.action,
+        requested:action,
+        positions,
+        message:'Aave requires the reserveId from the wallet position for withdraw/repay. The agent has loaded the positions but will not guess which spoke/reserve to exit.',
+      };
+    }
+
+    const markets=await aaveTool(session,'get_markets',{version:'all',symbols:[action.symbol],user:walletAddress,...(chainId?{chainId}:{})},id++);
+    let candidates=flattenAaveMarkets(markets).filter((row:any)=>{
+      const can=action.action==='supply'?row?.canSupply!==false:row?.canBorrow!==false;
+      const amount=Number(action.amount||0);
+      const symbolMatches=String(row?.symbol||'').toUpperCase()===String(action.symbol||'').toUpperCase();
+      return symbolMatches && can && (!chainId||Number(row?.chainId)===chainId) && (!amount||aaveCapacity(row,action.action)>=amount);
+    });
+
+    candidates=candidates.slice(0,20);
+    if(candidates.length!==1) {
+      return {
+        ok:true,
+        kind:'reserve_selection_required',
+        source:'Aave MCP',
+        action:action.action,
+        requested:action,
+        candidates,
+        message:candidates.length
+          ? 'Multiple valid Aave reserves match this request. Choose the chain/spoke before simulation or preparation.'
+          : 'No Aave reserve currently matches the requested asset, chain, amount, and action.',
+      };
+    }
+
+    const row=candidates[0];
+    const selector=row.version==='v4'
+      ? {version:'v4',reserveId:String(row.reserveId)}
+      : {version:'v3',market:String(row.market),token:String(row.underlyingToken||row.token||row.address),chainId:Number(row.chainId)};
+    const args:any={
+      action:action.action,
+      sender:walletAddress,
+      ...(action.max?{max:true}:{amount:String(action.amount)}),
+      ...selector,
+    };
+    const preview=await aaveTool(session,'preview_action',args,id++);
+    const wantsPrepare=/\\bprepare|build|ready to sign|unsigned transaction|transaction\\b/i.test(lower);
+    const prepared=wantsPrepare?await aaveTool(session,'prepare_action',args,id++):null;
+    return {ok:true,kind:prepared?'prepared_action':'preview_action',source:'Aave MCP',requested:action,reserve:row,preview,prepared};
+  }
+
+  const marketArgs:any={version:'all'};
+  if(symbols.length)marketArgs.symbols=symbols;
+  if(chainId)marketArgs.chainId=chainId;
+  if(walletAddress && /can i|my wallet|available to me|balance/i.test(lower))marketArgs.user=walletAddress;
+  const markets=await aaveTool(session,'get_markets',marketArgs,id++);
+  return {ok:true,kind:'markets',source:'Aave MCP',markets};
+}
+
+async function morphoMarkets(chains:number[]) {
+  const gql=`query BorrowMarkets($chains:[Int!]) {
+    markets(first: 1000, orderBy: SupplyAssetsUsd, orderDirection: Desc, where: {listed: true, chainId_in: $chains}) {
+      items { marketId chain { id network } lltv loanAsset { address symbol decimals price { usd timestamp } }
+      collateralAsset { address symbol decimals price { usd timestamp } }
+      state { borrowApy avgBorrowApy avgNetBorrowApy liquidityAssets liquidityAssetsUsd utilization } }
+    }
+  }`;
+  const payload=await fetchJson('https://api.morpho.org/graphql',{
+    method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},
+    body:JSON.stringify({query:gql,variables:{chains}})
+  },15000);
+  return payload?.data?.markets?.items||[];
+}
+
+const chainNames:Record<number,string>={1:'Ethereum',10:'Optimism',56:'BNB Chain',100:'Gnosis',130:'Unichain',137:'Polygon',143:'Monad',146:'Sonic',196:'X Layer',999:'HyperEVM',1088:'Metis',1868:'Soneium',42220:'Celo',42161:'Arbitrum',43114:'Avalanche',4663:'Robinhood Chain',5000:'Mantle',8453:'Base',324:'zkSync Era',4326:'MegaETH',5042:'Arc',9745:'Plasma',57073:'Ink',534352:'Scroll',59144:'Linea',747474:'Katana'};
+
+async function buildBorrowCatalog() {
+  const errors:any[]=[];
+  let morpho:any[]=[];
+  let aave:any[]=[];
+  try {
+    const rows=await morphoMarkets([1,10,130,137,143,999,4663,5042,8453,42161,747474]);
+    morpho=rows.map((item:any)=>({
+      provider:'Morpho',chainId:Number(item?.chain?.id||0),marketId:item.marketId,
+      collateral:item?.collateralAsset?.symbol,borrow:item?.loanAsset?.symbol,
+      borrowApy:item?.state?.borrowApy,liquidityUsd:item?.state?.liquidityAssetsUsd,
+      liquidityAssets:item?.state?.liquidityAssets,utilization:item?.state?.utilization,
+      lltv:item?.lltv,source:'morpho_api'
+    }));
+  } catch(e:any){errors.push({provider:'Morpho',error:String(e?.message||e).slice(0,180)})}
+  try {
+    const s=await aaveSession(); let id=2;
+    const chains=await aaveTool(s,'get_chains',{version:'v3'},id++);
+    const rows=chains?.data?.v3||chains?.v3||[];
+    for(const ch of rows.slice(0,25)) {
+      const chainId=Number(ch?.chainId); if(!chainId) continue;
+      const response=await aaveTool(s,'get_markets',{version:'v3',chainId},id++);
+      const root=response?.data||response; const section=root?.v3||{};
+      for(const market of section?.markets||[]) for(const reserve of market?.reserves||[]) {
+        aave.push({
+          provider:'Aave',version:'V3',chainId:Number(market?.chainId||chainId),
+          market:market?.market,collateral:reserve?.symbol,borrow:reserve?.symbol,
+          canUseAsCollateral:!!reserve?.canUseAsCollateral,canSupply:reserve?.canSupply!==false,
+          canBorrow:!!reserve?.canBorrow,isFrozen:!!reserve?.isFrozen,isPaused:!!reserve?.isPaused,
+          borrowCapReached:!!reserve?.borrowCapReached,source:'aave_mcp'
+        });
+      }
+    }
+  } catch(e:any){errors.push({provider:'Aave',error:String(e?.message||e).slice(0,180)})}
+  for(const row of [...morpho,...aave]) row.network=chainNames[Number(row.chainId)]||String(row.chainId||'Unknown');
+  const collateral=new Map<string,any>(), borrow=new Map<string,any>();
+  const add=(map:Map<string,any>,sym:string,provider:string,network:string)=>{
+    if(!sym)return; if(!map.has(sym))map.set(sym,{symbol:sym,providers:new Set<string>(),networks:new Set<string>()});
+    const e=map.get(sym); e.providers.add(provider); if(network)e.networks.add(network);
+  };
+  for(const row of morpho){add(collateral,row.collateral,'Morpho',row.network);add(borrow,row.borrow,'Morpho',row.network)}
+  for(const row of aave){
+    if(row.collateral && row.canSupply && !row.isFrozen && !row.isPaused)add(collateral,row.collateral,'Aave',row.network);
+    if(row.borrow && row.canBorrow && !row.isPaused && !row.borrowCapReached)add(borrow,row.borrow,'Aave',row.network);
+  }
+  const clean=(m:Map<string,any>)=>Array.from(m.values()).map((x:any)=>({symbol:x.symbol,providers:Array.from(x.providers).sort(),networks:Array.from(x.networks).sort()})).sort((a,b)=>a.symbol.localeCompare(b.symbol));
+  return {ok:!!(morpho.length||aave.length),generatedAt:Date.now(),providers:{Aave:{marketRows:aave.length,source:'Official Aave MCP'},Morpho:{marketRows:morpho.length,source:'Official Morpho API'}},collateralAssets:clean(collateral),borrowAssets:clean(borrow),aave,morpho,errors};
+}
+
+let borrowCache:{at:number,payload:any}|null=null;
+
+function registerMarketAndBotRoutes(app:Express) {
+  app.get('/api/crypto-news', async (_req,res)=>{
+    const feeds:[string,string][]=[
+      ['Cointelegraph','https://cointelegraph.com/rss'],
+      ['Decrypt','https://decrypt.co/feed'],
+      ['CryptoSlate','https://cryptoslate.com/feed/'],
+      ['NewsBTC','https://www.newsbtc.com/feed/'],
+      ['Bitcoin Magazine','https://bitcoinmagazine.com/.rss/full/'],
+      ['BeInCrypto','https://beincrypto.com/feed/'],
+      ['The Defiant','https://thedefiant.io/api/feed'],
+      ['Crypto Briefing','https://cryptobriefing.com/feed/'],
+      ['CoinDesk','https://www.coindesk.com/arc/outboundfeeds/rss/'],
+    ];
+    const articles:any[]=[];
+    const clean=(s:string)=>String(s||'').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim();
+    for(const [source,url] of feeds){
+      try{
+        const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),10000);
+        const response=await fetch(url,{headers:{'User-Agent':'AURELIS-vNext/1.0'},signal:controller.signal}); clearTimeout(timer);
+        if(!response.ok)continue; const xml=await response.text();
+        const items=xml.match(/<item\b[\s\S]*?<\/item>/gi)||[];
+        for(const item of items.slice(0,8)){
+          const pick=(tag:string)=>{const m=item.match(new RegExp('<'+tag+'(?:\\s[^>]*)?>([\\s\\S]*?)<\\/'+tag+'>','i'));return clean(m?.[1]||'')};
+          const title=pick('title'),link=pick('link'),published=pick('pubDate');
+          const imageMatch=item.match(/<(?:media:content|media:thumbnail|enclosure)\b[^>]*\burl=["']([^"']+)["'][^>]*>/i);
+          if(title&&link)articles.push({title,url:link,source,published,image:imageMatch?.[1]||null});
+        }
+      }catch{}
+    }
+    if(articles.length){
+      articles.sort((a:any,b:any)=>Number(new Date(b.published||0))-Number(new Date(a.published||0)));
+      const seen=new Set<string>();
+      const deduped=articles.filter((a:any)=>{
+        const key=String(a.url||a.title||'').toLowerCase().replace(/[#?].*$/,'');
+        if(!key||seen.has(key))return false; seen.add(key); return true;
+      });
+      return res.json(deduped.slice(0,36));
+    }
+    return sendNoStore(res,{ok:false,error:'crypto_news_unavailable'},502);
+  });
+
+  app.get('/api/coin-ohlc', async (req,res)=>{
+    const symbol=String(req.query.symbol||'BTC').toUpperCase().trim();
+    const range=String(req.query.range||'1D').toUpperCase().trim();
+    if(!/^[A-Z0-9]{1,24}$/.test(symbol)||!['4H','12H','1D','7D'].includes(range))return sendNoStore(res,{ok:false,error:'invalid_request'},400);
+    try{return res.json(await coinOhlc(symbol,range))}catch(e:any){return sendNoStore(res,{ok:false,error:'ohlc_unavailable',detail:e?.message||String(e)},503)}
+  });
+
+  app.get('/api/trade-radar', async (req,res)=>{
+    try {
+      const q=new URLSearchParams({mode:String(req.query.mode||'all'),limit:String(req.query.limit||5),force:String(req.query.force||0)});
+      const data=await fetchJson('http://127.0.0.1:8792/api/radar?'+q.toString(),{headers:{Accept:'application/json'}},55000);
+      return sendNoStore(res,data);
+    } catch(e:any){return sendNoStore(res,{ok:false,error:'trade_radar_unavailable',detail:e?.message||String(e)},502)}
+  });
+
+  app.get('/api/kraken/live-status', async (_req,res)=>{
+    try {
+      const positionsRaw=await krakenPrivate('/0/private/OpenPositions',{docalcs:'true'});
+      const ordersRaw=await krakenPrivate('/0/private/OpenOrders',{});
+      const positions=Object.entries(positionsRaw||{}).map(([txid,row]:any)=>{
+        const vol=Number(row?.vol||0),closed=Number(row?.vol_closed||0);
+        return {
+          txid,pair:String(row?.pair||'').split(':')[0],rawPair:String(row?.pair||''),side:String(row?.type||'').toLowerCase(),
+          volume:vol,remaining:Math.max(0,vol-closed),cost:Number(row?.cost||0),
+          margin:Number(row?.margin||0),value:Number(row?.value||0),pnl:Number(row?.net||0),
+          openingPrice:Number(row?.cost||0)/(vol||1),rolloverTime:Number(row?.rollovertm||0),
+          posstatus:String(row?.posstatus||'open')
+        };
+      }).filter((x:any)=>x.remaining>0);
+      const open=ordersRaw?.open||{};
+      const orders=Object.entries(open).map(([txid,row]:any)=>({
+        txid,status:String(row?.status||'open'),pair:String(row?.descr?.pair||''),
+        side:String(row?.descr?.type||''),orderType:String(row?.descr?.ordertype||''),
+        price:Number(row?.descr?.price||0),volume:Number(row?.vol||0),
+        filled:Number(row?.vol_exec||0),openedAt:Number(row?.opentm||0)
+      }));
+      return sendNoStore(res,{ok:true,positions,orders,updatedAt:Date.now()});
+    } catch(e:any){return sendNoStore(res,{ok:false,error:e?.message||String(e)},502)}
+  });
+
+  app.post('/api/kraken/cancel-order', async (req,res)=>{
+    if(!requireVerified(req,res))return;
+    const txid=String(req.body?.txid||'').trim();
+    if(!txid)return sendNoStore(res,{ok:false,error:'invalid_order_id'},400);
+    try {
+      const result=await krakenPrivate('/0/private/CancelOrder',{txid});
+      return sendNoStore(res,{ok:true,txid,result});
+    } catch(e:any){return sendNoStore(res,{ok:false,error:e?.message||String(e)},409)}
+  });
+
+  app.post('/api/kraken/close-position', async (req,res)=>{
+    if(!requireVerified(req,res))return;
+    const txid=String(req.body?.txid||'').trim();
+    if(!txid)return sendNoStore(res,{ok:false,error:'invalid_position_id'},400);
+    try {
+      const positions:any=await krakenPrivate('/0/private/OpenPositions',{txid,docalcs:'true'});
+      const row=positions?.[txid];
+      if(!row)return sendNoStore(res,{ok:true,txid,alreadyClosed:true,message:'Position is no longer open.'});
+      const vol=Number(row?.vol||0),closed=Number(row?.vol_closed||0);
+      const remaining=Math.max(0,vol-closed);
+      if(!(remaining>0))return sendNoStore(res,{ok:true,txid,alreadyClosed:true,message:'Position is already closed.'});
+      const side=String(row?.type||'').toLowerCase()==='buy'?'sell':'buy';
+      const pair=String(row?.pair||'').trim();
+      if(!pair)return sendNoStore(res,{ok:false,error:'invalid_position_pair'},400);
+      try {
+        const result=await krakenPrivate('/0/private/AddOrder',{
+          ordertype:'market',type:side,volume:String(remaining),pair,
+          leverage:'2',reduce_only:'true',
+          cl_ord_id:('aurclose'+Date.now().toString().slice(-8)).slice(0,18)
+        });
+        return sendNoStore(res,{ok:true,txid,pair,side,volume:remaining,result,submittedAt:Date.now()});
+      } catch(orderError:any) {
+        const message=String(orderError?.message||orderError);
+        if(message.includes('Reduce only:Non-ECP') && !pair.includes(':BTNL')) {
+          const retailPair=pair+':BTNL';
+          const retry=await krakenPrivate('/0/private/AddOrder',{ordertype:'market',type:side,volume:String(remaining),pair:retailPair,leverage:'2',reduce_only:'true',cl_ord_id:('aurclose'+Date.now().toString().slice(-8)).slice(0,18)});
+          return sendNoStore(res,{ok:true,txid,pair:retailPair,side,volume:remaining,result:retry,submittedAt:Date.now(),route:'BTNL'});
+        }
+        if(message.includes('Invalid position')) {
+          const live:any=await krakenPrivate('/0/private/OpenPositions',{docalcs:'true'});
+          if(!live?.[txid]) {
+            return sendNoStore(res,{ok:true,txid,alreadyClosed:true,message:'Position closed before Kraken processed the follow-up request.'});
+          }
+        }
+        throw orderError;
+      }
+    } catch(e:any){return sendNoStore(res,{ok:false,error:e?.message||String(e)},409)}
+  });
+
+  app.post('/api/signal-desk/order/prepare', async (req,res)=>{
+    if(!requireVerified(req,res))return;
+    try{return sendNoStore(res,await prepareKrakenOrder({...req.body,provider:'KRAKEN'}))}
+    catch(e:any){const msg=e?.message||String(e);return sendNoStore(res,{ok:false,error:msg},msg.startsWith('invalid_')||msg.includes('leverage_not_supported')?400:409)}
+  });
+  app.post('/api/signal-desk/order/submit', async (req,res)=>{
+    if(!requireVerified(req,res))return;
+    try{return sendNoStore(res,await submitKrakenOrder(req.body))}
+    catch(e:any){return sendNoStore(res,{ok:false,error:e?.message||String(e)},409)}
+  });
+
+  app.get('/api/borrow/catalog', async (req,res)=>{
+    try {
+      const force=['1','true','yes'].includes(String(req.query.refresh||'').toLowerCase());
+      if(borrowCache&&!force&&Date.now()-borrowCache.at<60000)return sendNoStore(res,borrowCache.payload);
+      const payload=await buildBorrowCatalog(); if(payload.ok)borrowCache={at:Date.now(),payload};
+      return sendNoStore(res,payload,payload.ok?200:502);
+    }catch(e:any){return sendNoStore(res,{ok:false,error:'borrow_catalog_unavailable',detail:e?.message||String(e)},502)}
+  });
+
+  app.get('/api/borrow/positions', async (req,res)=>{
+    const address=String(req.query.address||'').trim();
+    if(!/^0x[a-fA-F0-9]{40}$/.test(address))return sendNoStore(res,{ok:false,error:'invalid_address'},400);
+    const chainIds=[1,10,130,137,143,999,4663,5042,8453,42161,747474];
+    const positions:any[]=[],errors:any[]=[];
+    const gql=`query UserBorrowPositions($address:String!,$chainId:Int!){ userByAddress(address:$address,chainId:$chainId){ marketPositions{ market{marketId loanAsset{address symbol decimals} collateralAsset{address symbol decimals}} state{borrowAssets borrowAssetsUsd collateral collateralUsd} } } }`;
+    for(const chainId of chainIds){
+      try{
+        const payload=await fetchJson('https://api.morpho.org/graphql',{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({query:gql,variables:{address,chainId}})},12000);
+        for(const item of payload?.data?.userByAddress?.marketPositions||[]){
+          const state=item?.state||{}; if(Number(state.borrowAssets||0)<=0)continue;
+          positions.push({provider:'Morpho',chainId,network:chainNames[chainId]||String(chainId),marketId:item?.market?.marketId,collateralAsset:item?.market?.collateralAsset?.symbol,collateralAmount:state.collateral,collateralUsd:state.collateralUsd,debtAsset:item?.market?.loanAsset?.symbol,debtAmount:state.borrowAssets,debtUsd:state.borrowAssetsUsd,source:'morpho_api'});
+        }
+      }catch(e:any){errors.push({provider:'Morpho',chainId,error:String(e?.message||e).slice(0,160)})}
+    }
+    return sendNoStore(res,{ok:true,address,positions,errors,generatedAt:Date.now()});
+  });
+
+  app.get('/api/borrow/aave/details', async (req,res)=>{
+    const symbol=String(req.query.symbol||'').trim();
+    if(!symbol||symbol.length>48)return sendNoStore(res,{ok:false,error:'invalid_symbol'},400);
+    try{
+      const s=await aaveSession(); let id=2; const details:any[]=[];
+      const chains=await aaveTool(s,'get_chains',{version:'v3'},id++);
+      const rows=chains?.data?.v3||chains?.v3||[];
+      for(const ch of rows.slice(0,25)){
+        const chainId=Number(ch?.chainId); if(!chainId)continue;
+        const markets=await aaveTool(s,'get_markets',{version:'v3',chainId,symbols:[symbol]},id++);
+        const root=markets?.data||markets; const section=root?.v3||{};
+        for(const market of section?.markets||[]) for(const reserve of market?.reserves||[]){
+          if(String(reserve?.symbol||'').toUpperCase()!==symbol.toUpperCase())continue;
+          const detail=await aaveTool(s,'get_reserve_details',{version:'v3',market:market.market,token:reserve.underlyingToken,chainId:market.chainId||chainId},id++);
+          const d=detail?.data||detail; if(d&&typeof d==='object')details.push({...d,protocolVersion:'V3',marketKey:market.market});
+        }
+      }
+      return sendNoStore(res,{ok:true,symbol,details});
+    }catch(e:any){return sendNoStore(res,{ok:false,error:'aave_unavailable',detail:String(e?.message||e).slice(0,180)},502)}
+  });
+
+}
+
+function stableStringify(value:any):string {
+  if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']';
+  if (value && typeof value === 'object') {
+    return '{' + Object.keys(value).sort().map(k => JSON.stringify(k)+':'+stableStringify(value[k])).join(',') + '}';
+  }
+  return JSON.stringify(value);
+}
+
+function registerMobileCompatibilityRoutes(app:Express) {
+  app.get('/api/phone/fiat/quotes',(_req,res)=>sendNoStore(res,{ok:false,error:'direct_fiat_buy_disabled'},410));
+
+  app.post('/api/mobile/live-bet/execute',async(req,res)=>{
+    if(!mobileAiAuthorized(req))return sendNoStore(res,{ok:false,error:'ai_device_auth_required'},401);
+    const token=String(req.body?.token||'').trim();
+    if(!token||token.length>256)return sendNoStore(res,{ok:false,error:'invalid_confirmation_token'},400);
+    try{
+      const consumed=await fetchJson('http://127.0.0.1:8792/api/live-bet/toobit-consume',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})},8000);
+      if(!consumed?.ok)return sendNoStore(res,{ok:false,error:consumed?.error||'live_bet_confirmation_invalid',message:consumed?.message||'Live Bet confirmation is invalid or expired.'},409);
+      const preview=consumed?.preview||{},claimed=String(consumed?.fingerprint||'');
+      const fingerprint=crypto.createHash('sha256').update(stableStringify(preview)).digest('hex');
+      if(!claimed||fingerprint!==claimed)throw new Error('live_bet_integrity_failed');
+      const symbol=String(preview?.symbol||'').toUpperCase(),asset=symbol.replace(/-SWAP-USDT$/,'').replace(/USDT$/,'').replace(/USD$/,'');
+      const direction=String(preview?.direction||'').toUpperCase();
+      if(!/^[A-Z0-9._-]{2,24}$/.test(asset)||!['LONG','SHORT'].includes(direction))throw new Error('invalid_live_bet_preview');
+      const amount=Math.max(1,Number(preview?.requestedPositionValueUSDT||preview?.valueQuantity||10));
+      const side=direction==='LONG'?'YES':'NO';
+      const kalshiUrl='/kalshi.html?'+new URLSearchParams({source:'live-bet',asset,side,amount:String(amount),duration:'15m'}).toString();
+      return sendNoStore(res,{ok:true,venue:'KALSHI',asset,side,amount,kalshiUrl,message:'Live Bet imported. Opening the matching Kalshi crypto market for final review.',writePerformed:false});
+    }catch(e:any){return sendNoStore(res,{ok:false,error:e?.message||'live_bet_confirmation_consume_failed',message:'Could not verify the locked Live Bet confirmation. Nothing was submitted.'},409)}
+  });
+}
+
+export function registerMigratedBackend(app:Express) {
+  registerAuthRoutes(app);
+  registerWalletRoutes(app);
+  registerAlertRoutes(app);
+  registerMarketAndBotRoutes(app);
+  registerMobileCompatibilityRoutes(app);
+}

@@ -1,0 +1,35 @@
+{
+  "widget_name": "Aurelis_Crypto_HUD_KWGT",
+  "author": "Aurelis Design System",
+  "version": "1.0",
+  "accent_color": "#00F5A0",
+  "background_color": "#070B0F",
+  "layout": {
+    "shape": "rounded_rect",
+    "corner_radius": 24,
+    "elements": [
+      {
+        "type": "text",
+        "label": "TIME",
+        "content": "$df(hh:mm)$",
+        "font": "SpaceGrotesk-Bold",
+        "size": 42,
+        "color": "#00F5A0"
+      },
+      {
+        "type": "crypto_price",
+        "pair": "BTC/USD",
+        "formula": "$wg(\"https://api.kraken.com/0/public/Ticker?pair=XBTUSD\", json, .result.XXBTZUSD.c[0])$",
+        "color": "#FFFFFF",
+        "size": 22
+      },
+      {
+        "type": "crypto_price",
+        "pair": "ETH/USD",
+        "formula": "$wg(\"https://api.kraken.com/0/public/Ticker?pair=ETHUSD\", json, .result.XETHZUSD.c[0])$",
+        "color": "#8B949E",
+        "size": 16
+      }
+    ]
+  }
+}

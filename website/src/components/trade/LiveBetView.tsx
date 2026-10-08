@@ -1,0 +1,618 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { CheckCircle2, ImagePlus, Loader2, ShieldCheck, Upload, X } from 'lucide-react';
+import { formatCurrency, playHudSound } from '../../services/marketData';
+import type { SetupCandidate } from './TradeRadarView';
+
+interface LiveBetViewProps {
+  soundEnabled: boolean;
+  initialSetup?: SetupCandidate | null;
+}
+
+interface ParsedTrade {
+  asset?: string;
+  market?: string;
+  symbol?: string;
+  direction?: string;
+  side?: string;
+  entry?: number | string | null;
+  current_price?: number | string | null;
+  stop_loss?: number | string | null;
+  stopLoss?: number | string | null;
+  take_profit?: number | string | null;
+  takeProfit?: number | string | null;
+  leverage?: number | string | null;
+}
+
+const num = (value: any): number | null => {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(String(value).replace(/[$,%x,]/gi, '').trim());
+  return Number.isFinite(n) ? n : null;
+};
+
+const prepareScreenshotForAnalysis = async (file: File, originalDataUrl: string): Promise<string> => {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const targetWidth = Math.min(1600, Math.max(bitmap.width, bitmap.width < 1000 ? bitmap.width * 2.5 : bitmap.width));
+    const scale = targetWidth / bitmap.width;
+    if (scale <= 1.05) {
+      bitmap.close();
+      return originalDataUrl;
+    }
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) {
+      bitmap.close();
+      return originalDataUrl;
+    }
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    return canvas.toDataURL('image/png');
+  } catch {
+    return originalDataUrl;
+  }
+};
+
+export const LiveBetView: React.FC<LiveBetViewProps> = ({
+  soundEnabled,
+  initialSetup = null,
+}) => {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [imageUrl, setImageUrl] = useState<string>('');
+  const [trade, setTrade] = useState<ParsedTrade | null>(null);
+  const [amount, setAmount] = useState('25');
+  const [leverage, setLeverage] = useState('2');
+  const [busy, setBusy] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [status, setStatus] = useState('Drop or choose a bet screenshot.');
+  const [preview, setPreview] = useState<any | null>(null);
+  const [token, setToken] = useState('');
+  const [submitResult, setSubmitResult] = useState<any | null>(null);
+  const [submitError, setSubmitError] = useState('');
+  const [supportedLeverage, setSupportedLeverage] = useState<number[]>([]);
+  const [liveStatus, setLiveStatus] = useState<{positions:any[];orders:any[]}>({positions:[],orders:[]});
+  const [liveStatusError, setLiveStatusError] = useState('');
+  const [liveStatusLoading, setLiveStatusLoading] = useState(false);
+  const [actionBusy, setActionBusy] = useState('');
+
+  useEffect(() => {
+    if (!initialSetup) return;
+    setTrade({
+      asset: initialSetup.symbol,
+      direction: initialSetup.direction,
+      entry: initialSetup.entry,
+      stop_loss: initialSetup.stop,
+      take_profit: initialSetup.target,
+      leverage: initialSetup.leverage || 1,
+    });
+    setAmount(String(initialSetup.margin || 25));
+    setLeverage(String(initialSetup.leverage || 1));
+    setPreview(null);
+    setToken('');
+    setStatus('Reviewed setup loaded from Hunter. Build the final order review before submission.');
+  }, [initialSetup]);
+  const normalized = useMemo(() => {
+    if (!trade) return null;
+    const asset = String(trade.asset || trade.market || trade.symbol || '')
+      .replace(/(?:[-_/]?(?:USD|USDT|PERP|SWAP))+$/i, '')
+      .replace(/[^A-Za-z0-9._-]/g, '')
+      .toUpperCase();
+    let direction = String(trade.direction || trade.side || '').toUpperCase();
+    if (direction === 'BUY') direction = 'LONG';
+    if (direction === 'SELL') direction = 'SHORT';
+    const entry = num(trade.entry ?? trade.current_price);
+    const stop = num(trade.stop_loss ?? trade.stopLoss);
+    const target = num(trade.take_profit ?? trade.takeProfit);
+    const extractedLeverage = num(trade.leverage);
+    return {
+      asset,
+      direction,
+      entry,
+      stop,
+      target,
+      leverage: extractedLeverage && extractedLeverage > 0 ? extractedLeverage : Number(leverage || 1),
+    };
+  }, [trade, leverage]);
+
+  const liveEstimate = useMemo(() => {
+    if (!normalized?.entry || !normalized?.stop || !normalized?.target) return null;
+    const positionValue = Number(amount);
+    const lev = Number(leverage);
+    if (!Number.isFinite(positionValue) || positionValue <= 0 || !Number.isFinite(lev) || lev <= 0) return null;
+    const entry = Number(normalized.entry);
+    const stopPct = Math.abs(entry - Number(normalized.stop)) / entry;
+    const targetPct = Math.abs(Number(normalized.target) - entry) / entry;
+    const estimatedLoss = positionValue * stopPct;
+    const estimatedGain = positionValue * targetPct;
+    return {
+      positionValue,
+      margin: positionValue / lev,
+      estimatedLoss,
+      estimatedGain,
+      stopPct: stopPct * 100,
+      targetPct: targetPct * 100,
+      rr: estimatedLoss > 0 ? estimatedGain / estimatedLoss : 0,
+    };
+  }, [normalized?.entry, normalized?.stop, normalized?.target, amount, leverage]);
+
+  useEffect(() => {
+    let active = true;
+    const asset = normalized?.asset;
+    const direction = normalized?.direction;
+    if (!asset || !['LONG', 'SHORT'].includes(String(direction))) {
+      setSupportedLeverage([]);
+      return () => { active = false; };
+    }
+    const loadMarginInfo = async () => {
+      try {
+        const response = await fetch('/api/kraken/margin-info/' + encodeURIComponent(asset), { cache: 'no-store' });
+        const data = await response.json();
+        if (!active || !response.ok || !data?.ok) return;
+        const allowed = (direction === 'SHORT' ? data.sell : data.buy)
+          .map(Number)
+          .filter((x: number) => Number.isFinite(x) && x > 0);
+        setSupportedLeverage(allowed);
+        if (allowed.length && !allowed.includes(Number(leverage))) {
+          setLeverage(String(allowed[0]));
+          setPreview(null);
+          setToken('');
+          setStatus(`Adjusted leverage to ${allowed[0]}x, the lowest Kraken-supported value for ${asset} ${direction}.`);
+        }
+      } catch {}
+    };
+    loadMarginInfo();
+    return () => { active = false; };
+  }, [normalized?.asset, normalized?.direction]);
+
+  const loadLiveStatus = async () => {
+    setLiveStatusLoading(true);
+    try {
+      const response = await fetch('/api/kraken/live-status', { cache: 'no-store', credentials: 'include' });
+      const data = await response.json();
+      if (!response.ok || !data?.ok) throw new Error(data?.error || 'Kraken live status unavailable');
+      setLiveStatus({ positions: Array.isArray(data.positions) ? data.positions : [], orders: Array.isArray(data.orders) ? data.orders : [] });
+      setLiveStatusError('');
+    } catch (error:any) {
+      setLiveStatusError(error?.message || 'Kraken live status unavailable');
+    } finally {
+      setLiveStatusLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadLiveStatus();
+    const timer = window.setInterval(loadLiveStatus, 5000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const cancelKrakenOrder = async (txid:string) => {
+    if (!window.confirm('Cancel this open Kraken order?')) return;
+    setActionBusy('order:'+txid);
+    try {
+      const response = await fetch('/api/kraken/cancel-order', {
+        method:'POST', credentials:'include', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({txid})
+      });
+      const data = await response.json();
+      if (!response.ok || !data?.ok) throw new Error(data?.error || 'Cancel failed');
+      setStatus('Kraken order canceled.');
+      await loadLiveStatus();
+    } catch (error:any) {
+      setStatus(error?.message || 'Kraken cancel failed.');
+    } finally {
+      setActionBusy('');
+    }
+  };
+
+  const closeKrakenPosition = async (txid:string) => {
+    if (!window.confirm('Close this Kraken margin position at market now?')) return;
+    setActionBusy('position:'+txid);
+    try {
+      const response = await fetch('/api/kraken/close-position', {
+        method:'POST', credentials:'include', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({txid})
+      });
+      const data = await response.json();
+      if (!response.ok || !data?.ok) throw new Error(data?.error || 'Close failed');
+      setStatus('Kraken close order submitted.');
+      await loadLiveStatus();
+    } catch (error:any) {
+      setStatus(error?.message || 'Kraken close failed.');
+    } finally {
+      setActionBusy('');
+    }
+  };
+
+  const readImage = async (file: File) => {
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      setStatus('Use a PNG, JPEG, or WebP screenshot.');
+      return;
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setStatus('Screenshot is too large. Maximum is 8 MB.');
+      return;
+    }
+    setBusy(true);
+    setPreview(null);
+    setToken('');
+    setSubmitResult(null);
+    setSubmitError('');
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      setImageUrl(dataUrl);
+      setStatus('AURELIS AI is reading the screenshot…');
+      const analysisImage = await prepareScreenshotForAnalysis(file, dataUrl);
+      const response = await fetch('/api/live-bet/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: analysisImage }),
+      });
+      const responseText = await response.text();
+      let data: any = null;
+      try { data = JSON.parse(responseText); } catch {}
+      if (!response.ok || !data?.ok || !data?.trade) {
+        const detail = typeof data?.detail === 'string' ? data.detail : '';
+        const message = detail || data?.error || (responseText.trim().startsWith('<')
+          ? 'Image reader returned an invalid response. Please try a clearer screenshot.'
+          : 'AI could not reconstruct the bet.');
+        throw new Error(message);
+      }
+      setTrade(data.trade);
+      setStatus('Screenshot parsed. Review the reconstructed trade below.');
+      if (soundEnabled) playHudSound('ping');
+    } catch (error: any) {
+      setTrade(null);
+      setStatus(error?.message || 'AI could not read this screenshot.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reviewDex = async () => {
+    if (!normalized?.asset || !['LONG', 'SHORT'].includes(normalized.direction)) {
+      setStatus('Choose an asset and LONG/SHORT direction before DEX review.');
+      return;
+    }
+    setBusy(true);
+    setToken('');
+    setPreview(null);
+    setSubmitResult(null);
+    setSubmitError('');
+    try {
+      const query = new URLSearchParams({
+        bot: 'live_bet',
+        asset: normalized.asset.toUpperCase(),
+        side: normalized.direction.toLowerCase(),
+        notional: String(Number(amount)),
+      });
+      const response = await fetch('/api/bots/dex-route?' + query, { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok || data.mode !== 'paper') throw new Error(data.error || 'DEX review unavailable');
+      setStatus(data.preferredVenue
+        ? 'Paper DEX route: ' + data.preferredVenue + '. No order submitted. Fees, collateral, and wallet approval not verified.'
+        : 'No qualifying DEX order book. No order submitted.');
+    } catch (error: any) {
+      setStatus(error?.message || 'DEX review failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reviewKraken = async () => {
+    if (!normalized?.asset || !['LONG', 'SHORT'].includes(normalized.direction)) {
+      setStatus('AURELIS needs a clear asset and LONG/SHORT direction.');
+      return;
+    }
+    if (!normalized.stop || !normalized.target) {
+      setStatus('A visible stop and target are required before Kraken review.');
+      return;
+    }
+    setBusy(true);
+    setToken('');
+    setSubmitResult(null);
+    setSubmitError('');
+    try {
+      const response = await fetch('/api/signal-desk/order/prepare', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: 'KRAKEN',
+          asset: normalized.asset,
+          direction: normalized.direction,
+          amount: Number(amount),
+          leverage: Number(leverage),
+          stopLoss: normalized.stop,
+          takeProfit: normalized.target,
+          signal: { source: 'live_bet_import' },
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data?.ok) {
+        throw new Error(data?.error || data?.message || 'Kraken review failed.');
+      }
+      setPreview(data.preview || null);
+      setToken(String(data.confirmation?.token || ''));
+      setStatus('Kraken review locked. Confirm the details before submitting.');
+      if (soundEnabled) playHudSound('trade');
+    } catch (error: any) {
+      setPreview(null);
+      setStatus(error?.message || 'Kraken review failed.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitKraken = async () => {
+    if (!token) {
+      setStatus('Build a fresh Kraken review first.');
+      return;
+    }
+    setBusy(true);
+    setSubmitError('');
+    try {
+      const response = await fetch('/api/signal-desk/order/submit', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmationToken: token }),
+      });
+      const responseText = await response.text();
+      let data: any = null;
+      try { data = JSON.parse(responseText); } catch {}
+      setSubmitResult(data);
+      if (!response.ok || !data?.ok) {
+        const message = data?.error || data?.message || (responseText.trim().startsWith('<') ? 'Kraken returned an invalid response.' : responseText.trim()) || 'Kraken submission failed.';
+        throw new Error(message);
+      }
+      setToken('');
+      setPreview(null);
+      setStatus('Kraken trade submitted. Live position status is refreshing now.');
+      await loadLiveStatus();
+      window.setTimeout(() => document.getElementById('livebet-submit-result')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
+      if (soundEnabled) playHudSound('trade');
+    } catch (error: any) {
+      const message = error?.message || 'Kraken submission failed.';
+      setSubmitError(message);
+      setStatus(message);
+      window.setTimeout(() => document.getElementById('livebet-locked-review')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const handleDrop = (event: React.DragEvent) => {
+    event.preventDefault();
+    setDragging(false);
+    const file = event.dataTransfer.files?.[0];
+    if (file) readImage(file);
+  };
+
+  return (
+    <div className="space-y-3 font-mono text-xs text-text-primary">
+      <div className="p-4 rounded-2xl bg-surface-panel/95 border border-white/10">
+        <div className="text-[10px] text-primary-container font-bold tracking-widest">AURELIS LIVE BET</div>
+        <div className="text-lg font-headline font-bold mt-1">Screenshot → Kraken Trade</div>
+        <div className="text-[10.5px] text-text-muted mt-1">
+          Drop a bet screenshot, let AURELIS reconstruct it, then review the real Kraken order before submission.
+        </div>
+      </div>
+
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={handleDrop}
+        onClick={() => fileRef.current?.click()}
+        className={`p-4 rounded-2xl border border-dashed cursor-pointer text-center transition-all ${
+          dragging ? 'border-primary-container bg-primary-container/10' : 'border-white/15 bg-surface-panel/75'
+        }`}
+      >
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="hidden"
+          onChange={(e) => e.target.files?.[0] && readImage(e.target.files[0])}
+        />
+        {imageUrl ? (
+          <img src={imageUrl} alt="Bet screenshot" className="mx-auto max-h-52 max-w-full rounded-xl object-contain" />
+        ) : (
+          <div className="py-8">
+            <ImagePlus className="w-8 h-8 mx-auto text-primary-container mb-2" />
+            <div className="font-bold">Drop bet screenshot here</div>
+            <div className="text-[10px] text-text-muted mt-1">or tap to choose an image</div>
+          </div>
+        )}
+      </div>
+      <div className="p-3 rounded-xl bg-surface-panel/95 border border-white/10">
+        <div className="flex items-center gap-2 text-[10px]">
+          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin text-primary-container" /> : <ShieldCheck className="w-3.5 h-3.5 text-primary-container" />}
+          <span className="break-words min-w-0">{status}</span>
+        </div>
+      </div>
+
+      <div className="p-3 rounded-2xl bg-surface-panel/95 border border-white/10 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <div className="text-[9px] text-primary-container font-bold uppercase tracking-wider">Kraken Live Status</div>
+            <div className="text-[9px] text-text-muted">Refreshes every 5 seconds</div>
+          </div>
+          <button type="button" onClick={loadLiveStatus} disabled={liveStatusLoading}
+            className="p-1.5 rounded-lg border border-white/10 bg-surface-base text-text-muted hover:text-text-primary disabled:opacity-40">
+            <Loader2 className={`w-3.5 h-3.5 ${liveStatusLoading?'animate-spin':''}`}/>
+          </button>
+        </div>
+
+        {liveStatusError ? (
+          <div className="text-[9px] text-red-400 break-words">{liveStatusError}</div>
+        ) : (
+          <>
+            <div className="space-y-1.5">
+              <div className="text-[8.5px] uppercase tracking-wider text-text-muted">Open Positions</div>
+              {liveStatus.positions.length ? liveStatus.positions.map((p:any) => (
+                <div key={p.txid} className="grid grid-cols-[1fr_auto] gap-2 items-center rounded-xl border border-white/5 bg-surface-base/70 p-2.5">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-bold text-text-primary">{p.pair}</span>
+                      <span className={`text-[9px] font-bold uppercase ${p.side==='buy'?'text-primary-container':'text-red-400'}`}>{p.side==='buy'?'LONG':'SHORT'}</span>
+                      <span className={`text-[9px] font-bold ${Number(p.pnl)>=0?'text-primary-container':'text-red-400'}`}>{Number(p.pnl)>=0?'+':''}{formatCurrency(Number(p.pnl||0))}</span>
+                    </div>
+                    <div className="mt-1 text-[9px] text-text-muted">
+                      {Number(p.remaining||0).toLocaleString('en-US',{maximumFractionDigits:8})} open · margin {formatCurrency(Number(p.margin||0))} · value {formatCurrency(Number(p.value||0))}
+                    </div>
+                  </div>
+                  <button type="button" onClick={()=>closeKrakenPosition(p.txid)} disabled={!!actionBusy}
+                    className="px-3 py-1.5 rounded-lg bg-red-500/15 border border-red-500/30 text-red-400 text-[9px] font-bold hover:bg-red-500/25 disabled:opacity-40">
+                    {actionBusy==='position:'+p.txid?'CLOSING…':'CLOSE'}
+                  </button>
+                </div>
+              )) : <div className="text-[9px] text-text-muted py-1">No open Kraken margin positions.</div>}
+            </div>
+
+            <div className="space-y-1.5 pt-1">
+              <div className="text-[8.5px] uppercase tracking-wider text-text-muted">Open Orders</div>
+              {liveStatus.orders.length ? liveStatus.orders.map((o:any) => (
+                <div key={o.txid} className="grid grid-cols-[1fr_auto] gap-2 items-center rounded-xl border border-white/5 bg-surface-base/70 p-2.5">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-bold text-text-primary">{o.pair}</span>
+                      <span className="text-[9px] uppercase text-text-secondary">{o.side} · {o.orderType}</span>
+                    </div>
+                    <div className="mt-1 text-[9px] text-text-muted">{Number(o.volume||0).toLocaleString('en-US',{maximumFractionDigits:8})} volume · {o.status}</div>
+                  </div>
+                  <button type="button" onClick={()=>cancelKrakenOrder(o.txid)} disabled={!!actionBusy}
+                    className="px-3 py-1.5 rounded-lg border border-white/10 bg-surface-base text-text-secondary hover:text-text-primary disabled:opacity-40">
+                    {actionBusy==='order:'+o.txid?'CANCELING…':'CANCEL'}
+                  </button>
+                </div>
+              )) : <div className="text-[9px] text-text-muted py-1">No open Kraken orders.</div>}
+            </div>
+          </>
+        )}
+      </div>
+
+      {normalized && (
+        <div className="p-4 rounded-2xl bg-surface-panel/95 border border-white/10 space-y-3 overflow-hidden">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 min-w-0">
+            {[
+              ['Asset', normalized.asset || '—'],
+              ['Direction', normalized.direction || '—'],
+              ['Entry', normalized.entry ? formatCurrency(normalized.entry) : 'Market'],
+              ['Stop', normalized.stop ? formatCurrency(normalized.stop) : '—'],
+              ['Target', normalized.target ? formatCurrency(normalized.target) : '—'],
+            ].map(([label, value]) => (
+              <div key={label} className="min-w-0 p-2.5 rounded-lg bg-surface-base border border-white/5">
+                <div className="text-[8.5px] text-text-muted uppercase">{label}</div>
+                <div className="font-bold mt-1 break-words">{value}</div>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="min-w-0 text-[9px] text-text-muted">
+              POSITION USD
+              <input
+                value={amount}
+                onChange={(e) => { setAmount(e.target.value); setPreview(null); setToken(''); }}
+                inputMode="decimal"
+                className="mt-1 w-full min-w-0 p-2 rounded-lg bg-surface-base border border-white/10 text-text-primary"
+              />
+            </label>
+            <label className="min-w-0 text-[9px] text-text-muted">
+              LEVERAGE
+              <select
+                value={leverage}
+                onChange={(e) => { setLeverage(e.target.value); setPreview(null); setToken(''); }}
+                className="mt-1 w-full min-w-0 p-2 rounded-lg bg-surface-base border border-white/10 text-text-primary"
+              >
+                {(supportedLeverage.length ? supportedLeverage : [2,3,4,5]).map((x) => <option key={x} value={String(x)}>{x}x</option>)}
+              </select>
+            </label>
+          </div>
+
+          {liveEstimate && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="p-2.5 rounded-lg bg-surface-base border border-white/5">
+                <div className="text-[8.5px] text-text-muted uppercase">Est. margin</div>
+                <div className="font-bold mt-1">{formatCurrency(liveEstimate.margin)}</div>
+              </div>
+              <div className="p-2.5 rounded-lg bg-red-500/10 border border-red-500/20">
+                <div className="text-[8.5px] text-text-muted uppercase">Lose at stop</div>
+                <div className="font-bold mt-1 text-red-400">-{formatCurrency(liveEstimate.estimatedLoss)} <span className="text-[8px]">({liveEstimate.stopPct.toFixed(2)}%)</span></div>
+              </div>
+              <div className="p-2.5 rounded-lg bg-primary-container/10 border border-primary-container/20">
+                <div className="text-[8.5px] text-text-muted uppercase">Make at target</div>
+                <div className="font-bold mt-1 text-primary-container">+{formatCurrency(liveEstimate.estimatedGain)} <span className="text-[8px]">({liveEstimate.targetPct.toFixed(2)}%)</span></div>
+              </div>
+              <div className="p-2.5 rounded-lg bg-surface-base border border-white/5">
+                <div className="text-[8.5px] text-text-muted uppercase">Risk / reward</div>
+                <div className="font-bold mt-1">1 : {liveEstimate.rr.toFixed(2)}</div>
+              </div>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={reviewDex}
+            disabled={busy}
+            className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold disabled:opacity-40"
+          >
+            REVIEW DEX PAPER ROUTE
+          </button>
+        </div>
+      )}
+      {preview && (
+        <div id="livebet-locked-review" className="p-4 rounded-2xl bg-surface-panel/95 border border-primary-container/30 space-y-3 overflow-hidden">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-primary-container" />
+            <strong>Locked Kraken Review</strong>
+          </div>
+          <div className="grid grid-cols-2 gap-2 min-w-0">
+            {[
+              ['Pair', preview.symbol],
+              ['Direction', preview.direction],
+              ['Position', '$' + preview.positionValueUsd],
+              ['Est. margin', '$' + preview.estimatedMarginUsd],
+              ['Kraken mark', '$' + preview.markPrice],
+              ['Quantity', preview.quantity],
+              ['Stop', '$' + preview.stopLoss],
+              ['Target', '$' + preview.takeProfit],
+            ].map(([label, value]) => (
+              <div key={label} className="min-w-0 p-2 rounded-lg bg-surface-base border border-white/5">
+                <div className="text-[8.5px] text-text-muted uppercase">{label}</div>
+                <div className="font-bold mt-1 break-all">{String(value ?? '—')}</div>
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            disabled={true}
+            className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold disabled:opacity-40"
+          >
+            DEX EXECUTION NOT ENABLED
+          </button>
+          {submitError && (
+            <div className="p-2.5 rounded-lg bg-red-500/10 border border-red-500/25 text-red-300 text-[10px] break-words">
+              Submission stopped: {submitError}
+            </div>
+          )}
+          <div className="text-[9px] text-text-muted text-center">
+            Submission sends a real Kraken margin order. Review must succeed before this button is enabled.
+          </div>
+        </div>
+      )}
+
+      {submitResult?.ok && (
+        <div id="livebet-submit-result" className="p-4 rounded-xl bg-primary-container/10 border border-primary-container/25 text-primary-container">
+          <div className="font-bold">ORDER SUBMITTED</div>
+          <div className="text-[10px] mt-1">{submitResult.preview?.asset || normalized?.asset || 'Kraken trade'} was accepted. Live status above is refreshing.</div>
+        </div>
+      )}
+    </div>
+  );
+};
