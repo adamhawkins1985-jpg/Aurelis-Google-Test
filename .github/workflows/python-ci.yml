@@ -31,7 +31,7 @@ jobs:
               ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
               print('PASS', path)
           PY
-      - name: Reject runtime files and obvious embedded credentials
+      - name: Test paper calculations without imports or network\n        run: python3 -m unittest discover -s arbitrage -p 'test_*.py' -v\n      - name: Reject runtime files and obvious embedded credentials
         run: |
           python3 - <<'PY'
           import pathlib
