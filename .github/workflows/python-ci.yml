@@ -4,10 +4,12 @@ on:
     paths:
       - 'arbitrage/**'
       - '.github/workflows/python-ci.yml'
+      - '.github/workflows/staging.yml'
   pull_request:
     paths:
       - 'arbitrage/**'
       - '.github/workflows/python-ci.yml'
+      - '.github/workflows/staging.yml'
   workflow_dispatch:
 
 permissions:
