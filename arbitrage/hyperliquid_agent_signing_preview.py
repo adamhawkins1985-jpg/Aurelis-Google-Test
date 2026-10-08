@@ -12,12 +12,12 @@ def preview(master, agent, name="AURELIS", network="Testnet", nonce=0):
         raise ValueError("invalid_agent_name")
     if isinstance(nonce,bool) or not isinstance(nonce,int) or nonce<=0 or nonce>=2**53:
         raise ValueError("invalid_nonce")
-    # Hyperliquid user-signed approveAgent: signatureChainId Arbitrum One 0xa4b1.
+    # Hyperliquid user-signed approveAgent: signatureChainId 0x66eee for testnet.
     # Domain is based on user-signed transactions, not L1 trading signatures.
     return {
         "mode":"review_only","network":network,"masterAddress":report["masterAddress"],
         "agentAddress":report["agentAddress"],"agentName":name,
-        "nonce":nonce,"signatureChainId":"0xa4b1",
+        "nonce":nonce,"signatureChainId":"0x66eee",
         "action":{
             "type":"approveAgent","hyperliquidChain":network,
             "signatureChainId":"0xa4b1","agentAddress":report["agentAddress"],
