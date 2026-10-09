@@ -1,3 +1,4 @@
+import { compareCowAndUniswapPool } from '../src/services/cowUniswapSpotComparison';
 import { readEthereumGasPrice, estimateGasUsdcBaseUnits } from '../src/services/ethereumGasEstimate';
 import { estimateIndicativeNetDifference } from '../src/services/indicativeNetDifference';
 import { readUniswapV3PoolQuote } from '../src/services/uniswapV3PoolReadOnly';
@@ -81,6 +82,29 @@ async function test(): Promise<void> {
     };
     assert.equal((await readEthereumGasPrice()).gasPriceWei,'1000000000');
   } finally {globalThis.fetch=beforeGas;}
+  const previousComparisonFetch=globalThis.fetch;
+  try {
+    globalThis.fetch=async (url,request)=>{
+      if(String(url).includes('api.cow.fi')) {
+        const body=JSON.parse(String(request?.body));
+        return new Response(JSON.stringify({quote:{sellToken:body.sellToken,buyToken:body.buyToken,
+          sellAmount:'9999999999999999',buyAmount:'30000000',feeAmount:'1'}}),{status:200});
+      }
+      const body=JSON.parse(String(request?.body));
+      if(body.method==='eth_gasPrice')
+        return new Response(JSON.stringify({jsonrpc:'2.0',id:1,result:'0x3b9aca00'}),{status:200});
+      return new Response(JSON.stringify({jsonrpc:'2.0',id:1,
+        result:'0x'+(29000000n).toString(16).padStart(64,'0')+'0'.repeat(64)+'0'.repeat(64)+'0'.repeat(64)}),{status:200});
+    };
+    const result=await compareCowAndUniswapPool({
+      wallet:'0x'+'c'.repeat(40),sellToken:'0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+      buyToken:'0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+      amount:'10000000000000000',fee:500,assumedGasUnits:200000
+    });
+    assert.equal(result.costScenario.status,'unavailable');
+    assert.equal(result.gasEstimate?.estimatedUsdcBaseUnits,'600000');
+    assert.equal(result.profitable,false);
+  } finally {globalThis.fetch=previousComparisonFetch;}
   assert.equal(DEX_VENUES.length, 10);
   assert.equal(new Set(DEX_VENUES.map(v => v.id)).size, 10);
   for (const v of DEX_VENUES) {
