@@ -95,7 +95,7 @@ async function test(): Promise<void> {
       if(body.method==='eth_gasPrice')
         return new Response(JSON.stringify({jsonrpc:'2.0',id:1,result:'0x3b9aca00'}),{status:200});
       return new Response(JSON.stringify({jsonrpc:'2.0',id:1,
-        result:'0x'+(29000000n).toString(16).padStart(64,'0')+'0'.repeat(64)+'0'.repeat(64)+'0'.repeat(64)}),{status:200});
+        result:'0x'+(29000000n).toString(16).padStart(64,'0')+'0'.repeat(64)+'0'.repeat(64)+(100000n).toString(16).padStart(64,'0')}),{status:200});
     };
     const result=await compareCowAndUniswapPool({
       wallet:'0x'+'c'.repeat(40),sellToken:'0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
