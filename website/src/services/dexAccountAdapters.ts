@@ -28,7 +28,7 @@ const EVM_ADDRESS = /^0x[a-fA-F0-9]{40}$/;
 /** Reject duplicate implementations, unknown venues and unsupported account access. */
 export function registerDexAccountAdapter(adapter: DexAccountAdapter): void {
   const venue = DEX_VENUES.find(v => v.id === adapter.venue);
-  if (!venue || !venue.capabilities.accountBalances) {
+  if (!venue || !(venue.capabilities.accountBalances || venue.capabilities.accountAggregates)) {
     throw new Error('dex_account_adapter_not_verified');
   }
   if (adapters.has(adapter.venue)) throw new Error('dex_account_adapter_duplicate');
