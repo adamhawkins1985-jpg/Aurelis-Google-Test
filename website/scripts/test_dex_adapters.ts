@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { observeBotDexVenues } from '../src/services/botDexMonitoring';
 import { reconcileDexObservations } from '../src/services/dexMonitoringReconciliation';
 import { authorizeBotMonitoring } from '../server/bot_monitor_access';
 import { readLighterActiveOrders } from '../server/lighter_active_order_read';
@@ -136,6 +137,19 @@ async function test(): Promise<void> {
     {venue:'hyperliquid',wallet,checkedAt:new Date(0).toISOString(),balances:[],positions:[],orders:[],fills:[],orderMonitoring:'unavailable',fillMonitoring:'unavailable'},
     {venue:'lighter',wallet:wallet.toUpperCase().replace('0X','0x'),checkedAt:new Date(0).toISOString(),balances:[],positions:[],orders:[],fills:[],orderMonitoring:'auth-required',fillMonitoring:'auth-required'},
   ]).length,10);
+  const beforeCycle=globalThis.fetch;
+  try {
+    globalThis.fetch=async (url) => String(url).includes('hyperliquid-account')
+      ? new Response(JSON.stringify({ok:true,perpsAccountValueUsd:'51',openPerpPositions:1}),{status:200})
+      : new Response(JSON.stringify({ok:false,error:'offline'}),{status:502});
+    const cycle=await observeBotDexVenues(wallet);
+    assert.equal(cycle.length,10);
+    assert.equal(cycle.find(v=>v.venue==='hyperliquid')?.accountValueUsd,'51');
+    assert.equal(cycle.find(v=>v.venue==='lighter')?.status,'unavailable');
+    assert.equal(cycle.find(v=>v.venue==='lighter')?.error,'observation_failed');
+    assert.equal(cycle.find(v=>v.venue==='dydx')?.activeOrders,null);
+    await assert.rejects(observeBotDexVenues('not-a-wallet'),/invalid_bot_wallet_address/);
+  } finally {globalThis.fetch=beforeCycle;}
   console.log('DEX registry and read-only adapter checks passed');
 }
 test().catch(error=>{console.error(error);process.exitCode=1;});
