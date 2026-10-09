@@ -140,6 +140,10 @@ async function test(): Promise<void> {
   assert.equal(reconciled.find(v=>v.venue==='hyperliquid')?.activeOrders,null);
   assert.equal(reconciled.find(v=>v.venue==='lighter')?.status,'unavailable');
   assert.equal(reconciled.find(v=>v.venue==='lighter')?.openPositionCount,null);
+  assert.equal(reconciled.find(v=>v.venue==='lighter')?.accountIndices,null);
+  const mapped=reconcileDexObservations([{venue:'lighter',wallet,checkedAt:new Date(0).toISOString(),balances:[],positions:[],orders:[],fills:[],orderMonitoring:'auth-required',fillMonitoring:'auth-required',accountIndices:[12,34],verifiedFields:['accountIndices']}]);
+  assert.deepEqual(mapped.find(v=>v.venue==='lighter')?.accountIndices,[12,34]);
+  assert.equal(mapped.find(v=>v.venue==='lighter')?.ownership,'unverified');
   assert.throws(()=>reconcileDexObservations([{
     venue:'hyperliquid',wallet,checkedAt:new Date(0).toISOString(),
     balances:[],positions:[],orders:[],fills:[],orderMonitoring:'unavailable',fillMonitoring:'unavailable',
