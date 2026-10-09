@@ -13,4 +13,9 @@ const unverified=assessDexTradeReadiness({...base,regionEligible:null,walletOwne
 assert.ok(unverified.blockers.includes('region_eligibility_unverified'));
 assert.ok(unverified.blockers.includes('wallet_ownership_unverified'));
 assert.ok(!unverified.ready);
+for(const venue of ['hyperliquid','paradex'] as const){
+  const check=assessDexTradeReadiness({...base,venue});
+  assert.ok(check.blockers.includes('venue_restricted'));
+  assert.equal(check.ready,false);
+}
 console.log('DEX trade readiness fail-closed tests passed');
