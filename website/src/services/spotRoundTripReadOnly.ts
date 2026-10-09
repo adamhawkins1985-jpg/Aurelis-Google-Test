@@ -1,3 +1,4 @@
+import { estimateUniswapV3RouterGas } from './uniswapV3RouterGasSimulation';
 import { classifySpotRouteGas } from './spotRouteCostEvidence';
 import { summarizeCowSellQuoteCosts } from './cowFeeAccounting';
 import { fetchCowIndicativeQuote } from './cowReadOnlyAdapter';
@@ -13,6 +14,7 @@ export async function observeSpotRoundTrip(input: {
   forwardFee:500|3000|10000;slippageBasisPoints:number;
   direction?:'uniswap-cow'|'cow-uniswap';assumedGasUnitsPerLeg?:number;
   assumedUniswapGasUnits?:number;assumedCowGasUnits?:number;
+  simulateUniswapRouterGas?:boolean;
 }, signal?:AbortSignal) {
   const direction=input.direction??'uniswap-cow';
   if(direction!=='uniswap-cow'&&direction!=='cow-uniswap')throw Error('invalid_round_trip_direction');
@@ -48,13 +50,22 @@ export async function observeSpotRoundTrip(input: {
   const cowGasCostWei=gas&&cowUnits!==undefined?(BigInt(gas.gasPriceWei)*BigInt(cowUnits)).toString():null;
   const gasCostWei=uniswapGasCostWei!==null&&cowGasCostWei!==null?(BigInt(uniswapGasCostWei)+BigInt(cowGasCostWei)).toString():null;
   const afterGasDifference=gasCostWei===null?null:(BigInt(conservativeReturn)-BigInt(input.startAmount)-BigInt(gasCostWei)).toString();
+  const uniswapInput=direction==='uniswap-cow'?input.startAmount:conservativeMiddle;
+  const uniswapOutput=direction==='uniswap-cow'?forwardOutput:reverseOutput;
+  const minimumOutput=(BigInt(uniswapOutput)-BigInt(indicativeSlippageReserve(uniswapOutput,input.slippageBasisPoints).reserveBaseUnits)).toString();
+  const routerSimulation=input.simulateUniswapRouterGas===true
+    ?await estimateUniswapV3RouterGas({wallet:input.wallet,
+      tokenIn:direction==='uniswap-cow'?input.startToken:input.middleToken,
+      tokenOut:direction==='uniswap-cow'?input.middleToken:input.startToken,
+      fee:input.forwardFee,amountIn:uniswapInput,amountOutMinimum:minimumOutput},signal)
+    :null;
   const costEvidence=classifySpotRouteGas({
     uniswapQuoterGasUnits:'quoterGasEstimate' in uniswapLeg?uniswapLeg.quoterGasEstimate:null,
     assumedUniswapGasUnits:uniswapUnits??null,assumedCowGasUnits:cowUnits??null,
     cowQuoteFeeSellTokenUnits:'feeAmount' in cowLeg?cowLeg.feeAmount:null
   });
   return {
-    costEvidence,
+    costEvidence,routerSimulation,
     status:fresh?'indicative_round_trip':'stale_quotes',
     forwardVenue:direction==='uniswap-cow'?'uniswap-v3-pool':'cow',reverseVenue:direction==='uniswap-cow'?'cow':'uniswap-v3-pool',chain:'mainnet',
     startAmount:input.startAmount,forwardOutput:forwardOutput,
