@@ -11,6 +11,7 @@ export async function observeSpotRoundTrip(input: {
   wallet:string;startToken:string;middleToken:string;startAmount:string;
   forwardFee:500|3000|10000;slippageBasisPoints:number;
   direction?:'uniswap-cow'|'cow-uniswap';assumedGasUnitsPerLeg?:number;
+  assumedUniswapGasUnits?:number;assumedCowGasUnits?:number;
 }, signal?:AbortSignal) {
   const direction=input.direction??'uniswap-cow';
   if(direction!=='uniswap-cow'&&direction!=='cow-uniswap')throw Error('invalid_round_trip_direction');
@@ -37,10 +38,14 @@ export async function observeSpotRoundTrip(input: {
   const timestamps=[Date.parse(forward.checkedAt),Date.parse(reverse.checkedAt)];
   const fresh=timestamps.every(t=>Number.isFinite(t)&&t<=Date.now()&&Date.now()-t<=30000) &&
     Math.abs(timestamps[0]-timestamps[1])<=10000;
-  const gas=input.assumedGasUnitsPerLeg===undefined?null:await readEthereumGasPrice(signal).catch(()=>null);
   const assumed=input.assumedGasUnitsPerLeg;
-  if(assumed!==undefined&&(!Number.isSafeInteger(assumed)||assumed<=0||assumed>2000000))throw Error('invalid_gas_assumption');
-  const gasCostWei=gas&&assumed!==undefined?(BigInt(gas.gasPriceWei)*BigInt(assumed)*2n).toString():null;
+  const uniswapUnits=input.assumedUniswapGasUnits??assumed;
+  const cowUnits=input.assumedCowGasUnits??assumed;
+  if([uniswapUnits,cowUnits].some(v=>v!==undefined&&(!Number.isSafeInteger(v)||v<=0||v>2000000)))throw Error('invalid_gas_assumption');
+  const gas=uniswapUnits!==undefined&&cowUnits!==undefined?await readEthereumGasPrice(signal).catch(()=>null):null;
+  const uniswapGasCostWei=gas&&uniswapUnits!==undefined?(BigInt(gas.gasPriceWei)*BigInt(uniswapUnits)).toString():null;
+  const cowGasCostWei=gas&&cowUnits!==undefined?(BigInt(gas.gasPriceWei)*BigInt(cowUnits)).toString():null;
+  const gasCostWei=uniswapGasCostWei!==null&&cowGasCostWei!==null?(BigInt(uniswapGasCostWei)+BigInt(cowGasCostWei)).toString():null;
   const afterGasDifference=gasCostWei===null?null:(BigInt(conservativeReturn)-BigInt(input.startAmount)-BigInt(gasCostWei)).toString();
   return {
     status:fresh?'indicative_round_trip':'stale_quotes',
@@ -50,6 +55,7 @@ export async function observeSpotRoundTrip(input: {
     conservativeReturn,forwardSlippageReserve:forwardReserve.reserveBaseUnits,
     reverseSlippageReserve:reverseReserve.reserveBaseUnits,
     grossReturnDifference,afterSlippageDifference,gasCostWei,afterGasDifference,
+    uniswapGasCostWei,cowGasCostWei,gasPriceCheckedAt:gas?.checkedAt??null,
     uniswapQuoterGasUnits:'quoterGasEstimate' in uniswapLeg?uniswapLeg.quoterGasEstimate:null,
     uniswapQuoterGasIsExecutionEstimate:false as const,
     cowQuoteFeeSellTokenUnits:'feeAmount' in cowLeg?cowLeg.feeAmount:null,
@@ -57,6 +63,7 @@ export async function observeSpotRoundTrip(input: {
     routeGasVerified:false as const,
     indicativeCandidate:gasCostWei!==null && fresh && BigInt(afterGasDifference!)>0n,
     gasUnitsPerLegAssumed:assumed??null,
+    assumedUniswapGasUnits:uniswapUnits??null,assumedCowGasUnits:cowUnits??null,
     netProfit:null,profitVerified:false as const,
     gasCost:'assumed_units_only' as const,executionEligibility:'unverified' as const,
     executable:false as const,ordersEnabled:false as const
