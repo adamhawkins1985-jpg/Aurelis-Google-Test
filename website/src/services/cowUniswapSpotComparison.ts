@@ -1,3 +1,4 @@
+import { readEthereumGasPrice, estimateGasUsdcBaseUnits } from './ethereumGasEstimate';
 import { estimateIndicativeNetDifference, type ExecutionCostInputs } from './indicativeNetDifference';
 import { fetchCowIndicativeQuote } from './cowReadOnlyAdapter';
 import { readUniswapV3PoolQuote } from './uniswapV3PoolReadOnly';
@@ -7,20 +8,31 @@ import { compareIndicativeSpotQuotes } from './spotQuoteComparison';
 export async function compareCowAndUniswapPool(input:{
   wallet:string;sellToken:string;buyToken:string;amount:string;fee:500|3000|10000;
   estimatedCosts?:ExecutionCostInputs;
+  assumedGasUnits?:number;
 },signal?:AbortSignal) {
-  const [cow,uniswap]=await Promise.all([
+  const [cow,uniswap,gas]=await Promise.all([
     fetchCowIndicativeQuote({network:'mainnet',wallet:input.wallet,sellToken:input.sellToken,
       buyToken:input.buyToken,sellAmountBeforeFee:input.amount},signal),
     readUniswapV3PoolQuote({sellToken:input.sellToken,buyToken:input.buyToken,
-      amountIn:input.amount,fee:input.fee},signal)
+      amountIn:input.amount,fee:input.fee},signal),
+    readEthereumGasPrice(signal).catch(()=>null)
   ]);
   const compared=compareIndicativeSpotQuotes({
     venue:'cow',chain:'mainnet',sellToken:input.sellToken,buyToken:input.buyToken,
     inputAmount:input.amount,outputAmount:cow.buyAmount,checkedAt:cow.checkedAt,
   },uniswap);
-  const costScenario=estimateIndicativeNetDifference(compared.grossOutputDifference,
-    input.estimatedCosts ?? {gasCostBuyTokenUnits:null,slippageReserveBuyTokenUnits:null,additionalFeesBuyTokenUnits:null});
+  const measuredGasCost=gas && input.assumedGasUnits !== undefined &&
+    input.sellToken.toLowerCase()==='0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2' &&
+    input.buyToken.toLowerCase()==='0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' &&
+    Date.now()-Date.parse(gas.checkedAt)<=30000
+      ? estimateGasUsdcBaseUnits(gas.gasPriceWei,input.assumedGasUnits,input.amount,cow.buyAmount) : null;
+  const costs={...input.estimatedCosts,
+    gasCostBuyTokenUnits:measuredGasCost?.estimatedUsdcBaseUnits??null,
+    slippageReserveBuyTokenUnits:input.estimatedCosts?.slippageReserveBuyTokenUnits??null,
+    additionalFeesBuyTokenUnits:input.estimatedCosts?.additionalFeesBuyTokenUnits??null};
+  const costScenario=estimateIndicativeNetDifference(compared.grossOutputDifference,costs);
   return { ...compared,costScenario,venueA:'cow',venueB:'uniswap-v3-pool',
-    quoteScope:'indicative_only' as const,gasAndExecutionCosts:'unknown' as const,
+    gasObservation:gas?.checkedAt??null,gasEstimate:measuredGasCost,
+    quoteScope:'indicative_only' as const,gasAndExecutionCosts:'not_verified' as const,
     ordersEnabled:false as const};
 }
