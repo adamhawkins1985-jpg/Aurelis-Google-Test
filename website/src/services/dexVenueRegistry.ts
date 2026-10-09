@@ -45,7 +45,7 @@ const market = (publicQuotes: boolean): Readonly<DexVenueCapabilities> =>
 
 export const DEX_VENUES: readonly DexVenue[] = Object.freeze([
   { id: 'hyperliquid', name: 'Hyperliquid', lifecycle: 'restricted', network: 'Hyperliquid', note: 'US interface restricted; retain public market observations only, never enable trading', capabilities: Object.freeze({ ...market(true), accountAggregates: true }) },
-  { id: 'dydx', name: 'dYdX', lifecycle: 'market-data', network: 'dYdX Chain', note: 'Public quotes only; deployment eligibility must be reviewed before account connection', capabilities: market(true) },
+  { id: 'dydx', name: 'dYdX', lifecycle: 'restricted', network: 'dYdX Chain', note: 'Perpetuals and dYdX frontend restricted in US; public data only, no trading', capabilities: market(true) },
   { id: 'lighter', name: 'Lighter', lifecycle: 'restricted', network: 'Lighter', note: 'Restricted for this user; account monitoring and trading disabled', capabilities: none },
   { id: 'paradex', name: 'Paradex', lifecycle: 'restricted', network: 'Paradex', note: 'US persons explicitly restricted; trading blocked', capabilities: none },
   { id: 'extended', name: 'Extended', lifecycle: 'candidate', network: 'Starknet', note: 'Account and market feeds not verified', capabilities: none },
