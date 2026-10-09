@@ -65,8 +65,9 @@ export const TradeScreen: React.FC<TradeScreenProps> = ({
   }, []);
 
   const activeLeg = aiPlan?.legs?.[activeLegIndex] || null;
-  // Keep the existing advanced form available for explicit AI swap plans and BUY / SELL.
-  const isLlamaPrimary = activeSubTab === 'trade' && !aiPlan;
+  // Use the same primary provider on web and desktop across all trade tabs.
+  // Explicit AI swap plans retain the advanced form only while TRADE is selected.
+  const isLlamaPrimary = !(activeSubTab === 'trade' && aiPlan);
 
   return (
     <div className="flex flex-col gap-2 max-w-[1720px] mx-auto w-full select-none pb-24">

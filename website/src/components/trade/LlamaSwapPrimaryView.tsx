@@ -1,22 +1,29 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { ExternalLink, ShieldCheck } from 'lucide-react';
 
 // Hosted third-party app. Never pass the AURELIS WalletConnect topic or bot-wallet
 // account into this cross-origin frame. LlamaSwap connects/signs independently.
 export const LLAMASWAP_URL = 'https://swap.defillama.com/';
 
-export const LlamaSwapPrimaryView: React.FC = () => (
+export const LlamaSwapPrimaryView: React.FC = () => {
+  const [iconFailed, setIconFailed] = useState(false);
+  return (
   <section
     aria-label="Primary swap provider LlamaSwap"
     className="mx-auto w-full max-w-[1050px] overflow-hidden rounded-2xl border border-primary-container/25 bg-surface-panel shadow-sm"
   >
     <header className="flex flex-wrap items-start justify-between gap-3 border-b border-primary-container/15 px-4 py-3">
       <div className="flex min-w-0 items-center gap-3">
-        <img
-          src="/provider-icons/llama.ico"
-          alt=""
-          className="h-9 w-9 shrink-0 rounded-lg object-contain"
-        />
+        {iconFailed ? (
+          <span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-container/15 text-lg font-bold text-primary-container">L</span>
+        ) : (
+          <img
+            src="/provider-icons/llama.ico"
+            alt="LlamaSwap"
+            onError={() => setIconFailed(true)}
+            className="h-9 w-9 shrink-0 rounded-lg object-contain"
+          />
+        )}
         <div>
           <h2 className="text-[15px] font-bold text-text-primary">LlamaSwap</h2>
           <p className="text-[11px] text-text-secondary">
@@ -58,4 +65,5 @@ export const LlamaSwapPrimaryView: React.FC = () => (
       Wallet permissions and transaction signing remain with the provider and your wallet.
     </footer>
   </section>
-);
+  );
+};
