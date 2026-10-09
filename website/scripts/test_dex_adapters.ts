@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { DEX_VENUES, canUseAutomatedFunding, canUseEmergencyClose, canUseLiveOrders } from '../src/services/dexVenueRegistry';
 import { observeDexAccount, registerDexAccountAdapter } from '../src/services/dexAccountAdapters';
 import { fetchHyperliquidObservation } from '../src/services/hyperliquidReadOnlyAdapter';
-import { fetchLighterObservation } from '../src/services/lighterReadOnlyAdapter';
+import { fetchLighterObservation, fetchLighterAccountSnapshot } from '../src/services/lighterReadOnlyAdapter';
 
 async function test(): Promise<void> {
   assert.equal(DEX_VENUES.length, 10);
@@ -53,6 +53,22 @@ async function test(): Promise<void> {
     await assert.rejects(fetchLighterObservation(wallet),/lighter_discovery_invalid/);
     await assert.rejects(fetchLighterObservation('bad'),/invalid_bot_wallet_address/);
   } finally {globalThis.fetch=previous;}
+  const fetchBeforeSnapshot=globalThis.fetch;
+  try {
+    globalThis.fetch=async()=>new Response(JSON.stringify({ok:true,complete:true,wallet,checkedAt:new Date(0).toISOString(),accounts:[
+      {accountIndex:3,collateral:'12.50',available:'5.00',positions:[{accountIndex:3,market:'ETH',side:'long',size:'0.02'}]},
+      {accountIndex:4,collateral:'2.00',available:'2.00',positions:[]}
+    ]}),{status:200});
+    const snap=await fetchLighterAccountSnapshot(wallet);
+    assert.equal(snap.balances.length,2);
+    assert.equal(snap.positions.length,1);
+    assert.deepEqual(snap.accountIndices,[3,4]);
+    globalThis.fetch=async()=>new Response(JSON.stringify({ok:true,complete:true,wallet,checkedAt:new Date(0).toISOString(),accounts:[
+      {accountIndex:3,collateral:'12.50',available:'5.00',positions:[]},
+      {accountIndex:3,collateral:'12.50',available:'5.00',positions:[]}
+    ]}),{status:200});
+    await assert.rejects(fetchLighterAccountSnapshot(wallet),/lighter_snapshot_invalid/);
+  } finally {globalThis.fetch=fetchBeforeSnapshot;}
   console.log('DEX registry and read-only adapter checks passed');
 }
 test().catch(error=>{console.error(error);process.exitCode=1;});
