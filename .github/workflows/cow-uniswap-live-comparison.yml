@@ -29,10 +29,12 @@ jobs:
             const result=await compareCowAndUniswapPool({
               wallet,sellToken:'0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
               buyToken:'0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
-              amount:'10000000000000000',fee:500
+              amount:'10000000000000000',fee:500,assumedGasUnits:200000
             });
             console.log(JSON.stringify(result));
             if(result.status!=='comparable')throw Error('quotes not comparable: '+result.reason);
+            if(!result.gasObservation||!result.gasEstimate||result.gasEstimate.executionGasUnverified!==true)throw Error('gas observation not incorporated');
+            if(result.costScenario.status!=='unavailable'||result.costScenario.netDifference!==null)throw Error('missing costs must block net return');
             if(result.profitable!==false||result.netProfit!==null||result.ordersEnabled!==false)
               throw Error('unsafe profit or order status');
           } catch(error) {console.error('Read-only comparison failed:',error instanceof Error?error.message:String(error));process.exitCode=1;}
