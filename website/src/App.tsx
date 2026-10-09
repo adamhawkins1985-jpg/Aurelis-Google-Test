@@ -717,7 +717,7 @@ export default function App() {
   );
 
   if (isStandaloneSwapWidget) {
-    return <MobileSwapWidgetPage providerId={swapWidgetParams?.get('swapWidget')} />;
+    return <MobileSwapWidgetPage providerId={swapWidgetParams?.get('swapWidget')} theme={theme} />;
   }
 
   // Check for standalone isolated wallet access mode (?walletOnly=true or ?page=wallet)
@@ -1319,7 +1319,7 @@ export default function App() {
       {!isPopout && (
         <>
           <AiChatDock coins={coins} selectedCoin={selectedCoin} soundEnabled={soundEnabled} holdings={walletHoldings} onNavigate={setNavigationTab} />
-          <SwapWidgetDock />
+          <SwapWidgetDock theme={theme} />
         </>
       )}
 

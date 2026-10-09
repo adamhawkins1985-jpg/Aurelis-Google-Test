@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, X, ArrowLeft, ChevronRight } from 'lucide-react';
+import type { ThemeMode } from '../types';
 
 export type SwapWidgetProvider = {
   id: string;
@@ -71,10 +72,18 @@ export const SWAP_WIDGET_PROVIDERS: SwapWidgetProvider[] = [
     short: 'SP',
     logo: '/provider-icons/swapspro.ico',
     subtitle: 'Multi-DEX widget',
-    url: 'https://www.swaps.pro/embed?theme=dark&accent=%2300d7c7&radius=18&width=440',
+    url: 'https://www.swaps.pro/embed?theme=light&accent=%23059669&radius=18&width=440&font=mono',
     accent: '#2dd4bf',
   },
 ];
+
+// AURELIS controls only SwapsPro's published styling parameters. Quotes,
+// wallet permissions and signatures remain exclusively inside the provider.
+export const getSwapWidgetUrl = (provider: SwapWidgetProvider, theme: ThemeMode): string => {
+  if (provider.id !== 'swapspro') return provider.url;
+  const accent = theme === 'light' ? '059669' : '00F5A0';
+  return `https://www.swaps.pro/embed?theme=${theme}&accent=%23${accent}&radius=18&width=440&font=mono`;
+};
 
 type DockGeometry = {
   railLeft: number;
@@ -130,7 +139,7 @@ function useDockGeometry(): DockGeometry | null {
   return geometry;
 }
 
-export const SwapWidgetDock: React.FC = () => {
+export const SwapWidgetDock: React.FC<{ theme?: ThemeMode }> = ({ theme = 'light' }) => {
   const geometry = useDockGeometry();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [panelPos, setPanelPos] = useState<{left:number;top:number}|null>(null);
@@ -250,7 +259,7 @@ export const SwapWidgetDock: React.FC = () => {
             <div className="flex items-center gap-1">
               {!isSwapWidgetUnavailable(active.id) && (
                 <a
-                  href={active.url}
+                  href={getSwapWidgetUrl(active, theme)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-white/5"
@@ -299,7 +308,7 @@ export const SwapWidgetDock: React.FC = () => {
             <iframe
               key={active.id}
               title={active.name}
-              src={active.url}
+              src={getSwapWidgetUrl(active, theme)}
               className="w-full flex-1 min-h-0 bg-white"
               allow="clipboard-read; clipboard-write; payment"
               referrerPolicy="strict-origin-when-cross-origin"
@@ -311,7 +320,7 @@ export const SwapWidgetDock: React.FC = () => {
   );
 };
 
-export const MobileSwapWidgetPage: React.FC<{ providerId?: string | null }> = ({ providerId }) => {
+export const MobileSwapWidgetPage: React.FC<{ providerId?: string | null; theme?: ThemeMode }> = ({ providerId, theme = 'light' }) => {
   const provider = SWAP_WIDGET_PROVIDERS.find((item) => item.id === providerId);
 
   if (!provider) {
@@ -363,7 +372,7 @@ export const MobileSwapWidgetPage: React.FC<{ providerId?: string | null }> = ({
         {isSwapWidgetUnavailable(provider.id) ? (
           <span className="text-[10px] text-text-muted">US unavailable</span>
         ) : (
-          <a href={provider.url} target="_blank" rel="noopener noreferrer" className="p-1.5 text-text-muted" aria-label="Open externally">
+          <a href={getSwapWidgetUrl(provider, theme)} target="_blank" rel="noopener noreferrer" className="p-1.5 text-text-muted" aria-label="Open externally">
             <ExternalLink className="w-4 h-4" />
           </a>
         )}
@@ -393,7 +402,7 @@ export const MobileSwapWidgetPage: React.FC<{ providerId?: string | null }> = ({
       ) : (
         <iframe
           title={provider.name}
-          src={provider.url}
+          src={getSwapWidgetUrl(provider, theme)}
           className="w-full flex-1 bg-white"
           allow="clipboard-read; clipboard-write; payment"
           referrerPolicy="strict-origin-when-cross-origin"
