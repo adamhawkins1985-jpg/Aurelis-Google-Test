@@ -706,7 +706,12 @@ app.get('/api/bots/lighter-accounts', async (req,res) => {
   try {
     const url='https://mainnet.zklighter.elliot.ai/api/v1/accountsByL1Address?'+new URLSearchParams({l1_address:wallet});
     const upstream=await fetch(url,{signal:AbortSignal.timeout(10000),headers:{Accept:'application/json'}});
-    if (!upstream.ok) return res.status(502).json({ok:false,error:'lighter_upstream_unavailable'});
+    if (!upstream.ok) {
+      const upstreamError=await upstream.json().catch(()=>null);
+      if(upstream.status===400 && upstreamError?.code===21100)
+        return res.status(404).json({ok:false,error:'lighter_account_not_discoverable',readOnly:true});
+      return res.status(502).json({ok:false,error:'lighter_upstream_unavailable'});
+    }
     const raw=await upstream.json();
     if (!raw || !Array.isArray(raw.sub_accounts) || (raw.l1_address && String(raw.l1_address).toLowerCase()!==wallet.toLowerCase()))
       return res.status(502).json({ok:false,error:'lighter_account_response_invalid'});
@@ -730,7 +735,12 @@ app.get('/api/bots/lighter-snapshot', async (req,res) => {
   const host='https://mainnet.zklighter.elliot.ai/api/v1/';
   try {
     const discovery=await fetch(host+'accountsByL1Address?'+new URLSearchParams({l1_address:wallet}),{signal:AbortSignal.timeout(10000)});
-    if (!discovery.ok) throw Error('discovery_http');
+    if (!discovery.ok) {
+      const upstreamError=await discovery.json().catch(()=>null);
+      if(discovery.status===400 && upstreamError?.code===21100)
+        return res.status(404).json({ok:false,error:'lighter_account_not_discoverable',readOnly:true});
+      throw Error('discovery_http');
+    }
     const found=await discovery.json();
     if (found?.code!==200 || !Array.isArray(found.sub_accounts) ||
         String(found.l1_address||'').toLowerCase()!==wallet.toLowerCase() ||
