@@ -34,3 +34,35 @@ jobs:
           console.log('CoW public APIs responsive. No quote, signing, orders or transfers performed.');
           console.log('US access and trading eligibility NOT established by API connectivity.');
           NODE
+      - name: Request and validate unsigned indicative CoW spot quote
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const src=fs.readFileSync('website/src/services/walletConnectService.ts','utf8');
+          const owner=src.match(/const BOT_AGENT_ADDRESS = '(0x[a-fA-F0-9]{40})'/)?.[1];
+          if(!owner)throw Error('Bot wallet guard unavailable');
+          const sellToken='0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
+          const buyToken='0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
+          const sellAmountBeforeFee='10000000000000000';
+          const response=await fetch('https://api.cow.fi/mainnet/api/v1/quote',{
+            method:'POST',signal:AbortSignal.timeout(25000),
+            headers:{'Content-Type':'application/json','Accept':'application/json'},
+            body:JSON.stringify({sellToken,buyToken,sellAmountBeforeFee,kind:'sell',from:owner,priceQuality:'fast'})
+          });
+          console.log('CoW indicative quote HTTP',response.status);
+          const data=await response.json().catch(()=>null);
+          if(!response.ok){
+            console.log('CoW quote refusal category:',typeof data?.errorType==='string'?data.errorType:'unspecified');
+            throw Error('CoW indicative quote unavailable: HTTP '+response.status);
+          }
+          const quote=data?.quote;
+          const positive=(s)=>typeof s==='string' && /^\\d+$/.test(s) && BigInt(s)>0n;
+          const nonnegative=(s)=>typeof s==='string' && /^\\d+$/.test(s) && BigInt(s)>=0n;
+          if(!quote || String(quote.sellToken).toLowerCase()!==sellToken.toLowerCase()
+            || String(quote.buyToken).toLowerCase()!==buyToken.toLowerCase()
+            || !positive(quote.buyAmount) || !positive(quote.sellAmount) || !nonnegative(quote.feeAmount))
+            throw Error('CoW indicative quote fields invalid');
+          console.log('CoW indicative quote passed identity and positive amount checks');
+          console.log('Quote amount is NOT net profit: gas, fees, slippage, other venue costs and execution uncertainty remain.');
+          console.log('No signatures, orders, approvals, funding or trading performed.');
+          NODE
