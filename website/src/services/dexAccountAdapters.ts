@@ -12,6 +12,9 @@ export interface DexAccountSnapshot {
   positions: readonly { market: string; side: 'long' | 'short'; size: string }[];
   orders: readonly { id: string; market: string; status: string }[];
   fills: readonly { id: string; market: string; size: string }[];
+  /** Empty order/fill arrays are NOT evidence of no activity unless verified. */
+  orderMonitoring: 'verified' | 'auth-required' | 'unavailable';
+  fillMonitoring: 'verified' | 'auth-required' | 'unavailable';
   accountIndices?: readonly number[];
   accountValueUsd?: string | number | null;
   openPositionCount?: number | null;
@@ -51,7 +54,11 @@ export async function observeDexAccount(
   if (snapshot.venue !== venueId || snapshot.wallet.toLowerCase() !== wallet.toLowerCase() ||
       Number.isNaN(Date.parse(snapshot.checkedAt)) ||
       !Array.isArray(snapshot.balances) || !Array.isArray(snapshot.positions) ||
-      !Array.isArray(snapshot.orders) || !Array.isArray(snapshot.fills)) {
+      !Array.isArray(snapshot.orders) || !Array.isArray(snapshot.fills) ||
+      !['verified','auth-required','unavailable'].includes(snapshot.orderMonitoring) ||
+      !['verified','auth-required','unavailable'].includes(snapshot.fillMonitoring) ||
+      (snapshot.orderMonitoring!=='verified' && snapshot.orders.length>0) ||
+      (snapshot.fillMonitoring!=='verified' && snapshot.fills.length>0)) {
     throw new Error('dex_account_snapshot_invalid');
   }
   return snapshot;
