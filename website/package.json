@@ -11,7 +11,7 @@
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
     "test:exchange": "tsx scripts/test_exchange_quotes.ts",
-    "test:dex": "tsx scripts/test_dex_adapters.ts && tsx scripts/test_spot_round_trip.ts"
+    "test:dex": "tsx scripts/test_dex_adapters.ts && tsx scripts/test_spot_round_trip.ts && tsx scripts/test_unsigned_gas_simulation.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
