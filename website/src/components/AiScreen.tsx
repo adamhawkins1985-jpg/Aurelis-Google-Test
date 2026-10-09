@@ -25,6 +25,8 @@ import { getBotWalletConnectSession } from '../services/walletConnectService';
 import { DEX_VENUES, canUseLiveOrders, canUseAutomatedFunding } from '../services/dexVenueRegistry';
 import { fetchHyperliquidObservation } from '../services/hyperliquidReadOnlyAdapter';
 import { fetchLighterAccountSnapshot } from '../services/lighterReadOnlyAdapter';
+import { observeBotDexVenues } from '../services/botDexMonitoring';
+import type { DexVenueObservation } from '../services/dexMonitoringReconciliation';
 
 // Bot Views
 import { TradeRadarView } from './trade/TradeRadarView';
@@ -114,6 +116,8 @@ export const AiScreen: React.FC<AiScreenProps> = ({
   const [lighterCollateral,setLighterCollateral] = useState<string|null>(null);
   const [lighterAccountError,setLighterAccountError] = useState('');
   const [lighterOrdersStatus,setLighterOrdersStatus] = useState('Authentication required');
+  const [dexObservations,setDexObservations] = useState<readonly DexVenueObservation[]>([]);
+  const [dexMonitoringLoading,setDexMonitoringLoading] = useState(false);
   const [venueLoading,setVenueLoading] = useState(false);
   const [venueError,setVenueError] = useState('');
   const [fundingPolicy,setFundingPolicy] = useState<'manual'|'review'>('manual');
@@ -158,10 +162,12 @@ export const AiScreen: React.FC<AiScreenProps> = ({
     try {
       const active = await getBotWalletConnectSession();
       if (!active) {
-        setBotWalletAddress('');setBotBalances([]);setBotBalanceError('');setVenueAccount(null);setLighterAccountCount(null);setLighterPositions(null);setLighterCollateral(null);setLighterAccountError('');setLighterOrdersStatus('Authentication required');
+        setDexObservations([]);setBotWalletAddress('');setBotBalances([]);setBotBalanceError('');setVenueAccount(null);setLighterAccountCount(null);setLighterPositions(null);setLighterCollateral(null);setLighterAccountError('');setLighterOrdersStatus('Authentication required');
         return;
       }
       setBotWalletAddress(active.address);
+      setDexMonitoringLoading(true);
+      void observeBotDexVenues(active.address).then(setDexObservations).catch(()=>setDexObservations([])).finally(()=>setDexMonitoringLoading(false));
       void loadVenueAccount(active.address);
       void fetch('/api/bots/lighter-order-monitoring-status?'+new URLSearchParams({wallet:active.address}),{cache:'no-store'})
         .then(async res=>res.ok?res.json():Promise.reject(Error('status_unavailable')))
@@ -510,6 +516,15 @@ export const AiScreen: React.FC<AiScreenProps> = ({
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <span className="text-[10px] font-semibold text-text-primary">DEX network · {DEX_VENUES.length} slots</span>
           <span className="text-[10px] text-text-muted">Read-only monitoring and candidates are not live integrations</span>
+        </div>
+        <div className="mt-2 rounded-md border border-white/10 p-2" aria-label="Read-only consolidated DEX observations">
+          <p className="text-[11px] font-semibold text-text-primary">Central account observations · {dexMonitoringLoading?'Checking':dexObservations.filter(v=>v.status==='observed').length+' of 10 observed'}</p>
+          <p className="mt-1 text-[10px] text-text-muted">Unknown values do not mean zero. No signing, transfers, or live orders.</p>
+          <div className="mt-2 grid gap-1 sm:grid-cols-2">
+            {dexObservations.map(observation=><p key={observation.venue} className="text-[10px] text-text-muted">
+              {DEX_VENUES.find(v=>v.id===observation.venue)?.name}: {observation.status==='observed'?'Positions '+(observation.openPositionCount??'unknown')+' · Orders '+(observation.activeOrders??'unknown')+' · Account USD '+(observation.accountValueUsd??'unknown'):'Unavailable'}
+            </p>)}
+          </div>
         </div>
         <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-5" aria-label="DEX venue account coverage">
           {DEX_VENUES.map(item => <div key={item.id} className="rounded-md border border-white/10 bg-surface-base/40 p-2">
