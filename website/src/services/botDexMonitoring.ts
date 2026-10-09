@@ -11,7 +11,7 @@ export async function observeBotDexVenues(
   wallet: string,
   signal?: AbortSignal,
 ): Promise<readonly DexVenueObservation[]> {
-  if (!VALID_WALLET.test(wallet)) throw new Error('invalid_bot_wallet_address');
+  if (!VALID_WALLET.test(wallet) || /^0x0{40}$/i.test(wallet)) throw new Error('invalid_bot_wallet_address');
   const readers = [
     { venue: 'hyperliquid' as const, read: fetchHyperliquidObservation },
     { venue: 'lighter' as const, read: fetchLighterAccountSnapshot },
