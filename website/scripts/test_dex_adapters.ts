@@ -1,3 +1,4 @@
+import { compareIndicativeSpotQuotes } from '../src/services/spotQuoteComparison';
 import { fetchCowIndicativeQuote } from '../src/services/cowReadOnlyAdapter';
 import { parseCowQuote } from '../src/services/cowQuoteParser';
 import assert from 'node:assert/strict';
@@ -31,6 +32,19 @@ async function test(): Promise<void> {
     assert.equal(result.executable,false);
     assert.equal(result.feeAmount,'5');
   } finally {globalThis.fetch=previousFetch;}
+  const now=Date.now();
+  const first={venue:'cow',chain:'mainnet',sellToken:'0x'+'a'.repeat(40),buyToken:'0x'+'b'.repeat(40),
+    inputAmount:'100',outputAmount:'205',checkedAt:new Date(now).toISOString()};
+  const second={...first,venue:'comparison',outputAmount:'200'};
+  const compared=compareIndicativeSpotQuotes(first,second,now);
+  assert.equal(compared.status,'comparable');
+  assert.equal(compared.betterVenue,'cow');
+  assert.equal(compared.grossOutputDifference,'5');
+  assert.equal(compared.profitable,false);
+  assert.equal(compared.netProfit,null);
+  assert.equal(compareIndicativeSpotQuotes(first,{...second,chain:'base'},now).status,'incomparable');
+  assert.equal(compareIndicativeSpotQuotes(first,{...second,checkedAt:new Date(now-45000).toISOString()},now).status,'incomparable');
+  assert.equal(compareIndicativeSpotQuotes(first,{...first},now).status,'incomparable');
   assert.equal(DEX_VENUES.length, 10);
   assert.equal(new Set(DEX_VENUES.map(v => v.id)).size, 10);
   for (const v of DEX_VENUES) {
