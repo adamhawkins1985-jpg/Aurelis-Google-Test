@@ -1,3 +1,4 @@
+import { parseCowQuote } from '../src/services/cowQuoteParser';
 import assert from 'node:assert/strict';
 import { observeBotDexVenues } from '../src/services/botDexMonitoring';
 import { reconcileDexObservations } from '../src/services/dexMonitoringReconciliation';
@@ -11,6 +12,10 @@ import { fetchHyperliquidObservation } from '../src/services/hyperliquidReadOnly
 import { fetchLighterObservation, fetchLighterAccountSnapshot } from '../src/services/lighterReadOnlyAdapter';
 
 async function test(): Promise<void> {
+  const quote=parseCowQuote({quote:{sellToken:'0x'+'a'.repeat(40),buyToken:'0x'+'b'.repeat(40),sellAmount:'100',buyAmount:'200',feeAmount:'3'}},'0x'+'a'.repeat(40),'0x'+'b'.repeat(40));
+  assert.equal(quote.executable,false);
+  assert.equal(quote.buyAmount,'200');
+  assert.throws(()=>parseCowQuote({quote:{sellToken:'0x'+'a'.repeat(40),buyToken:'0x'+'b'.repeat(40),sellAmount:'100',buyAmount:'0',feeAmount:'3'}},'0x'+'a'.repeat(40),'0x'+'b'.repeat(40)),/invalid_cow_quote/);
   assert.equal(DEX_VENUES.length, 10);
   assert.equal(new Set(DEX_VENUES.map(v => v.id)).size, 10);
   for (const v of DEX_VENUES) {
