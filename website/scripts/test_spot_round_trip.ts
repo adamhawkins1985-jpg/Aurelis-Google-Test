@@ -1,3 +1,4 @@
+import { scanSpotRoundTrips } from '../src/services/spotRoundTripScanner';
 import assert from 'node:assert/strict';
 import { observeSpotRoundTrip } from '../src/services/spotRoundTripReadOnly';
 
@@ -35,5 +36,10 @@ try {
     assert.equal(both.profitVerified,false);
     assert.equal(both.ordersEnabled,false);
   }
-  console.log('round trip both-direction mocked tests passed');
+  const scanned=await scanSpotRoundTrips({wallet:'0x'+'c'.repeat(40),startToken:'0x'+'a'.repeat(40),middleToken:'0x'+'b'.repeat(40),amounts:['100000000000000000'],fees:[500],assumedGasUnitsPerLeg:200000});
+  assert.equal(scanned.checked,2);
+  assert.equal(scanned.verifiedProfits,0);
+  assert.equal(scanned.ordersEnabled,false);
+  assert.equal(scanned.results.every(row=>row.verifiedProfit===false),true);
+  console.log('round trip multi-direction scanner tests passed');
 } finally {globalThis.fetch=original;}
