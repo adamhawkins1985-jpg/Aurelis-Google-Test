@@ -4,7 +4,7 @@ const validWallet = /^0x[a-fA-F0-9]{40}$/;
 
 /** Bridges existing AURELIS VPS-backed, read-only Hyperliquid observation endpoint. */
 export async function fetchHyperliquidObservation(wallet: string, signal?: AbortSignal): Promise<DexAccountSnapshot> {
-  if (!validWallet.test(wallet)) throw new Error('invalid_bot_wallet_address');
+  if (!validWallet.test(wallet) || /^0x0{40}$/i.test(wallet)) throw new Error('invalid_bot_wallet_address');
   const response = await fetch('/api/bots/hyperliquid-account?' + new URLSearchParams({ wallet }), {
     cache: 'no-store', signal,
   });
@@ -13,6 +13,9 @@ export async function fetchHyperliquidObservation(wallet: string, signal?: Abort
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('hyperliquid_observation_invalid');
   const result = data as Record<string, unknown>;
   if (result.ok === false) throw new Error(String(result.error || 'hyperliquid_observation_unavailable'));
+  if (typeof result.walletAddress !== 'string' || !validWallet.test(result.walletAddress) ||
+      result.walletAddress.toLowerCase() !== wallet.toLowerCase())
+    throw new Error('hyperliquid_observation_wallet_mismatch');
   const verifiedFields: string[] = [];
   const rawValue = result.perpsAccountValueUsd;
   const accountValueUsd = (typeof rawValue === 'number' && Number.isFinite(rawValue) && rawValue >= 0)
