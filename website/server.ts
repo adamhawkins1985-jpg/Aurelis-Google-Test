@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { exchangeRouter } from './server/exchange_routes';
+import { readLighterActiveOrders } from './server/lighter_active_order_read';
 import { lighterMonitoringState } from './src/services/lighterMonitoringState';
 import { registerMigratedBackend, getVerifiedWalletAddress, runAaveAgentQuery } from './server/migrated_backend';
 
@@ -774,6 +775,39 @@ app.get('/api/bots/lighter-order-monitoring-status', (req,res) => {
     message:state==='configured-unverified'
       ? 'Credentials configured; account scope and monitoring API still unverified'
       : 'Read-only monitoring credentials and exact bot-wallet binding required'});
+});
+
+// Authenticated order COUNT monitoring, bound to the configured Bot Wallet.
+// This endpoint never returns an authorization token or grants trading permissions.
+app.get('/api/bots/lighter-active-order-counts', async (req,res) => {
+  const wallet=String(req.query.wallet||'');
+  if (!/^0x[a-fA-F0-9]{40}$/.test(wallet)) return res.status(400).json({ok:false,error:'invalid_wallet_address'});
+  res.setHeader('Cache-Control','no-store');
+  if(lighterMonitoringState(wallet,process.env.AURELIS_LIGHTER_MONITOR_WALLET,
+       process.env.AURELIS_LIGHTER_MONITOR_AUTH)!=='configured-unverified')
+    return res.status(403).json({ok:false,error:'lighter_monitor_not_configured'});
+  try {
+    const host='https://mainnet.zklighter.elliot.ai/api/v1/';
+    const response=await fetch(host+'accountsByL1Address?'+new URLSearchParams({l1_address:wallet}),
+      {signal:AbortSignal.timeout(10000),headers:{Accept:'application/json'},cache:'no-store'});
+    if(!response.ok) throw Error('lighter_discovery_unavailable');
+    const discovered=await response.json();
+    if(discovered?.code!==200||!Array.isArray(discovered.sub_accounts)||
+       String(discovered.l1_address||'').toLowerCase()!==wallet.toLowerCase()||discovered.next_cursor)
+      throw Error('lighter_discovery_invalid');
+    const ids=discovered.sub_accounts.map((a:any)=>a?.index);
+    if(ids.length>20||ids.some((n:any)=>!Number.isSafeInteger(n)||n<0)||new Set(ids).size!==ids.length)
+      throw Error('lighter_accounts_invalid');
+    const counts=[];
+    for(const accountIndex of ids){
+      counts.push(await readLighterActiveOrders(accountIndex,process.env.AURELIS_LIGHTER_MONITOR_AUTH!,
+        AbortSignal.timeout(10000)));
+    }
+    res.json({ok:true,venue:'lighter',wallet,complete:true,checkedAt:new Date().toISOString(),
+      monitoring:'verified-active-counts-only',accounts:counts});
+  } catch {
+    res.status(502).json({ok:false,error:'lighter_active_order_monitoring_unavailable'});
+  }
 });
 
 // Hyperliquid signer readiness only; never requests signatures or submits orders.
