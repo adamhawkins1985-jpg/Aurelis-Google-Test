@@ -27,8 +27,9 @@ jobs:
             const response=await fetch(url,{signal:AbortSignal.timeout(12000),headers:{Accept:'application/json'}});
             console.log(network,'public API HTTP',response.status);
             if(!response.ok)throw Error(network+' unavailable');
-            const body=await response.json();
-            if(!body || typeof body!=='object')throw Error(network+' invalid API version');
+            const version=(await response.text()).trim();
+            if(!version || version.length>256)throw Error(network+' invalid API version');
+            console.log(network,'version endpoint responsive');
           }
           console.log('CoW public APIs responsive. No quote, signing, orders or transfers performed.');
           console.log('US access and trading eligibility NOT established by API connectivity.');
