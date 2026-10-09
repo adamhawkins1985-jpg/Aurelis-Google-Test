@@ -182,10 +182,7 @@ export const AiScreen: React.FC<AiScreenProps> = ({
         .catch(()=>{if(requestId===botObservationRequest.current)setDexObservations([]);})
         .finally(()=>{if(requestId===botObservationRequest.current)setDexMonitoringLoading(false);});
       void loadVenueAccount(active.address,requestId);
-      void fetch('/api/bots/lighter-order-monitoring-status?'+new URLSearchParams({wallet:active.address}),{cache:'no-store'})
-        .then(async res=>res.ok?res.json():Promise.reject(Error('status_unavailable')))
-        .then(data=>{if(requestId===botObservationRequest.current)setLighterOrdersStatus(data.orderMonitoring==='configured-unverified'?'Credential configured · unverified':'Authentication required');})
-        .catch(()=>{if(requestId===botObservationRequest.current)setLighterOrdersStatus('Monitoring status unavailable');});
+      setLighterOrdersStatus('Restricted venue');
       // Lighter is restricted; do not request its public account snapshot.
       setLighterAccountCount(null);setLighterPositions(null);setLighterCollateral(null);setLighterAccountError('Restricted venue');
       const res=await fetch('/api/wallet/external-evm-portfolio?'+new URLSearchParams({address:active.address}),{cache:'no-store'});
