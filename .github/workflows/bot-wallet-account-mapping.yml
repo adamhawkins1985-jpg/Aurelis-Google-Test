@@ -29,7 +29,11 @@ jobs:
           async function check(path){
             const url=base+path+'?'+new URLSearchParams({wallet});
             const res=await fetch(url,{signal:AbortSignal.timeout(24000),headers:{Accept:'application/json'}});
-            if(!res.ok)throw Error(path+' HTTP '+res.status);
+            if(!res.ok){
+              let reason='';
+              try { const failure=await res.json(); reason=typeof failure?.error==='string'?failure.error:''; } catch {}
+              throw Error(path+' HTTP '+res.status+(reason?' '+reason:''));
+            }
             const payload=await res.json();
             if(!payload || typeof payload!=='object')throw Error(path+' invalid JSON');
             const reported=path==='hyperliquid-account'?payload.walletAddress:payload.wallet;
@@ -37,7 +41,24 @@ jobs:
             return payload;
           }
           const hyper=await check('hyperliquid-account');
-          const lighter=await check('lighter-snapshot');
+          console.log('Hyperliquid public account address match: confirmed (ownership unverified).');
+          let discovery;
+          try {
+            discovery=await check('lighter-accounts');
+            if(discovery.ok!==true || discovery.complete!==true || !Array.isArray(discovery.accountIndices)
+              || discovery.accountIndices.length>20 || new Set(discovery.accountIndices).size!==discovery.accountIndices.length
+              || !discovery.accountIndices.every(v=>Number.isSafeInteger(v)&&v>=0)) throw Error('invalid account indices');
+            console.log('Lighter account discovery: valid; account count:',discovery.accountIndices.length);
+          } catch(e) {
+            console.error('Lighter discovery failed before snapshot:',e.message);
+            throw e;
+          }
+          let lighter;
+          try { lighter=await check('lighter-snapshot'); }
+          catch(e) {
+            console.error('Lighter discovery succeeded, but balance/position snapshot failed:',e.message);
+            throw e;
+          }
           if(lighter.ok!==true || lighter.complete!==true || !Array.isArray(lighter.accounts) || lighter.accounts.length>20)throw Error('Lighter incomplete snapshot');
           const ids=new Set();
           for(const account of lighter.accounts){
