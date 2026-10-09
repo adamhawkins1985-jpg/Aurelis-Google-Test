@@ -128,6 +128,14 @@ async function test(): Promise<void> {
     venue:'hyperliquid',wallet,checkedAt:new Date(0).toISOString(),
     balances:[],positions:[],orders:[],fills:[],orderMonitoring:'unavailable',fillMonitoring:'unavailable',
   }]),/dex_reconciliation_duplicate_or_unknown/);
+  assert.throws(()=>reconcileDexObservations([
+    {venue:'hyperliquid',wallet,checkedAt:new Date(0).toISOString(),balances:[],positions:[],orders:[],fills:[],orderMonitoring:'unavailable',fillMonitoring:'unavailable'},
+    {venue:'lighter',wallet:'0x'+'b'.repeat(40),checkedAt:new Date(0).toISOString(),balances:[],positions:[],orders:[],fills:[],orderMonitoring:'auth-required',fillMonitoring:'auth-required'},
+  ]),/dex_reconciliation_wallet_mismatch/);
+  assert.equal(reconcileDexObservations([
+    {venue:'hyperliquid',wallet,checkedAt:new Date(0).toISOString(),balances:[],positions:[],orders:[],fills:[],orderMonitoring:'unavailable',fillMonitoring:'unavailable'},
+    {venue:'lighter',wallet:wallet.toUpperCase().replace('0X','0x'),checkedAt:new Date(0).toISOString(),balances:[],positions:[],orders:[],fills:[],orderMonitoring:'auth-required',fillMonitoring:'auth-required'},
+  ]).length,10);
   console.log('DEX registry and read-only adapter checks passed');
 }
 test().catch(error=>{console.error(error);process.exitCode=1;});
