@@ -19,7 +19,10 @@ def select_paper_route(bot, asset, side, notional_usd, quotes):
         except ValueError:
             rejected[venue] = "unsupported_venue"
             continue
-        checked = validate_book(venue, asset, quote, quote.get("receivedAt") if isinstance(quote, dict) else None)
+        if not isinstance(quote, dict):
+            rejected[venue] = "missing_quote"
+            continue
+        checked = validate_book(venue, asset, quote, quote.get("receivedAt"))
         if not checked["quoteUsable"]:
             rejected[venue] = checked["reason"]
             continue

@@ -22,6 +22,15 @@ class DexRouteTests(unittest.TestCase):
             self.assertFalse(result["executionReady"])
             self.assertEqual(result["ordersSubmitted"], 0)
 
+    def test_malformed_quote_rejected_without_crashing_scan(self):
+        result = select_paper_route("hunter", "BTC", "long", 25, {
+            "hyperliquid": None, "extended": ["not", "a", "book"]})
+        self.assertIsNone(result["preferredVenue"])
+        self.assertEqual(result["rejected"]["hyperliquid"], "missing_quote")
+        self.assertEqual(result["rejected"]["extended"], "missing_quote")
+        self.assertFalse(result["executionReady"])
+        self.assertEqual(result["ordersSubmitted"], 0)
+
     def test_unknown_venue_cannot_be_routed(self):
         result = select_paper_route("hunter", "BTC", "buy", 25, {
             "kraken": {"receivedAt": 1}})
