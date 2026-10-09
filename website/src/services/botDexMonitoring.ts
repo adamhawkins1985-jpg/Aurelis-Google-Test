@@ -21,8 +21,11 @@ export async function observeBotDexVenues(
   const failures: Partial<Record<DexVenueId, string>> = {};
   outcomes.forEach((outcome, index) => {
     const venue = readers[index].venue;
-    if (outcome.status === 'fulfilled') snapshots.push(outcome.value);
-    else failures[venue] = 'observation_failed';
+    if (outcome.status === 'fulfilled' && outcome.value.venue === venue &&
+        outcome.value.wallet.toLowerCase() === wallet.toLowerCase() &&
+        Number.isFinite(Date.parse(outcome.value.checkedAt))) {
+      snapshots.push(outcome.value);
+    } else failures[venue] = 'observation_failed';
   });
   return reconcileDexObservations(snapshots, failures);
 }
