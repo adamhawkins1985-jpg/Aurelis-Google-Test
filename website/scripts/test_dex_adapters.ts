@@ -98,6 +98,10 @@ async function test(): Promise<void> {
     assert.deepEqual(await readLighterActiveOrders(2,'0123456789abcdef'),{accountIndex:2,count:1});
     globalThis.fetch=async()=>new Response(JSON.stringify({code:200,orders:[],next_cursor:'more'}),{status:200});
     await assert.rejects(readLighterActiveOrders(2,'0123456789abcdef'),/lighter_order_observation_incomplete/);
+    globalThis.fetch=async()=>new Response(JSON.stringify({code:200,orders:[{id:'same'},{id:'same'}]}),{status:200});
+    await assert.rejects(readLighterActiveOrders(2,'0123456789abcdef'),/lighter_order_duplicate/);
+    globalThis.fetch=async()=>new Response(JSON.stringify({code:200,orders:[{id:'one',account_index:3}]}),{status:200});
+    await assert.rejects(readLighterActiveOrders(2,'0123456789abcdef'),/lighter_order_account_mismatch/);
     await assert.rejects(readLighterActiveOrders(2,'short'),/lighter_monitor_authorization_missing/);
   } finally {globalThis.fetch=beforeOrdersFetch;}
   const internalKey='A'.repeat(40);
