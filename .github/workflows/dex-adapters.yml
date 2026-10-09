@@ -38,7 +38,7 @@ jobs:
           node-version: '22'
       - name: Install dependencies
         run: |
-          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+          npm install --no-audit --no-fund
       - name: Test DEX registry and adapters
         id: dex_tests
         run: npm run test:dex
