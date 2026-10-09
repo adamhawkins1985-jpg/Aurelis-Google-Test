@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - 'website/src/services/spotRoundTripReadOnly.ts'
+      - 'website/src/services/spotRoundTripScanner.ts'
       - 'website/scripts/test_spot_round_trip.ts'
       - 'website/src/services/dexVenueRegistry.ts'
       - 'website/src/services/dexAccountAdapters.ts'
