@@ -1,5 +1,10 @@
 import { Router } from 'express';
+import { isIP } from 'node:net';
 import { ChangeNowService } from './changenow_service';
+import { SwapSpaceService } from './swapspace_service';
+
+// Disabled by default: updating the website cannot activate real SwapSpace exchanges.
+const swapSpaceEnabled = () => process.env.SWAPSPACE_TRADE_ENABLED === 'true';
 import { QuoteRequest, CreateExchangeRequest } from './exchange_models';
 
 export const exchangeRouter = Router();
@@ -10,7 +15,7 @@ export const exchangeRouter = Router();
  */
 exchangeRouter.get('/currencies', async (_req, res) => {
   try {
-    const catalog = await ChangeNowService.getCurrencies();
+    const catalog = swapSpaceEnabled() ? await SwapSpaceService.getCurrencies() : await ChangeNowService.getCurrencies();
     return res.json({ ok: true, catalog, count: catalog.length });
   } catch (err: any) {
     return res.status(500).json({
@@ -27,7 +32,7 @@ exchangeRouter.get('/currencies', async (_req, res) => {
  */
 exchangeRouter.post('/quote', async (req, res) => {
   try {
-    const { fromAsset, toAsset, amount }: QuoteRequest = req.body;
+    const { fromAsset, toAsset, amount }: QuoteRequest = req.body || {};
 
     if (!fromAsset?.currency || !toAsset?.currency) {
       return res.status(400).json({
@@ -37,7 +42,7 @@ exchangeRouter.post('/quote', async (req, res) => {
       });
     }
 
-    if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
+    if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) {
       return res.status(400).json({
         ok: false,
         code: 'BELOW_MINIMUM',
@@ -48,13 +53,9 @@ exchangeRouter.post('/quote', async (req, res) => {
     const fromNet = fromAsset.network || fromAsset.currency;
     const toNet = toAsset.network || toAsset.currency;
 
-    const result = await ChangeNowService.getQuote(
-      fromAsset.currency,
-      fromNet,
-      toAsset.currency,
-      toNet,
-      String(amount)
-    );
+    const result = swapSpaceEnabled()
+      ? await SwapSpaceService.getQuote({currency:fromAsset.currency,network:fromNet},{currency:toAsset.currency,network:toNet},String(amount))
+      : await ChangeNowService.getQuote(fromAsset.currency,fromNet,toAsset.currency,toNet,String(amount));
 
     if (!result.ok) {
       const statusCode = result.code === 'BELOW_MINIMUM' ? 400 : 422;
@@ -95,7 +96,16 @@ exchangeRouter.post('/create', async (req, res) => {
       });
     }
 
-    const result = await ChangeNowService.createExchange(body);
+    if (swapSpaceEnabled() && (!body?.refundAddress?.trim() || !Number.isFinite(Number(body?.amount)) || Number(body.amount) <= 0)) {
+      return res.status(400).json({ok:false,code:'INVALID_REQUEST',message:'Valid amount and refund address are required'});
+    }
+    // Quotes may be enabled independently. Creating deposit orders requires a second explicit opt-in.
+    if (swapSpaceEnabled() && process.env.SWAPSPACE_ORDER_CREATE_ENABLED !== 'true') {
+      return res.status(503).json({ok:false,code:'ACTION_REQUIRED',message:'SwapSpace order creation is not yet enabled'});
+    }
+    const rawIp = String(req.ip || req.socket.remoteAddress || '').replace(/^::ffff:/,'');
+    if (swapSpaceEnabled() && !isIP(rawIp)) return res.status(400).json({ok:false,code:'INVALID_CLIENT_IP',message:'Client IP unavailable'});
+    const result = swapSpaceEnabled() ? await SwapSpaceService.createExchange(body,rawIp) : await ChangeNowService.createExchange(body);
 
     if (!result.ok) {
       return res.status(400).json(result);
@@ -126,7 +136,7 @@ exchangeRouter.get('/status/:exchangeId', async (req, res) => {
       });
     }
 
-    const result = await ChangeNowService.getExchangeStatus(exchangeId);
+    const result = swapSpaceEnabled() ? await SwapSpaceService.getExchangeStatus(exchangeId) : await ChangeNowService.getExchangeStatus(exchangeId);
     return res.json(result);
   } catch (err: any) {
     return res.status(500).json({

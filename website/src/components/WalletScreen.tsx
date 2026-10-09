@@ -100,6 +100,7 @@ export const WalletScreen: React.FC<WalletScreenProps> = ({
   const [sendPickerOpen, setSendPickerOpen] = useState(false);
   const [sendAmount, setSendAmount] = useState<string>('');
   const [sendRecipient, setSendRecipient] = useState<string>('');
+  const [tradeExpectedFrom, setTradeExpectedFrom] = useState<string>('');
   const [sendSuccess, setSendSuccess] = useState<boolean>(false);
   const [sendTxHash, setSendTxHash] = useState<string>('');
   const [isSendingWebTx, setIsSendingWebTx] = useState<boolean>(false);
@@ -319,6 +320,9 @@ export const WalletScreen: React.FC<WalletScreenProps> = ({
     if (!raw) return;
     try {
       const prefill = JSON.parse(raw);
+      const pinned = String(prefill?.expectedFrom || '');
+      if (!/^0x[a-fA-F0-9]{40}$/.test(pinned)) throw new Error('Trade prefill requires a selected EVM wallet');
+      setTradeExpectedFrom(pinned);
       const symbol = String(prefill?.symbol || '').toUpperCase();
       const network = String(prefill?.network || '').toUpperCase();
       const match = sendAssetOptions.find((item) => {
@@ -394,6 +398,7 @@ export const WalletScreen: React.FC<WalletScreenProps> = ({
 
   const handleSendClick = () => {
     if (soundEnabled) playHudSound('switch');
+    setTradeExpectedFrom('');
     if (isOneKeyHost) {
       setSendError('OneKey send/signing is not wired into Aurelis yet. Use the OneKey wallet Send screen for real transfers until this is connected.');
       setArcNotice('Receive is connected to the OneKey address bridge. Send still needs the OneKey signing route.');
@@ -1060,8 +1065,12 @@ export const WalletScreen: React.FC<WalletScreenProps> = ({
                     if (soundEnabled) playHudSound('trade');
                     if (!selectedSendAsset || isSendingWebTx) return;
 
+                    if (tradeExpectedFrom && (!walletAddress || tradeExpectedFrom.toLowerCase() !== walletAddress.toLowerCase())) {
+                      setSendError('The selected Trade wallet changed. Return to Trade and review the deposit.');
+                      return;
+                    }
                     const nativeBridge = (window as any).AurelisNative;
-                    if (nativeBridge && typeof nativeBridge.openNativeScreen === 'function' && selectedSendAsset.assetId) {
+                    if (!tradeExpectedFrom && nativeBridge && typeof nativeBridge.openNativeScreen === 'function' && selectedSendAsset.assetId) {
                       nativeBridge.openNativeScreen(
                         'send-prefill:' + JSON.stringify({
                           assetId: selectedSendAsset.assetId,
@@ -1082,6 +1091,7 @@ export const WalletScreen: React.FC<WalletScreenProps> = ({
                         symbol: selectedSendAsset.symbol,
                         recipient: sendRecipient,
                         amount: sendAmount,
+                        expectedFrom: tradeExpectedFrom || undefined,
                       });
                       setSendTxHash(sent.txHash);
                       setSendSuccess(true);

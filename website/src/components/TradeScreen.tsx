@@ -130,7 +130,11 @@ export const TradeScreen: React.FC<TradeScreenProps> = ({
           window.scrollTo({ top: 0, behavior: 'smooth' });
         } : undefined}
         onOpenWalletSend={(prefill) => {
-          localStorage.setItem('aurelis_web_send_prefill', JSON.stringify(prefill));
+          if (!/^0x[a-fA-F0-9]{40}$/.test(walletAddress || '')) {
+            window.alert('Connect the selected main wallet before sending a Trade deposit.');
+            return;
+          }
+          localStorage.setItem('aurelis_web_send_prefill', JSON.stringify({ ...prefill, expectedFrom: walletAddress }));
           onOpenWallet();
         }}
       />

@@ -1,5 +1,6 @@
 import SignClient from '@walletconnect/sign-client';
 import { verifyTypedData } from 'ethers';
+import { selectSafeEvmAccount } from './walletConnectAccountGuard';
 
 let client: any = null;
 let pendingApproval: null | (() => Promise<any>) = null;
@@ -314,6 +315,7 @@ export async function sendWalletConnectErc20Transfer(params: {
   decimals: number
   recipient: string
   amount: string
+  expectedFrom?: string
 }): Promise<{ txHash: string; from: string }> {
   const signClient = await getClient()
   const now = Math.floor(Date.now() / 1000)
@@ -324,15 +326,10 @@ export async function sendWalletConnectErc20Transfer(params: {
     if (session?.topic === botTopic()) continue
     if (session?.expiry && Number(session.expiry) <= now + 30) continue
     const ns = session?.namespaces?.eip155
-    const accounts: string[] = ns?.accounts || []
-    const account = accounts.find((item) =>
-      item.toLowerCase().startsWith(targetChain.toLowerCase() + ':0x')
-    )
-    if (!account) continue
     if (!Array.isArray(ns?.methods) || !ns.methods.includes('eth_sendTransaction')) continue
 
-    const from = account.split(':')[2]
-    if (!/^0x[a-fA-F0-9]{40}$/.test(from)) continue
+    const from = selectSafeEvmAccount(ns?.accounts, targetChain, params.expectedFrom, BOT_AGENT_ADDRESS)
+    if (!from) continue
     if (!/^0x[a-fA-F0-9]{40}$/.test(params.tokenContract)) {
       throw new Error('Invalid token contract')
     }
@@ -371,6 +368,7 @@ export async function sendWalletConnectNativeTransfer(params: {
   chainId: number
   recipient: string
   amount: string
+  expectedFrom?: string
 }): Promise<{ txHash: string; from: string }> {
   if (!/^0x[a-fA-F0-9]{40}$/.test(params.recipient)) {
     throw new Error('Invalid EVM recipient')
@@ -385,17 +383,13 @@ export async function sendWalletConnectNativeTransfer(params: {
   const targetChain = `eip155:${params.chainId}`
 
   for (const session of sessions) {
+    if (session?.topic === botTopic()) continue
     if (session?.expiry && Number(session.expiry) <= now + 30) continue
     const ns = session?.namespaces?.eip155
-    const accounts: string[] = ns?.accounts || []
-    const account = accounts.find((item) =>
-      item.toLowerCase().startsWith(targetChain.toLowerCase() + ':0x')
-    )
-    if (!account) continue
     if (!Array.isArray(ns?.methods) || !ns.methods.includes('eth_sendTransaction')) continue
 
-    const from = account.split(':')[2]
-    if (!/^0x[a-fA-F0-9]{40}$/.test(from)) continue
+    const from = selectSafeEvmAccount(ns?.accounts, targetChain, params.expectedFrom, BOT_AGENT_ADDRESS)
+    if (!from) continue
 
     const result = await signClient.request({
       topic: session.topic,
@@ -452,6 +446,7 @@ export async function sendWalletConnectAssetTransfer(params: {
   symbol: string
   recipient: string
   amount: string
+  expectedFrom?: string
 }): Promise<{ txHash: string; from: string }> {
   const evm = normalizeEvmNetworkName(params.network)
   if (!evm) throw new Error('This asset network is not supported by the web sender yet')
@@ -464,6 +459,7 @@ export async function sendWalletConnectAssetTransfer(params: {
       chainId: evm.chainId,
       recipient: params.recipient,
       amount: params.amount,
+      expectedFrom: params.expectedFrom,
     })
   }
 
@@ -487,5 +483,6 @@ export async function sendWalletConnectAssetTransfer(params: {
     decimals: Number(meta.decimals),
     recipient: params.recipient,
     amount: params.amount,
+    expectedFrom: params.expectedFrom,
   })
 }

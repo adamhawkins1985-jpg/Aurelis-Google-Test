@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+const source = readFileSync(new URL('../server/exchange_routes.ts', import.meta.url), 'utf8');
+assert.match(source, /process\.env\.SWAPSPACE_TRADE_ENABLED === 'true'/, 'SwapSpace should only enable on explicit server flag');
+assert.match(source, /swapSpaceEnabled\(\) \? await SwapSpaceService\.getCurrencies\(\) : await ChangeNowService\.getCurrencies\(\)/);
+assert.match(source, /swapSpaceEnabled\(\)\s*\? await SwapSpaceService\.getQuote/, 'Quote should use gated provider');
+assert.match(source, /swapSpaceEnabled\(\) \? await SwapSpaceService\.createExchange/, 'Order creation should use gated provider');
+assert.match(source, /swapSpaceEnabled\(\) \? await SwapSpaceService\.getExchangeStatus/, 'Status should use gated provider');
+assert.match(source, /isIP\(rawIp\)/, 'Provider IP must be validated');
+assert.match(source, /process\.env\.SWAPSPACE_ORDER_CREATE_ENABLED !== 'true'/, 'Order creation must require independent opt-in');
+assert.match(source, /SwapSpace order creation is not yet enabled/, 'Disabled order creation must return a clear error');
+assert.doesNotMatch(source, /req\.headers\['cf-connecting-ip'\]/, 'Do not trust client-supplied proxy header');
+console.log('PASS SwapSpace server-side opt-in, quote/create/status routing, and IP guards');

@@ -1,0 +1,54 @@
+name: SwapSpace isolated integration checks
+on:
+  push:
+    paths:
+      - 'website/server/swapspace_service.ts'
+      - 'website/scripts/test_swapspace_adapter.ts'
+      - 'website/scripts/test_swapspace_route_guard.mjs'
+      - 'website/server/exchange_routes.ts'
+      - 'website/src/services/walletConnectService.ts'
+      - 'website/src/components/trade/DemoExchangeView.tsx'
+      - 'website/scripts/test_trade_wallet_guard.mjs'
+      - 'website/scripts/test_wallet_account_selection.ts'
+      - 'website/src/services/walletConnectAccountGuard.ts'
+      - 'website/src/components/TradeScreen.tsx'
+      - 'website/src/components/WalletScreen.tsx'
+      - '.github/workflows/swapspace-isolated-ci.yml'
+  pull_request:
+    paths:
+      - 'website/server/swapspace_service.ts'
+      - 'website/server/exchange_routes.ts'
+      - 'website/scripts/test_swapspace_adapter.ts'
+      - 'website/scripts/test_swapspace_route_guard.mjs'
+      - 'website/scripts/test_trade_wallet_guard.mjs'
+      - 'website/scripts/test_wallet_account_selection.ts'
+      - 'website/src/services/walletConnectAccountGuard.ts'
+      - 'website/src/services/walletConnectService.ts'
+      - 'website/src/components/TradeScreen.tsx'
+      - 'website/src/components/WalletScreen.tsx'
+      - 'website/src/components/trade/DemoExchangeView.tsx'
+      - '.github/workflows/swapspace-isolated-ci.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  adapter:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Install website dependencies
+        working-directory: website
+        run: npm ci --legacy-peer-deps
+      - name: Test SwapSpace adapter with simulated responses
+        working-directory: website
+        run: |
+          npx tsx scripts/test_swapspace_adapter.ts
+          node scripts/test_swapspace_route_guard.mjs
+          node scripts/test_trade_wallet_guard.mjs
+          npx tsx scripts/test_wallet_account_selection.ts

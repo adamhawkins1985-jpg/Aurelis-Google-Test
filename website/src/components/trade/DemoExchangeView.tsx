@@ -1069,6 +1069,11 @@ export const DemoExchangeView: React.FC<DemoExchangeViewProps> = ({
                 setWalletSendMessage(null);
                 setDepositTxHash(null);
 
+                if (!walletAddress || !/^0x[a-fA-F0-9]{40}$/.test(walletAddress)) {
+                  setWalletSendMessage('Select a valid main wallet before sending exchange deposits. Bot wallet sessions are not available here.');
+                  return;
+                }
+
                 const isAeroBase =
                   exchangeOrder.fromCurrency.toUpperCase() === 'AERO' &&
                   exchangeOrder.fromNetwork.toLowerCase() === 'base';
@@ -1083,6 +1088,7 @@ export const DemoExchangeView: React.FC<DemoExchangeViewProps> = ({
                       decimals: 18,
                       recipient: exchangeOrder.depositAddress,
                       amount: exchangeOrder.fromAmount,
+                      expectedFrom: walletAddress,
                     });
                     setDepositTxHash(sent.txHash);
                     setWalletSendMessage(
@@ -1098,21 +1104,11 @@ export const DemoExchangeView: React.FC<DemoExchangeViewProps> = ({
                   return;
                 }
 
-                const nativeBridge = (window as any).AurelisNative;
-                if (nativeBridge && typeof nativeBridge.openNativeScreen === 'function' && sourceWalletHolding?.assetId) {
-                  nativeBridge.openNativeScreen(
-                    'send-prefill:' + JSON.stringify({
-                      assetId: sourceWalletHolding.assetId,
-                      recipient: exchangeOrder.depositAddress,
-                      amount: exchangeOrder.fromAmount,
-                      memo: exchangeOrder.depositExtraId || '',
-                    }),
-                  );
-                  setWalletSendMessage('AURELIS Send opened with the deposit address, amount, and memo prefilled.');
-                } else if (nativeBridge && typeof nativeBridge.openNativeScreen === 'function') {
-                  nativeBridge.openNativeScreen('send');
-                  setWalletSendMessage('AURELIS Send opened. The exact deposit details remain shown above.');
-                } else if (onOpenWalletSend) {
+                if (!/^0x[a-fA-F0-9]{40}$/.test(walletAddress || '')) {
+                  setWalletSendMessage('Connect the intended main EVM wallet in AURELIS before sending this deposit.');
+                  return;
+                }
+                if (onOpenWalletSend) {
                   onOpenWalletSend({
                     symbol: exchangeOrder.fromCurrency,
                     network: exchangeOrder.fromNetwork,
@@ -1120,10 +1116,9 @@ export const DemoExchangeView: React.FC<DemoExchangeViewProps> = ({
                     amount: exchangeOrder.fromAmount,
                     memo: exchangeOrder.depositExtraId || '',
                   });
-                  setWalletSendMessage('Opening AURELIS Wallet Send with the deposit details prefilled.');
+                  setWalletSendMessage('Opening AURELIS Wallet Send with the deposit details pinned to your selected wallet.');
                 } else {
-                  navigator.clipboard.writeText(exchangeOrder.depositAddress);
-                  setWalletSendMessage('Deposit address copied. Open AURELIS Wallet Send to complete the transfer.');
+                  setWalletSendMessage('AURELIS Wallet Send is unavailable. No transfer has been initiated.');
                 }
               }}
               disabled={isSendingDeposit}
