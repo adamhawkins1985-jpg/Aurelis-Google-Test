@@ -36,6 +36,8 @@ try {
   assert.equal(result.profitVerified,false);
   assert.equal(result.netProfit,null);
   assert.equal(result.ordersEnabled,false);
+  assert.equal(result.costEvidence.executionGasVerified,false);
+  assert.equal(result.costEvidence.quoterGasUsableAsExecutionGas,false);
   for(const direction of ['uniswap-cow','cow-uniswap'] as const){
     const both=await observeSpotRoundTrip({wallet:'0x'+'c'.repeat(40),startToken:'0x'+'a'.repeat(40),middleToken:'0x'+'b'.repeat(40),startAmount:'100000000000000000',forwardFee:500,slippageBasisPoints:50,direction,assumedGasUnitsPerLeg:200000});
     assert.equal(both.gasCostWei,'400000000000000');
