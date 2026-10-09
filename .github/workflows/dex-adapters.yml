@@ -1,6 +1,7 @@
 name: DEX adapter safety
 on:
   push:
+    branches: [main]
     paths:
       - 'website/src/services/dexVenueRegistry.ts'
       - 'website/src/services/dexAccountAdapters.ts'
@@ -15,6 +16,10 @@ on:
       - 'website/scripts/test_dex_adapters.ts'
       - 'website/package.json'
       - '.github/workflows/dex-adapters.yml'
+  pull_request:
+    paths:
+      - 'website/**'
+      - '.github/workflows/dex-adapters.yml'
   workflow_dispatch:
 jobs:
   verify:
@@ -28,7 +33,8 @@ jobs:
         with:
           node-version: '22'
       - name: Install dependencies
-        run: npm install --no-audit --no-fund
+        run: |
+          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
       - name: Test DEX registry and adapters
         run: npm run test:dex
       - name: Type check
