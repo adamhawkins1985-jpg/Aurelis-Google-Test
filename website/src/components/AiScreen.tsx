@@ -515,7 +515,7 @@ export const AiScreen: React.FC<AiScreenProps> = ({
           {DEX_VENUES.map(item => <div key={item.id} className="rounded-md border border-white/10 bg-surface-base/40 p-2">
             <p className="text-[11px] font-bold text-text-primary">{item.name}</p>
             <p className="mt-1 text-[9px] text-text-muted">{item.network}</p>
-            <p className="mt-1 text-[10px] text-text-muted">{item.id==='hyperliquid' && !venueAccount ? 'Public account not checked' : item.id==='lighter' ? (lighterAccountCount!==null ? lighterAccountCount+' account(s) · '+(lighterPositions??0)+' position(s) ·  : lighterAccountError||'Public account discovery not checked') : item.note}</p>
+            <p className="mt-1 text-[10px] text-text-muted">{item.id==='hyperliquid' && !venueAccount ? 'Public account not checked' : item.id==='lighter' ? (lighterAccountCount!==null ? lighterAccountCount+' account(s) · '+(lighterPositions??0)+' position(s) · Orders: '+lighterOrdersStatus : lighterAccountError||'Public account discovery not checked') : item.note}</p>
             <p className="mt-1 text-[9px] text-amber-300">{canUseLiveOrders(item) ? 'Verified live order controls' : 'Live orders disabled'} · {canUseAutomatedFunding(item) ? 'Funding enabled' : 'Funding disabled'}</p>
           </div>)}
         </div>
