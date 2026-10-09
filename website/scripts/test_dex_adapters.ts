@@ -37,13 +37,17 @@ async function test(): Promise<void> {
   const priorFetch = globalThis.fetch;
   try {
     globalThis.fetch = async () => new Response(JSON.stringify({
-      ok:true,perpsAccountValueUsd:'105.20',openPerpPositions:2,
+      ok:true,walletAddress:wallet,perpsAccountValueUsd:'105.20',openPerpPositions:2,
     }), {status:200,headers:{'Content-Type':'application/json'}});
     const read=await fetchHyperliquidObservation(wallet);
     assert.equal(read.accountValueUsd,'105.20');
     assert.equal(read.openPositionCount,2);
     assert.deepEqual(read.verifiedFields,['accountValueUsd','openPositionCount']);
     assert.deepEqual(read.orders,[]);
+    globalThis.fetch = async () => new Response(JSON.stringify({ok:true,walletAddress:'0x'+'b'.repeat(40),perpsAccountValueUsd:'999',openPerpPositions:1}),{status:200});
+    await assert.rejects(fetchHyperliquidObservation(wallet),/hyperliquid_observation_wallet_mismatch/);
+    globalThis.fetch = async () => new Response(JSON.stringify({ok:true,perpsAccountValueUsd:'999',openPerpPositions:1}),{status:200});
+    await assert.rejects(fetchHyperliquidObservation(wallet),/hyperliquid_observation_wallet_mismatch/);
     globalThis.fetch = async () => new Response(JSON.stringify({ok:false,error:'unavailable'}),{status:502});
     await assert.rejects(fetchHyperliquidObservation(wallet),/hyperliquid_observation_http_502/);
     await assert.rejects(fetchHyperliquidObservation('bad'),/invalid_bot_wallet_address/);
@@ -142,7 +146,7 @@ async function test(): Promise<void> {
   const beforeCycle=globalThis.fetch;
   try {
     globalThis.fetch=async (url) => String(url).includes('hyperliquid-account')
-      ? new Response(JSON.stringify({ok:true,perpsAccountValueUsd:'51',openPerpPositions:1}),{status:200})
+      ? new Response(JSON.stringify({ok:true,walletAddress:wallet,perpsAccountValueUsd:'51',openPerpPositions:1}),{status:200})
       : new Response(JSON.stringify({ok:false,error:'offline'}),{status:502});
     const cycle=await observeBotDexVenues(wallet);
     assert.equal(cycle.length,10);
