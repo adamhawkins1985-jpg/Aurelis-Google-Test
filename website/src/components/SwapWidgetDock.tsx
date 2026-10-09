@@ -11,6 +11,10 @@ export type SwapWidgetProvider = {
   accent: string;
 };
 
+// Keep Rango's launcher visible, but do not provide trading access from this US-only personal setup.
+// Rango's published Terms of Use exclude US persons and residents.
+export const isSwapWidgetUnavailable = (providerId: string) => providerId === 'rango';
+
 export const SWAP_WIDGET_PROVIDERS: SwapWidgetProvider[] = [
   {
     id: 'thorchain',
@@ -178,6 +182,10 @@ export const SwapWidgetDock: React.FC = () => {
               key={provider.id}
               type="button"
               onClick={() => {
+                if (isSwapWidgetUnavailable(provider.id)) {
+                  setActiveId(selected ? null : provider.id);
+                  return;
+                }
                 const desktopBridge = (window as any).AurelisDesktop;
                 if (desktopBridge?.isDesktop && typeof desktopBridge.openUtility === 'function') {
                   desktopBridge.openUtility('swap', provider.id);
@@ -196,7 +204,7 @@ export const SwapWidgetDock: React.FC = () => {
             >
               <img src={provider.logo} alt="" className="w-6 h-6 object-contain rounded-md" />
               <span className="pointer-events-none absolute right-full mr-2 px-2 py-1 rounded-md bg-surface-canvas border border-white/10 text-text-primary text-[10px] font-medium whitespace-nowrap opacity-0 translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all">
-                {provider.name}
+                {provider.name}{isSwapWidgetUnavailable(provider.id) ? ' · unavailable in US' : ''}
               </span>
             </button>
           );
@@ -227,15 +235,17 @@ export const SwapWidgetDock: React.FC = () => {
               </div>
             </div>
             <div className="flex items-center gap-1">
-              <a
-                href={active.url}
-                target="_blank"
-                rel="noreferrer"
-                className="p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-white/5"
-                title="Open provider in new tab"
-              >
-                <ExternalLink className="w-4 h-4" />
-              </a>
+              {!isSwapWidgetUnavailable(active.id) && (
+                <a
+                  href={active.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-white/5"
+                  title="Open provider in new tab"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                </a>
+              )}
               <button
                 type="button"
                 onClick={() => setActiveId(null)}
@@ -247,14 +257,23 @@ export const SwapWidgetDock: React.FC = () => {
             </div>
           </header>
 
-          <iframe
-            key={active.id}
-            title={active.name}
-            src={active.url}
-            className="w-full flex-1 min-h-0 bg-white"
-            allow="clipboard-read; clipboard-write; payment"
-            referrerPolicy="strict-origin-when-cross-origin"
-          />
+          {isSwapWidgetUnavailable(active.id) ? (
+            <div className="flex flex-1 items-center justify-center p-6 text-center">
+              <p className="max-w-xs text-sm text-text-secondary">
+                Rango is unavailable for US users under its current terms.
+                The icon is preserved, but trading through this provider is disabled.
+              </p>
+            </div>
+          ) : (
+            <iframe
+              key={active.id}
+              title={active.name}
+              src={active.url}
+              className="w-full flex-1 min-h-0 bg-white"
+              allow="clipboard-read; clipboard-write; payment"
+              referrerPolicy="strict-origin-when-cross-origin"
+            />
+          )}
         </section>
       )}
     </>
@@ -310,17 +329,28 @@ export const MobileSwapWidgetPage: React.FC<{ providerId?: string | null }> = ({
           <ArrowLeft className="w-4 h-4" /> Providers
         </a>
         <span className="text-xs font-bold">{provider.name}</span>
-        <a href={provider.url} target="_blank" rel="noreferrer" className="p-1.5 text-text-muted" aria-label="Open externally">
-          <ExternalLink className="w-4 h-4" />
-        </a>
+        {isSwapWidgetUnavailable(provider.id) ? (
+          <span className="text-[10px] text-text-muted">US unavailable</span>
+        ) : (
+          <a href={provider.url} target="_blank" rel="noopener noreferrer" className="p-1.5 text-text-muted" aria-label="Open externally">
+            <ExternalLink className="w-4 h-4" />
+          </a>
+        )}
       </header>
-      <iframe
-        title={provider.name}
-        src={provider.url}
-        className="w-full flex-1 bg-white"
-        allow="clipboard-read; clipboard-write; payment"
-        referrerPolicy="strict-origin-when-cross-origin"
-      />
+      {isSwapWidgetUnavailable(provider.id) ? (
+        <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-text-secondary">
+          Rango trading is unavailable for US users under its current terms.
+          The original right-side provider icon remains visible.
+        </div>
+      ) : (
+        <iframe
+          title={provider.name}
+          src={provider.url}
+          className="w-full flex-1 bg-white"
+          allow="clipboard-read; clipboard-write; payment"
+          referrerPolicy="strict-origin-when-cross-origin"
+        />
+      )}
     </main>
   );
 };

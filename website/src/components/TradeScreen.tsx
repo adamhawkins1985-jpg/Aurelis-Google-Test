@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { CoinData, WalletHolding, ThemeMode, NavigationTab } from '../types';
 import { TradeSubNav, TradeSubTab } from './trade/TradeSubNav';
 import { DemoExchangeView } from './trade/DemoExchangeView';
+import { LlamaSwapPrimaryView } from './trade/LlamaSwapPrimaryView';
 
 interface TradeScreenProps {
   coins: CoinData[];
@@ -64,12 +65,14 @@ export const TradeScreen: React.FC<TradeScreenProps> = ({
   }, []);
 
   const activeLeg = aiPlan?.legs?.[activeLegIndex] || null;
+  // Keep the existing advanced form available for explicit AI swap plans and BUY / SELL.
+  const isLlamaPrimary = activeSubTab === 'trade' && !aiPlan;
 
   return (
     <div className="flex flex-col gap-2 max-w-[1720px] mx-auto w-full select-none pb-24">
       <TradeSubNav activeTab={activeSubTab} onSelectTab={setActiveSubTab} soundEnabled={soundEnabled} />
 
-      {!isConnected && (
+      {!isConnected && !isLlamaPrimary && (
         <button
           type="button"
           onClick={onOpenWallet}
@@ -109,7 +112,10 @@ export const TradeScreen: React.FC<TradeScreenProps> = ({
         </div>
       )}
 
-      <DemoExchangeView
+      {isLlamaPrimary ? (
+        <LlamaSwapPrimaryView />
+      ) : (
+        <DemoExchangeView
         key={activeSubTab + ':' + (aiPlan?.id || '') + ':' + activeLegIndex}
         mode={activeSubTab}
         walletAddress={walletAddress}
@@ -137,7 +143,8 @@ export const TradeScreen: React.FC<TradeScreenProps> = ({
           localStorage.setItem('aurelis_web_send_prefill', JSON.stringify({ ...prefill, expectedFrom: walletAddress }));
           onOpenWallet();
         }}
-      />
+        />
+      )}
     </div>
   );
 };
