@@ -113,6 +113,7 @@ export const AiScreen: React.FC<AiScreenProps> = ({
   const [lighterPositions,setLighterPositions] = useState<number|null>(null);
   const [lighterCollateral,setLighterCollateral] = useState<string|null>(null);
   const [lighterAccountError,setLighterAccountError] = useState('');
+  const [lighterOrdersStatus,setLighterOrdersStatus] = useState('Authentication required');
   const [venueLoading,setVenueLoading] = useState(false);
   const [venueError,setVenueError] = useState('');
   const [fundingPolicy,setFundingPolicy] = useState<'manual'|'review'>('manual');
@@ -157,11 +158,15 @@ export const AiScreen: React.FC<AiScreenProps> = ({
     try {
       const active = await getBotWalletConnectSession();
       if (!active) {
-        setBotWalletAddress('');setBotBalances([]);setBotBalanceError('');setVenueAccount(null);setLighterAccountCount(null);setLighterPositions(null);setLighterCollateral(null);setLighterAccountError('');
+        setBotWalletAddress('');setBotBalances([]);setBotBalanceError('');setVenueAccount(null);setLighterAccountCount(null);setLighterPositions(null);setLighterCollateral(null);setLighterAccountError('');setLighterOrdersStatus('Authentication required');
         return;
       }
       setBotWalletAddress(active.address);
       void loadVenueAccount(active.address);
+      void fetch('/api/bots/lighter-order-monitoring-status?'+new URLSearchParams({wallet:active.address}),{cache:'no-store'})
+        .then(async res=>res.ok?res.json():Promise.reject(Error('status_unavailable')))
+        .then(data=>setLighterOrdersStatus(data.orderMonitoring==='configured_unverified'?'Credential configured · unverified':'Authentication required'))
+        .catch(()=>setLighterOrdersStatus('Monitoring status unavailable'));
       void fetchLighterAccountSnapshot(active.address).then(s=>{setLighterAccountCount(s.accountIndices?.length??null);setLighterPositions(s.positions.length);setLighterCollateral(s.balances.map(b=>Number(b.total)).reduce((a,b)=>a+b,0).toFixed(2));setLighterAccountError('');}).catch(()=>{setLighterAccountCount(null);setLighterPositions(null);setLighterCollateral(null);setLighterAccountError('Account snapshot unavailable');});
       const res=await fetch('/api/wallet/external-evm-portfolio?'+new URLSearchParams({address:active.address}),{cache:'no-store'});
       const data=await res.json();
