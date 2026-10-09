@@ -19,7 +19,7 @@ try {
     const tokenIn=String(body.params?.[0]?.data||'').slice(10,74).slice(-40).toLowerCase();
     const isReverse=tokenIn==='b'.repeat(40);
     return new Response(JSON.stringify({jsonrpc:'2.0',id:1,
-      result:'0x'+(isReverse?99000000000000000n:300000000n).toString(16).padStart(64,'0')+'0'.repeat(192)}),{status:200});
+      result:'0x'+(isReverse?99000000000000000n:300000000n).toString(16).padStart(64,'0')+'0'.repeat(128)+(120000n).toString(16).padStart(64,'0')}),{status:200});
   };
   const result=await observeSpotRoundTrip({
     wallet:'0x'+'c'.repeat(40),startToken:'0x'+'a'.repeat(40),
