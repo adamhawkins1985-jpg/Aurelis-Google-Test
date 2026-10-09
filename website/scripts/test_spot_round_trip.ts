@@ -43,6 +43,11 @@ try {
     assert.equal(both.profitVerified,false);
     assert.equal(both.ordersEnabled,false);
   }
+  const split=await observeSpotRoundTrip({wallet:'0x'+'c'.repeat(40),startToken:'0x'+'a'.repeat(40),middleToken:'0x'+'b'.repeat(40),startAmount:'100000000000000000',forwardFee:500,slippageBasisPoints:50,assumedUniswapGasUnits:125000,assumedCowGasUnits:210000});
+  assert.equal(split.uniswapGasCostWei,'125000000000000');
+  assert.equal(split.cowGasCostWei,'210000000000000');
+  assert.equal(split.gasCostWei,'335000000000000');
+  assert.equal(split.routeGasVerified,false);
   const scanned=await scanSpotRoundTrips({wallet:'0x'+'c'.repeat(40),startToken:'0x'+'a'.repeat(40),middleToken:'0x'+'b'.repeat(40),amounts:['100000000000000000'],fees:[500],assumedGasUnitsPerLeg:200000});
   assert.equal(scanned.checked,2);
   assert.equal(scanned.verifiedProfits,0);
