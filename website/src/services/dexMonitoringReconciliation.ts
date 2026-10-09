@@ -11,6 +11,7 @@ export interface DexVenueObservation {
   fillsObserved: number | null;
   error: string | null;
   ownership: 'unverified';
+  accountIndices: readonly number[] | null;
 }
 
 /**
@@ -40,6 +41,7 @@ export function reconcileDexObservations(
       venue:venue.id,status:'unavailable' as const,checkedAt:null,accountValueUsd:null,
       openPositionCount:null,activeOrders:null,fillsObserved:null,
       error:failures[venue.id] || 'not_observed',ownership:'unverified' as const,
+      accountIndices:null,
     };
     const count = snap.openPositionCount;
     const positionCount = typeof count==='number' && Number.isSafeInteger(count) && count>=0
@@ -54,6 +56,7 @@ export function reconcileDexObservations(
       activeOrders:snap.orderMonitoring==='verified'?snap.orders.length:null,
       fillsObserved:snap.fillMonitoring==='verified'?snap.fills.length:null,error:null,
       ownership:'unverified' as const,
+      accountIndices: snap.accountIndices && snap.verifiedFields?.includes('accountIndices') ? [...snap.accountIndices] : null,
     };
   });
 }
