@@ -159,8 +159,14 @@ class GmxDex(BaseDex):
                     out[asset] = DexQuote(self.name, asset, None, None, 0.0, source="GMX Oracle", data_only=True, error="missing_market")
                     continue
                 scale = 10 ** (30 - self.decimals[asset])
-                min_px = float(row["minPrice"]) / scale
-                max_px = float(row["maxPrice"]) / scale
+                try:
+                    min_px = float(row["minPrice"]) / scale
+                    max_px = float(row["maxPrice"]) / scale
+                except (KeyError, TypeError, ValueError, OverflowError):
+                    min_px = max_px = float("nan")
+                if not (math.isfinite(min_px) and math.isfinite(max_px) and 0 < min_px <= max_px):
+                    out[asset] = DexQuote(self.name, asset, None, None, 0.0, source="GMX Oracle", data_only=True, error="invalid_oracle_price")
+                    continue
                 out[asset] = DexQuote(self.name, asset, min_px, max_px, 0.0, source="GMX Oracle", data_only=True)
         except Exception as e:
             for asset in ASSETS:
