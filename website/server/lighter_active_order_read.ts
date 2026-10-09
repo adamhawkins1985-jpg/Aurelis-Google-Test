@@ -20,6 +20,21 @@ export async function readLighterActiveOrders(
   if(body.code!==200||!Array.isArray(body.orders)||body.next_cursor||body.cursor)
     throw Error('lighter_order_observation_incomplete');
   if(body.orders.length>10000) throw Error('lighter_order_observation_limit');
-  // An authenticated response must be inspected before exposing individual order fields.
+  // A count can be trusted only if every record is well-formed and belongs to
+  // the requested account. Do not report a fabricated zero on malformed data.
+  const seen=new Set<string>();
+  for(const value of body.orders) {
+    if(!value || typeof value!=='object' || Array.isArray(value))
+      throw Error('lighter_order_record_invalid');
+    const order=value as Record<string,unknown>;
+    if(order.account_index !== undefined && order.account_index !== accountIndex)
+      throw Error('lighter_order_account_mismatch');
+    const id=order.order_index ?? order.id;
+    if((typeof id!=='number' && typeof id!=='string') ||
+       !/^[A-Za-z0-9_.:-]{1,100}$/.test(String(id)))
+      throw Error('lighter_order_id_invalid');
+    if(seen.has(String(id))) throw Error('lighter_order_duplicate');
+    seen.add(String(id));
+  }
   return {accountIndex,count:body.orders.length};
 }
