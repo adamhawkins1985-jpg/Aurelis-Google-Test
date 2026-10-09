@@ -165,7 +165,7 @@ export const AiScreen: React.FC<AiScreenProps> = ({
       void loadVenueAccount(active.address);
       void fetch('/api/bots/lighter-order-monitoring-status?'+new URLSearchParams({wallet:active.address}),{cache:'no-store'})
         .then(async res=>res.ok?res.json():Promise.reject(Error('status_unavailable')))
-        .then(data=>setLighterOrdersStatus(data.orderMonitoring==='configured_unverified'?'Credential configured · unverified':'Authentication required'))
+        .then(data=>setLighterOrdersStatus(data.orderMonitoring==='configured-unverified'?'Credential configured · unverified':'Authentication required'))
         .catch(()=>setLighterOrdersStatus('Monitoring status unavailable'));
       void fetchLighterAccountSnapshot(active.address).then(s=>{setLighterAccountCount(s.accountIndices?.length??null);setLighterPositions(s.positions.length);setLighterCollateral(s.balances.map(b=>Number(b.total)).reduce((a,b)=>a+b,0).toFixed(2));setLighterAccountError('');}).catch(()=>{setLighterAccountCount(null);setLighterPositions(null);setLighterCollateral(null);setLighterAccountError('Account snapshot unavailable');});
       const res=await fetch('/api/wallet/external-evm-portfolio?'+new URLSearchParams({address:active.address}),{cache:'no-store'});
