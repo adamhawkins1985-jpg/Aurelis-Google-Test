@@ -14,7 +14,8 @@ try {
         buyAmount:request.sellToken.toLowerCase()==='0x'+'a'.repeat(40)?'300000000':'99000000000000000',feeAmount:'0'
       }}),{status:200});
     }
-    const isReverse=String(body.params?.[0]?.data||'').toLowerCase().includes('b'.repeat(40));
+    const tokenIn=String(body.params?.[0]?.data||'').slice(10,74).slice(-40).toLowerCase();
+    const isReverse=tokenIn==='b'.repeat(40);
     return new Response(JSON.stringify({jsonrpc:'2.0',id:1,
       result:'0x'+(isReverse?99000000000000000n:300000000n).toString(16).padStart(64,'0')+'0'.repeat(192)}),{status:200});
   };
