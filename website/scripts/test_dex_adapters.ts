@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { DEX_VENUES, canUseAutomatedFunding, canUseEmergencyClose, canUseLiveOrders } from '../src/services/dexVenueRegistry';
 import { observeDexAccount, registerDexAccountAdapter } from '../src/services/dexAccountAdapters';
 import { fetchHyperliquidObservation } from '../src/services/hyperliquidReadOnlyAdapter';
+import { fetchLighterObservation } from '../src/services/lighterReadOnlyAdapter';
 
 async function test(): Promise<void> {
   assert.equal(DEX_VENUES.length, 10);
@@ -40,6 +41,16 @@ async function test(): Promise<void> {
     await assert.rejects(fetchHyperliquidObservation(wallet),/hyperliquid_observation_http_502/);
     await assert.rejects(fetchHyperliquidObservation('bad'),/invalid_bot_wallet_address/);
   } finally { globalThis.fetch = priorFetch; }
+  const previous=globalThis.fetch;
+  try {
+    globalThis.fetch=async()=>new Response(JSON.stringify({ok:true,wallet,accountIndices:[12,34],checkedAt:new Date(0).toISOString()}),{status:200});
+    const lighter=await fetchLighterObservation(wallet);
+    assert.deepEqual(lighter.accountIndices,[12,34]);
+    assert.deepEqual(lighter.balances,[]);
+    globalThis.fetch=async()=>new Response(JSON.stringify({ok:true,wallet,accountIndices:['invalid'],checkedAt:new Date(0).toISOString()}),{status:200});
+    await assert.rejects(fetchLighterObservation(wallet),/lighter_discovery_invalid/);
+    await assert.rejects(fetchLighterObservation('bad'),/invalid_bot_wallet_address/);
+  } finally {globalThis.fetch=previous;}
   console.log('DEX registry and read-only adapter checks passed');
 }
 test().catch(error=>{console.error(error);process.exitCode=1;});
