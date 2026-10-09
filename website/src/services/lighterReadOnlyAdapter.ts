@@ -3,12 +3,13 @@ const evm = /^0x[a-fA-F0-9]{40}$/;
 
 /** Lighter public L1-to-account discovery. Account indices are not balances. */
 export async function fetchLighterObservation(wallet:string, signal?:AbortSignal):Promise<DexAccountSnapshot> {
-  if (!evm.test(wallet)) throw new Error('invalid_bot_wallet_address');
+  if (!evm.test(wallet) || /^0x0{40}$/i.test(wallet)) throw new Error('invalid_bot_wallet_address');
   const response=await fetch('/api/bots/lighter-accounts?'+new URLSearchParams({wallet}),{signal,cache:'no-store'});
   if (!response.ok) throw new Error('lighter_discovery_http_'+response.status);
   const data=await response.json();
   if (data?.ok!==true || String(data.wallet).toLowerCase()!==wallet.toLowerCase() ||
       data.complete!==true || !Array.isArray(data.accountIndices) ||
+      data.accountIndices.length>20 || new Set(data.accountIndices).size!==data.accountIndices.length ||
       !data.accountIndices.every((id:unknown)=>typeof id==='number' && Number.isSafeInteger(id) && id>=0) ||
       Number.isNaN(Date.parse(data.checkedAt))) throw new Error('lighter_discovery_invalid');
   return {venue:'lighter',wallet,checkedAt:data.checkedAt,balances:[],positions:[],orders:[],fills:[],orderMonitoring:'auth-required',fillMonitoring:'auth-required',
@@ -20,12 +21,12 @@ export function enableLighterReadOnlyAdapter():void {
 
 /** Independently validates normalized balance/position snapshots from the Bot-only server route. */
 export async function fetchLighterAccountSnapshot(wallet:string, signal?:AbortSignal):Promise<DexAccountSnapshot> {
-  if (!evm.test(wallet)) throw new Error('invalid_bot_wallet_address');
+  if (!evm.test(wallet) || /^0x0{40}$/i.test(wallet)) throw new Error('invalid_bot_wallet_address');
   const response=await fetch('/api/bots/lighter-snapshot?'+new URLSearchParams({wallet}),{cache:'no-store',signal});
   if (!response.ok) throw new Error('lighter_snapshot_http_'+response.status);
   const body=await response.json();
   if (body?.ok!==true || body.complete!==true || String(body.wallet).toLowerCase()!==wallet.toLowerCase() ||
-      !Array.isArray(body.accounts) || Number.isNaN(Date.parse(body.checkedAt))) throw Error('lighter_snapshot_invalid');
+      !Array.isArray(body.accounts) || body.accounts.length>20 || Number.isNaN(Date.parse(body.checkedAt))) throw Error('lighter_snapshot_invalid');
   const valid=(n:unknown)=>typeof n==='string' && /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(n);
   const balances:DexAccountSnapshot['balances'][number][]=[];
   const positions:DexAccountSnapshot['positions'][number][]=[];
