@@ -34,6 +34,17 @@ jobs:
             console.log('Lighter upstream pagination:',Boolean(body?.next_cursor));
             console.log('Lighter upstream L1 address matches:',typeof body?.l1_address==='string'&&body.l1_address.toLowerCase()===wallet.toLowerCase());
             console.log('Lighter upstream error category:',typeof body?.error==='string'?'error returned':'none');
+            const alternate='https://mainnet.zklighter.elliot.ai/api/v1/account?'+new URLSearchParams({by:'l1_address',value:wallet});
+            try {
+              const other=await fetch(alternate,{headers:{Accept:'application/json'},signal:AbortSignal.timeout(12000)});
+              const info=await other.json().catch(()=>null);
+              const rows=Array.isArray(info?.accounts)?info.accounts:[];
+              const matches=rows.filter(a=>typeof a?.l1_address==='string'&&a.l1_address.toLowerCase()===wallet.toLowerCase());
+              console.log('Lighter alternate L1 account lookup HTTP:',other.status);
+              console.log('Lighter alternate response code:',typeof info?.code==='number'?info.code:'unknown');
+              console.log('Lighter alternate matched account count:',matches.length);
+              console.log('Lighter alternate account response valid:',other.ok && info?.code===200 && rows.length===matches.length);
+            } catch(e) {console.log('Lighter alternate lookup request failed:',e?.name||'network error');}
           } catch(e) { console.log('Lighter upstream request failed:',e?.name||'network error'); }
           NODE
       - name: Verify live public endpoint identity without wallet keys
