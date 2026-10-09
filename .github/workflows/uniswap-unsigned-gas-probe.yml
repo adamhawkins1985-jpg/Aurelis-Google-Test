@@ -1,0 +1,21 @@
+name: Live Uniswap Unsigned Gas Probe
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/uniswap-unsigned-gas-probe.yml'
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install
+        run: cd website && npm ci --ignore-scripts
+      - name: Read-only router gas simulation
+        run: cd website && npx tsx scripts/probe_live_uniswap_router_gas.ts
