@@ -519,7 +519,7 @@ export const AiScreen: React.FC<AiScreenProps> = ({
         </div>
         <div className="mt-2 rounded-md border border-white/10 p-2" aria-label="Read-only consolidated DEX observations">
           <p className="text-[11px] font-semibold text-text-primary">Central account observations · {dexMonitoringLoading?'Checking':dexObservations.filter(v=>v.status==='observed').length+' of 10 observed'}</p>
-          <p className="mt-1 text-[10px] text-text-muted">Unknown values do not mean zero. No signing, transfers, or live orders.</p>
+          <p className="mt-1 text-[10px] text-text-muted">Exchange account observations are public and wallet ownership is unverified. Unknown values do not mean zero. No signing, transfers, or live orders.</p>
           <div className="mt-2 grid gap-1 sm:grid-cols-2">
             {dexObservations.map(observation=><p key={observation.venue} className="text-[10px] text-text-muted">
               {DEX_VENUES.find(v=>v.id===observation.venue)?.name}: {observation.status==='observed'?'Positions '+(observation.openPositionCount??'unknown')+' · Orders '+(observation.activeOrders??'unknown')+' · Account USD '+(observation.accountValueUsd??'unknown'):'Unavailable'}
