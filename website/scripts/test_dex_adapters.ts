@@ -168,7 +168,7 @@ async function test(): Promise<void> {
     assert.equal(cycle.length,10);
     assert.equal(cycle.find(v=>v.venue==='hyperliquid')?.accountValueUsd,'51');
     assert.equal(cycle.find(v=>v.venue==='lighter')?.status,'unavailable');
-    assert.equal(cycle.find(v=>v.venue==='lighter')?.error,'observation_failed');
+    assert.equal(cycle.find(v=>v.venue==='lighter')?.error,'restricted');
     assert.equal(cycle.find(v=>v.venue==='dydx')?.activeOrders,null);
     globalThis.fetch=async (url) => String(url).includes('hyperliquid-account')
       ? new Response(JSON.stringify({ok:true,walletAddress:wallet,perpsAccountValueUsd:'51',openPerpPositions:1}),{status:200})
