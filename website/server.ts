@@ -759,6 +759,22 @@ app.get('/api/bots/lighter-snapshot', async (req,res) => {
   }
 });
 
+// Server-side Lighter monitoring readiness. Never expose authentication tokens to browsers.
+// The token must be provisioned out-of-band for a specific Bot Wallet account.
+app.get('/api/bots/lighter-order-monitoring-status', (req,res) => {
+  const wallet=String(req.query.wallet||'');
+  if (!/^0x[a-fA-F0-9]{40}$/.test(wallet)) return res.status(400).json({ok:false,error:'invalid_wallet_address'});
+  res.setHeader('Cache-Control','no-store');
+  const expected=String(process.env.AURELIS_LIGHTER_MONITOR_WALLET||'');
+  const authorized=Boolean(process.env.AURELIS_LIGHTER_MONITOR_AUTH);
+  const bound=/^0x[a-fA-F0-9]{40}$/.test(expected) && expected.toLowerCase()===wallet.toLowerCase();
+  res.json({ok:true,venue:'lighter',readOnly:true,
+    orderMonitoring:authorized&&bound?'configured_unverified':'auth-required',
+    fillMonitoring:'auth-required',
+    message:authorized&&bound?'Token configured; API response and account scope not yet verified':
+      'Read-only monitoring token and exact bot-wallet binding required'});
+});
+
 // Hyperliquid signer readiness only; never requests signatures or submits orders.
 app.get('/api/bots/hyperliquid-readiness', async (req, res) => {
   const bot = String(req.query.bot || 'hunter');
