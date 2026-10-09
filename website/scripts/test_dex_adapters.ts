@@ -112,6 +112,8 @@ async function test(): Promise<void> {
     returnAmount:null,startAmount:'100',costsVerified:false}).status,'incomplete');
   assert.equal(assessRoundTripReadiness({forwardQuote:true,reverseQuote:true,
     returnAmount:'110',startAmount:'100',costsVerified:false}).netProfit,null);
+  assert.equal(indicativeSlippageReserve('300000000',50).reserveBaseUnits,'1500000');
+  assert.equal(assessRoundTripReadiness({forwardQuote:true,reverseQuote:true,returnAmount:'100',startAmount:'90',costsVerified:false}).netProfit,null);
   assert.equal(DEX_VENUES.length, 10);
   assert.equal(new Set(DEX_VENUES.map(v => v.id)).size, 10);
   for (const v of DEX_VENUES) {
