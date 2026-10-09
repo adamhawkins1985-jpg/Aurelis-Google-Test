@@ -21,12 +21,16 @@ export function reconcileDexObservations(
   failures: Partial<Record<DexVenueId,string>> = {},
 ): readonly DexVenueObservation[] {
   const byVenue = new Map<DexVenueId,DexAccountSnapshot>();
+  let expectedWallet: string | null = null;
   for (const snapshot of snapshots) {
     if (!DEX_VENUES.some(v => v.id === snapshot.venue) || byVenue.has(snapshot.venue))
       throw new Error('dex_reconciliation_duplicate_or_unknown');
     if (!/^0x[a-fA-F0-9]{40}$/.test(snapshot.wallet) ||
         !Number.isFinite(Date.parse(snapshot.checkedAt)))
       throw new Error('dex_reconciliation_invalid_snapshot');
+    if (expectedWallet !== null && snapshot.wallet.toLowerCase() !== expectedWallet)
+      throw new Error('dex_reconciliation_wallet_mismatch');
+    expectedWallet = snapshot.wallet.toLowerCase();
     byVenue.set(snapshot.venue,snapshot);
   }
   return DEX_VENUES.map(venue => {
