@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional
 import requests
+import math
 
 ASSETS = ("BTC", "ETH", "SOL")
 
@@ -23,17 +24,22 @@ class DexQuote:
 
 def _vwap(levels: List[Any], target_usd: float, price_key=None, size_key=None) -> Optional[float]:
     remain = float(target_usd)
+    if not math.isfinite(remain) or remain <= 0:
+        return None
     notional = 0.0
     qty = 0.0
     for row in levels:
-        if isinstance(row, dict):
-            p = float(row[price_key] if price_key else row.get("price") or row.get("px"))
-            s = float(row[size_key] if size_key else row.get("size") or row.get("sz"))
-        else:
-            p = float(row[0])
-            s = float(row[1])
-        if p <= 0 or s <= 0:
-            continue
+        try:
+            if isinstance(row, dict):
+                p = float(row[price_key] if price_key else row.get("price") or row.get("px"))
+                s = float(row[size_key] if size_key else row.get("size") or row.get("sz"))
+            else:
+                p = float(row[0])
+                s = float(row[1])
+        except (TypeError, ValueError, KeyError, IndexError, OverflowError):
+            return None
+        if not math.isfinite(p) or not math.isfinite(s) or p <= 0 or s <= 0:
+            return None
         take = min(s, remain / p)
         notional += take * p
         qty += take
