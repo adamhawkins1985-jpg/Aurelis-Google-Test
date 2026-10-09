@@ -1,3 +1,4 @@
+import { estimateIndicativeNetDifference } from '../src/services/indicativeNetDifference';
 import { readUniswapV3PoolQuote } from '../src/services/uniswapV3PoolReadOnly';
 import { compareIndicativeSpotQuotes } from '../src/services/spotQuoteComparison';
 import { fetchCowIndicativeQuote } from '../src/services/cowReadOnlyAdapter';
@@ -59,6 +60,14 @@ async function test(): Promise<void> {
     assert.equal(pool.outputAmount,'205');
     assert.equal(pool.executable,false);
   } finally {globalThis.fetch=priorRpc;}
+  const unknownCosts=estimateIndicativeNetDifference('724140',{gasCostBuyTokenUnits:null,slippageReserveBuyTokenUnits:null,additionalFeesBuyTokenUnits:null});
+  assert.equal(unknownCosts.status,'unavailable');
+  assert.equal(unknownCosts.netDifference,null);
+  const knownScenario=estimateIndicativeNetDifference('724140',{gasCostBuyTokenUnits:'500000',slippageReserveBuyTokenUnits:'100000',additionalFeesBuyTokenUnits:'100000'});
+  assert.equal(knownScenario.status,'scenario_only');
+  assert.equal(knownScenario.netDifference,'24140');
+  assert.equal(knownScenario.profitVerified,false);
+  assert.equal(estimateIndicativeNetDifference('10',{gasCostBuyTokenUnits:'15',slippageReserveBuyTokenUnits:'1',additionalFeesBuyTokenUnits:'0'}).netDifference,'-6');
   assert.equal(DEX_VENUES.length, 10);
   assert.equal(new Set(DEX_VENUES.map(v => v.id)).size, 10);
   for (const v of DEX_VENUES) {
