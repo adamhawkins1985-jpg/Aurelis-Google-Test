@@ -23,11 +23,16 @@ class DexQuote:
         return asdict(self)
 
 def _vwap(levels: List[Any], target_usd: float, price_key=None, size_key=None) -> Optional[float]:
-    remain = float(target_usd)
+    try:
+        remain = float(target_usd)
+    except (TypeError, ValueError, OverflowError):
+        return None
     if not math.isfinite(remain) or remain <= 0:
         return None
     notional = 0.0
     qty = 0.0
+    if not isinstance(levels, (list, tuple)):
+        return None
     for row in levels:
         try:
             if isinstance(row, dict):
@@ -40,15 +45,20 @@ def _vwap(levels: List[Any], target_usd: float, price_key=None, size_key=None) -
             return None
         if not math.isfinite(p) or not math.isfinite(s) or p <= 0 or s <= 0:
             return None
+        if not math.isfinite(p * s):
+            return None
         take = min(s, remain / p)
         notional += take * p
         qty += take
         remain -= take * p
+        if not all(math.isfinite(v) for v in (notional, qty, remain)):
+            return None
         if remain <= 1e-8:
             break
     if qty <= 0 or notional < target_usd * 0.995:
         return None
-    return notional / qty
+    result = notional / qty
+    return result if math.isfinite(result) and result > 0 else None
 
 class BaseDex:
     name = "base"

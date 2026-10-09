@@ -19,6 +19,18 @@ class DexVwapSafetyTests(unittest.TestCase):
             with self.subTest(target=target):
                 self.assertIsNone(_vwap([[100, 1]], target))
 
+    def test_reject_malformed_containers_and_targets(self):
+        for levels in (None, {}, "not a book", 123):
+            with self.subTest(levels=levels):
+                self.assertIsNone(_vwap(levels, 25))
+        for target in (None, "invalid", object()):
+            with self.subTest(target=target):
+                self.assertIsNone(_vwap([[100, 1]], target))
+
+    def test_reject_overflowing_orderbook_arithmetic(self):
+        self.assertIsNone(_vwap([[1e308, 1e308]], 25))
+        self.assertIsNone(_vwap([[1e-308, 1e308]], 25))
+
     def test_reject_malformed_or_nonfinite_levels(self):
         for row in ([float("nan"), 1], [100, float("inf")], [float("inf"), 1],
                     [100, -1], [100], {"price": "invalid", "size": 1},
