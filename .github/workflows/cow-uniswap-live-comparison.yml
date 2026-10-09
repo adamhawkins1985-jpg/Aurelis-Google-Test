@@ -1,0 +1,38 @@
+name: CoW vs Uniswap read-only live comparison
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/cow-uniswap-live-comparison.yml'
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Read two public indicative WETH USDC prices
+        run: |
+          cd website
+          npm ci --ignore-scripts
+          npx tsx --eval "
+          import {compareCowAndUniswapPool} from './src/services/cowUniswapSpotComparison.ts';
+          const source=await import('node:fs').then(m=>m.readFileSync('src/services/walletConnectService.ts','utf8'));
+          const wallet=source.match(/const BOT_AGENT_ADDRESS = '(0x[a-fA-F0-9]{40})'/)?.[1];
+          if(!wallet)throw Error('Bot wallet address unavailable');
+          try {
+            const result=await compareCowAndUniswapPool({
+              wallet,sellToken:'0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+              buyToken:'0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+              amount:'10000000000000000',fee:500
+            });
+            console.log(JSON.stringify(result));
+            if(result.status!=='comparable')throw Error('quotes not comparable: '+result.reason);
+            if(result.profitable!==false||result.netProfit!==null||result.ordersEnabled!==false)
+              throw Error('unsafe profit or order status');
+          } catch(error) {console.error('Read-only comparison failed:',error instanceof Error?error.message:String(error));process.exitCode=1;}
+          "
