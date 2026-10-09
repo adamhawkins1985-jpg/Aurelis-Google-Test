@@ -15,7 +15,7 @@ export async function fetchLighterObservation(wallet:string, signal?:AbortSignal
     verifiedFields:['accountIndices'],accountIndices:data.accountIndices};
 }
 export function enableLighterReadOnlyAdapter():void {
-  registerDexAccountAdapter({venue:'lighter',observe:fetchLighterObservation});
+  registerDexAccountAdapter({venue:'lighter',observe:fetchLighterAccountSnapshot});
 }
 
 /** Independently validates normalized balance/position snapshots from the Bot-only server route. */
