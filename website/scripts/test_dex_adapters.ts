@@ -1,3 +1,4 @@
+import { indicativeSlippageReserve, assessRoundTripReadiness } from '../src/services/spotRiskBounds';
 import { compareCowAndUniswapPool } from '../src/services/cowUniswapSpotComparison';
 import { readEthereumGasPrice, estimateGasUsdcBaseUnits } from '../src/services/ethereumGasEstimate';
 import { estimateIndicativeNetDifference } from '../src/services/indicativeNetDifference';
@@ -105,6 +106,12 @@ async function test(): Promise<void> {
     assert.equal(result.gasEstimate?.estimatedUsdcBaseUnits,'600000');
     assert.equal(result.profitable,false);
   } finally {globalThis.fetch=previousComparisonFetch;}
+  assert.equal(indicativeSlippageReserve('30000000',50).reserveBaseUnits,'150000');
+  assert.throws(()=>indicativeSlippageReserve('30000000',10001),/invalid_slippage_scenario/);
+  assert.equal(assessRoundTripReadiness({forwardQuote:true,reverseQuote:false,
+    returnAmount:null,startAmount:'100',costsVerified:false}).status,'incomplete');
+  assert.equal(assessRoundTripReadiness({forwardQuote:true,reverseQuote:true,
+    returnAmount:'110',startAmount:'100',costsVerified:false}).netProfit,null);
   assert.equal(DEX_VENUES.length, 10);
   assert.equal(new Set(DEX_VENUES.map(v => v.id)).size, 10);
   for (const v of DEX_VENUES) {
