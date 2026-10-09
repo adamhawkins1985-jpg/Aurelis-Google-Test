@@ -1,3 +1,4 @@
+import { readUniswapV3PoolQuote } from '../src/services/uniswapV3PoolReadOnly';
 import { compareIndicativeSpotQuotes } from '../src/services/spotQuoteComparison';
 import { fetchCowIndicativeQuote } from '../src/services/cowReadOnlyAdapter';
 import { parseCowQuote } from '../src/services/cowQuoteParser';
@@ -45,6 +46,19 @@ async function test(): Promise<void> {
   assert.equal(compareIndicativeSpotQuotes(first,{...second,chain:'base'},now).status,'incomparable');
   assert.equal(compareIndicativeSpotQuotes(first,{...second,checkedAt:new Date(now-45000).toISOString()},now).status,'incomparable');
   assert.equal(compareIndicativeSpotQuotes(first,{...first},now).status,'incomparable');
+  await assert.rejects(readUniswapV3PoolQuote({sellToken:'bad',buyToken:'0x'+'b'.repeat(40),amountIn:'10',fee:500}),/invalid_uniswap_pool_quote/);
+  const priorRpc=globalThis.fetch;
+  try {
+    globalThis.fetch=async (_url,init)=>{
+      const request=JSON.parse(String(init?.body));
+      assert.equal(request.method,'eth_call');
+      assert.equal(request.params[1],'latest');
+      return new Response(JSON.stringify({jsonrpc:'2.0',id:1,result:'0x'+(205n).toString(16).padStart(64,'0')+(0n).toString(16).padStart(64,'0')+(0n).toString(16).padStart(64,'0')+(100n).toString(16).padStart(64,'0')}),{status:200});
+    };
+    const pool=await readUniswapV3PoolQuote({sellToken:'0x'+'a'.repeat(40),buyToken:'0x'+'b'.repeat(40),amountIn:'100',fee:500});
+    assert.equal(pool.outputAmount,'205');
+    assert.equal(pool.executable,false);
+  } finally {globalThis.fetch=priorRpc;}
   assert.equal(DEX_VENUES.length, 10);
   assert.equal(new Set(DEX_VENUES.map(v => v.id)).size, 10);
   for (const v of DEX_VENUES) {
