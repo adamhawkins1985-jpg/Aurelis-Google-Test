@@ -719,6 +719,46 @@ app.get('/api/bots/lighter-accounts', async (req,res) => {
   }
 });
 
+// Lighter read-only account snapshots. Indices must be discovered for the supplied Bot Wallet.
+app.get('/api/bots/lighter-snapshot', async (req,res) => {
+  const wallet=String(req.query.wallet || '');
+  if (!/^0x[a-fA-F0-9]{40}$/.test(wallet)) return res.status(400).json({ok:false,error:'invalid_wallet_address'});
+  res.setHeader('Cache-Control','no-store');
+  const host='https://mainnet.zklighter.elliot.ai/api/v1/';
+  try {
+    const discovery=await fetch(host+'accountsByL1Address?'+new URLSearchParams({l1_address:wallet}),{signal:AbortSignal.timeout(10000)});
+    if (!discovery.ok) throw Error('discovery_http');
+    const found=await discovery.json();
+    if (found?.code!==200 || !Array.isArray(found.sub_accounts) ||
+        String(found.l1_address||'').toLowerCase()!==wallet.toLowerCase() ||
+        found.next_cursor) throw Error('discovery_invalid');
+    const indices=found.sub_accounts.map((v:any)=>v?.index);
+    if (indices.length>20 || indices.some((v:any)=>!Number.isSafeInteger(v)||v<0) ||
+        new Set(indices).size!==indices.length) throw Error('discovery_invalid');
+    const snapshots=[];
+    for (const index of indices) {
+      const response=await fetch(host+'account?'+new URLSearchParams({by:'index',value:String(index)}),
+        {signal:AbortSignal.timeout(10000)});
+      if (!response.ok) throw Error('account_http');
+      const body=await response.json();
+      if (body?.code!==200 || !Array.isArray(body.accounts) || body.accounts.length!==1) throw Error('account_invalid');
+      const account=body.accounts[0];
+      if (Number(account?.index)!==index || String(account.l1_address||'').toLowerCase()!==wallet.toLowerCase() ||
+          !Array.isArray(account.positions)) throw Error('account_mismatch');
+      const validNumber=(v:any)=>typeof v==='string' && /^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$/.test(v) && Number.isFinite(Number(v));
+      if (![account.collateral,account.available_balance].every(validNumber)) throw Error('balance_invalid');
+      const positions=account.positions.filter((p:any)=>validNumber(p?.position) && Number(p.position)>0).map((p:any)=>{
+        if (typeof p.symbol!=='string' || ![1,-1].includes(p.sign)) throw Error('position_invalid');
+        return {market:p.symbol,side:p.sign===1?'long':'short',size:p.position,accountIndex:index};
+      });
+      snapshots.push({accountIndex:index,collateral:account.collateral,available:account.available_balance,positions});
+    }
+    res.json({ok:true,wallet,complete:true,checkedAt:new Date().toISOString(),accounts:snapshots});
+  } catch {
+    res.status(502).json({ok:false,error:'lighter_snapshot_unavailable'});
+  }
+});
+
 // Hyperliquid signer readiness only; never requests signatures or submits orders.
 app.get('/api/bots/hyperliquid-readiness', async (req, res) => {
   const bot = String(req.query.bot || 'hunter');
