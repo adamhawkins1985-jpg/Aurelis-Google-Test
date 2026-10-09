@@ -56,8 +56,8 @@ jobs:
             throw Error('CoW indicative quote unavailable: HTTP '+response.status);
           }
           const quote=data?.quote;
-          const positive=(s)=>typeof s==='string' && /^\\d+$/.test(s) && BigInt(s)>0n;
-          const nonnegative=(s)=>typeof s==='string' && /^\\d+$/.test(s) && BigInt(s)>=0n;
+          const positive=(s)=>typeof s==='string' && /^[0-9]+$/.test(s) && BigInt(s)>0n;
+          const nonnegative=(s)=>typeof s==='string' && /^[0-9]+$/.test(s) && BigInt(s)>=0n;
           if(!quote || String(quote.sellToken).toLowerCase()!==sellToken.toLowerCase()
             || String(quote.buyToken).toLowerCase()!==buyToken.toLowerCase()
             || !positive(quote.buyAmount) || !positive(quote.sellAmount) || !nonnegative(quote.feeAmount))
