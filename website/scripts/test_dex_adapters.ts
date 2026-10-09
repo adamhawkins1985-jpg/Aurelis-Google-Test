@@ -1,3 +1,4 @@
+import { fetchCowIndicativeQuote } from '../src/services/cowReadOnlyAdapter';
 import { parseCowQuote } from '../src/services/cowQuoteParser';
 import assert from 'node:assert/strict';
 import { observeBotDexVenues } from '../src/services/botDexMonitoring';
@@ -16,6 +17,20 @@ async function test(): Promise<void> {
   assert.equal(quote.executable,false);
   assert.equal(quote.buyAmount,'200');
   assert.throws(()=>parseCowQuote({quote:{sellToken:'0x'+'a'.repeat(40),buyToken:'0x'+'b'.repeat(40),sellAmount:'100',buyAmount:'0',feeAmount:'3'}},'0x'+'a'.repeat(40),'0x'+'b'.repeat(40)),/invalid_cow_quote/);
+  const previousFetch=globalThis.fetch;
+  try {
+    globalThis.fetch=async (_url, init)=>{
+      assert.equal(init?.method,'POST');
+      const body=JSON.parse(String(init?.body));
+      assert.equal(body.priceQuality,'fast');
+      return new Response(JSON.stringify({quote:{sellToken:body.sellToken,buyToken:body.buyToken,
+        sellAmount:'95',buyAmount:'200',feeAmount:'5'}}),{status:200});
+    };
+    const result=await fetchCowIndicativeQuote({network:'mainnet',wallet:'0x'+'c'.repeat(40),
+      sellToken:'0x'+'a'.repeat(40),buyToken:'0x'+'b'.repeat(40),sellAmountBeforeFee:'100'});
+    assert.equal(result.executable,false);
+    assert.equal(result.feeAmount,'5');
+  } finally {globalThis.fetch=previousFetch;}
   assert.equal(DEX_VENUES.length, 10);
   assert.equal(new Set(DEX_VENUES.map(v => v.id)).size, 10);
   for (const v of DEX_VENUES) {
