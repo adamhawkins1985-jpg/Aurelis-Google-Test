@@ -62,6 +62,9 @@ async function test(): Promise<void> {
     await assert.rejects(fetchLighterObservation(wallet),/lighter_discovery_invalid/);
     globalThis.fetch=async()=>new Response(JSON.stringify({ok:true,wallet,complete:false,accountIndices:[12],checkedAt:new Date(0).toISOString()}),{status:200});
     await assert.rejects(fetchLighterObservation(wallet),/lighter_discovery_invalid/);
+    globalThis.fetch=async()=>new Response(JSON.stringify({ok:true,wallet,complete:true,accountIndices:[12,12],checkedAt:new Date(0).toISOString()}),{status:200});
+    await assert.rejects(fetchLighterObservation(wallet),/lighter_discovery_invalid/);
+    await assert.rejects(fetchLighterObservation('0x'+'0'.repeat(40)),/invalid_bot_wallet_address/);
     await assert.rejects(fetchLighterObservation('bad'),/invalid_bot_wallet_address/);
   } finally {globalThis.fetch=previous;}
   const fetchBeforeSnapshot=globalThis.fetch;
@@ -81,6 +84,7 @@ async function test(): Promise<void> {
       {accountIndex:3,collateral:'12.50',available:'5.00',positions:[]}
     ]}),{status:200});
     await assert.rejects(fetchLighterAccountSnapshot(wallet),/lighter_snapshot_invalid/);
+    await assert.rejects(fetchLighterAccountSnapshot('0x'+'0'.repeat(40)),/invalid_bot_wallet_address/);
   } finally {globalThis.fetch=fetchBeforeSnapshot;}
   assert.deepEqual(parseLighterOrders({code:200,orders:[{order_index:12,symbol:'ETH',status:'open',account_index:3}]},3,'active'),[
     {id:'12',market:'ETH',status:'open',accountIndex:3},
