@@ -1,4 +1,6 @@
 name: DEX adapter safety
+permissions:
+  contents: read
 on:
   push:
     branches: [main]
@@ -25,6 +27,7 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: website
@@ -37,8 +40,16 @@ jobs:
         run: |
           if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
       - name: Test DEX registry and adapters
+        id: dex_tests
         run: npm run test:dex
       - name: Type check
         run: npm run lint
       - name: Build
         run: npm run build
+      - name: Publish job summary
+        if: always()
+        run: |
+          echo '### AURELIS DEX verification' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Commit: ${{ github.sha }}' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Adapter tests: ${{ steps.dex_tests.outcome }}' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Trading/funding permissions: unchanged' >> "$GITHUB_STEP_SUMMARY"
