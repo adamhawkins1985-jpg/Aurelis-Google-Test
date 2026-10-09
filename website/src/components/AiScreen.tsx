@@ -164,6 +164,8 @@ export const AiScreen: React.FC<AiScreenProps> = ({
     try {
       const active = await getBotWalletConnectSession();
       if (!active) {
+        if(requestId!==botObservationRequest.current)return;
+        setDexMonitoringLoading(false);
         setDexObservations([]);setBotWalletAddress('');setBotBalances([]);setBotBalanceError('');setVenueAccount(null);setLighterAccountCount(null);setLighterPositions(null);setLighterCollateral(null);setLighterAccountError('');setLighterOrdersStatus('Authentication required');
         return;
       }
@@ -178,12 +180,13 @@ export const AiScreen: React.FC<AiScreenProps> = ({
       void loadVenueAccount(active.address);
       void fetch('/api/bots/lighter-order-monitoring-status?'+new URLSearchParams({wallet:active.address}),{cache:'no-store'})
         .then(async res=>res.ok?res.json():Promise.reject(Error('status_unavailable')))
-        .then(data=>setLighterOrdersStatus(data.orderMonitoring==='configured-unverified'?'Credential configured · unverified':'Authentication required'))
-        .catch(()=>setLighterOrdersStatus('Monitoring status unavailable'));
-      void fetchLighterAccountSnapshot(active.address).then(s=>{setLighterAccountCount(s.accountIndices?.length??null);setLighterPositions(s.positions.length);setLighterCollateral(s.balances.map(b=>Number(b.total)).reduce((a,b)=>a+b,0).toFixed(2));setLighterAccountError('');}).catch(()=>{setLighterAccountCount(null);setLighterPositions(null);setLighterCollateral(null);setLighterAccountError('Account snapshot unavailable');});
+        .then(data=>{if(requestId===botObservationRequest.current)setLighterOrdersStatus(data.orderMonitoring==='configured-unverified'?'Credential configured · unverified':'Authentication required');})
+        .catch(()=>{if(requestId===botObservationRequest.current)setLighterOrdersStatus('Monitoring status unavailable');});
+      void fetchLighterAccountSnapshot(active.address).then(s=>{if(requestId!==botObservationRequest.current)return;setLighterAccountCount(s.accountIndices?.length??null);setLighterPositions(s.positions.length);setLighterCollateral(s.balances.map(b=>Number(b.total)).reduce((a,b)=>a+b,0).toFixed(2));setLighterAccountError('');}).catch(()=>{if(requestId!==botObservationRequest.current)return;setLighterAccountCount(null);setLighterPositions(null);setLighterCollateral(null);setLighterAccountError('Account snapshot unavailable');});
       const res=await fetch('/api/wallet/external-evm-portfolio?'+new URLSearchParams({address:active.address}),{cache:'no-store'});
       const data=await res.json();
       if (!res.ok || !data?.ok || !Array.isArray(data.assets)) throw Error(data?.error||'Balance lookup unavailable');
+      if(requestId!==botObservationRequest.current)return;
       setBotBalances(data.assets.map((item:any)=>({
         asset:String(item.symbol||'').toUpperCase(),
         amount:Number(item.amount||0),
@@ -191,8 +194,8 @@ export const AiScreen: React.FC<AiScreenProps> = ({
         valueUsd:Number.isFinite(Number(item.valueUsd)) ? Number(item.valueUsd) : (Number.isFinite(Number(item.balanceUsd))?Number(item.balanceUsd):null),
       })).filter((item:any)=>item.asset && item.amount>0));
       setBotBalanceError('');
-    } catch(e:any) {setBotBalanceError(e?.message||'Bot Wallet balances unavailable');setBotBalances([]);}
-    finally {setBotBalanceLoading(false);}
+    } catch(e:any) {if(requestId===botObservationRequest.current){setBotBalanceError(e?.message||'Bot Wallet balances unavailable');setBotBalances([]);}}
+    finally {if(requestId===botObservationRequest.current)setBotBalanceLoading(false);}
   };
   useEffect(()=>{
     void loadBotBalances();
