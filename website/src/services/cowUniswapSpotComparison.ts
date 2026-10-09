@@ -1,3 +1,4 @@
+import { indicativeSlippageReserve, assessRoundTripReadiness } from './spotRiskBounds';
 import { readEthereumGasPrice, estimateGasUsdcBaseUnits } from './ethereumGasEstimate';
 import { estimateIndicativeNetDifference, type ExecutionCostInputs } from './indicativeNetDifference';
 import { fetchCowIndicativeQuote } from './cowReadOnlyAdapter';
@@ -9,6 +10,7 @@ export async function compareCowAndUniswapPool(input:{
   wallet:string;sellToken:string;buyToken:string;amount:string;fee:500|3000|10000;
   estimatedCosts?:ExecutionCostInputs;
   assumedGasUnits?:number;
+  slippageBasisPoints?:number;
 },signal?:AbortSignal) {
   const [cow,uniswap,gas]=await Promise.all([
     fetchCowIndicativeQuote({network:'mainnet',wallet:input.wallet,sellToken:input.sellToken,
@@ -26,12 +28,16 @@ export async function compareCowAndUniswapPool(input:{
     input.buyToken.toLowerCase()==='0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' &&
     Date.now()-Date.parse(gas.checkedAt)<=30000
       ? estimateGasUsdcBaseUnits(gas.gasPriceWei,input.assumedGasUnits,input.amount,cow.buyAmount) : null;
+  const slippage=input.slippageBasisPoints===undefined?null:
+    indicativeSlippageReserve(compared.betterVenue==='cow'?cow.buyAmount:uniswap.outputAmount,input.slippageBasisPoints);
+  const roundTrip=assessRoundTripReadiness({forwardQuote:true,reverseQuote:false,
+    returnAmount:null,startAmount:input.amount,costsVerified:false});
   const costs={...input.estimatedCosts,
     gasCostBuyTokenUnits:measuredGasCost?.estimatedUsdcBaseUnits??null,
-    slippageReserveBuyTokenUnits:input.estimatedCosts?.slippageReserveBuyTokenUnits??null,
+    slippageReserveBuyTokenUnits:slippage?.reserveBaseUnits??input.estimatedCosts?.slippageReserveBuyTokenUnits??null,
     additionalFeesBuyTokenUnits:input.estimatedCosts?.additionalFeesBuyTokenUnits??null};
   const costScenario=estimateIndicativeNetDifference(compared.grossOutputDifference,costs);
-  return { ...compared,costScenario,venueA:'cow',venueB:'uniswap-v3-pool',
+  return { ...compared,costScenario,slippageScenario:slippage,roundTrip,venueA:'cow',venueB:'uniswap-v3-pool',
     gasObservation:gas?.checkedAt??null,gasEstimate:measuredGasCost,
     quoteScope:'indicative_only' as const,gasAndExecutionCosts:'not_verified' as const,
     ordersEnabled:false as const};
