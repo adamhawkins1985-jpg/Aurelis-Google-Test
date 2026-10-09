@@ -6,6 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { exchangeRouter } from './server/exchange_routes';
 import { readLighterActiveOrders } from './server/lighter_active_order_read';
+import { authorizeBotMonitoring } from './server/bot_monitor_access';
 import { lighterMonitoringState } from './src/services/lighterMonitoringState';
 import { registerMigratedBackend, getVerifiedWalletAddress, runAaveAgentQuery } from './server/migrated_backend';
 
@@ -780,6 +781,8 @@ app.get('/api/bots/lighter-order-monitoring-status', (req,res) => {
 // Authenticated order COUNT monitoring, bound to the configured Bot Wallet.
 // This endpoint never returns an authorization token or grants trading permissions.
 app.get('/api/bots/lighter-active-order-counts', async (req,res) => {
+  if (!authorizeBotMonitoring(req.get('x-aurelis-bot-monitor-key'),process.env.AURELIS_BOT_MONITOR_ACCESS_KEY))
+    return res.status(403).json({ok:false,error:'bot_monitor_access_denied'});
   const wallet=String(req.query.wallet||'');
   if (!/^0x[a-fA-F0-9]{40}$/.test(wallet)) return res.status(400).json({ok:false,error:'invalid_wallet_address'});
   res.setHeader('Cache-Control','no-store');
