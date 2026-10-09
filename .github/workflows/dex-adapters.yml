@@ -5,6 +5,8 @@ on:
       - 'website/src/services/dexVenueRegistry.ts'
       - 'website/src/services/dexAccountAdapters.ts'
       - 'website/src/services/hyperliquidReadOnlyAdapter.ts'
+      - 'website/src/services/lighterReadOnlyAdapter.ts'
+      - 'website/server.ts'
       - 'website/src/components/AiScreen.tsx'
       - 'website/scripts/test_dex_adapters.ts'
       - 'website/package.json'
