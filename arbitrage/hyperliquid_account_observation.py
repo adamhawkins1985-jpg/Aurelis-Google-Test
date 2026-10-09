@@ -2,6 +2,7 @@
 An observed address is never evidence of wallet ownership or signer authorization.
 """
 import json
+from decimal import Decimal, InvalidOperation
 from urllib.request import Request, urlopen
 
 INFO_URL="https://api.hyperliquid.xyz/info"
@@ -24,6 +25,15 @@ def inspect_account(address, fetch=None):
     positions=clearing.get("assetPositions")
     if not isinstance(summary,dict) or not isinstance(balances,list) or not isinstance(positions,list):
         raise ValueError("invalid_exchange_response")
+    for value in (summary.get("accountValue"), clearing.get("withdrawable")):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("invalid_exchange_response")
+        try:
+            amount = Decimal(value)
+        except InvalidOperation as exc:
+            raise ValueError("invalid_exchange_response") from exc
+        if not amount.is_finite() or amount < 0:
+            raise ValueError("invalid_exchange_response")
     return {"mode":"paper","source":"hyperliquid_public_info","walletAddress":address.lower(),
       "perpsAccountValueUsd":summary.get("accountValue"),"perpsWithdrawableUsd":clearing.get("withdrawable"),
       "openPerpPositions":len(positions),"spotAssetCount":len(balances),
