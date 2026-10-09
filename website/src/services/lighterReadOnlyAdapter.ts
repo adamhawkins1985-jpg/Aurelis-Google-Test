@@ -27,13 +27,13 @@ export async function fetchLighterAccountSnapshot(wallet:string, signal?:AbortSi
   const body=await response.json();
   if (body?.ok!==true || body.complete!==true || String(body.wallet).toLowerCase()!==wallet.toLowerCase() ||
       !Array.isArray(body.accounts) || body.accounts.length>20 || Number.isNaN(Date.parse(body.checkedAt))) throw Error('lighter_snapshot_invalid');
-  const valid=(n:unknown)=>typeof n==='string' && /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(n);
+  const valid=(n:unknown)=>typeof n==='string' && /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(n) && Number.isFinite(Number(n));
   const balances:DexAccountSnapshot['balances'][number][]=[];
   const positions:DexAccountSnapshot['positions'][number][]=[];
   const indices:number[]=[];
   for (const a of body.accounts) {
     if (!Number.isSafeInteger(a.accountIndex) || a.accountIndex<0 || indices.includes(a.accountIndex) ||
-        !valid(a.collateral) || !valid(a.available) || !Array.isArray(a.positions)) throw Error('lighter_snapshot_invalid');
+        !valid(a.collateral) || !valid(a.available) || !Array.isArray(a.positions) || a.positions.length>1000) throw Error('lighter_snapshot_invalid');
     indices.push(a.accountIndex);
     balances.push({symbol:'USD collateral #'+a.accountIndex,total:a.collateral,available:a.available});
     for (const p of a.positions) {
