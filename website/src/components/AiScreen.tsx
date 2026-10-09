@@ -24,6 +24,7 @@ import { playHudSound, formatCurrency } from '../services/marketData';
 import { getBotWalletConnectSession } from '../services/walletConnectService';
 import { DEX_VENUES, canUseLiveOrders, canUseAutomatedFunding } from '../services/dexVenueRegistry';
 import { fetchHyperliquidObservation } from '../services/hyperliquidReadOnlyAdapter';
+import { fetchLighterObservation } from '../services/lighterReadOnlyAdapter';
 
 // Bot Views
 import { TradeRadarView } from './trade/TradeRadarView';
@@ -108,6 +109,8 @@ export const AiScreen: React.FC<AiScreenProps> = ({
   const [botBalances,setBotBalances] = useState<{asset:string;amount:number;network:string;valueUsd:number|null}[]>([]);
   const [botBalanceLoading,setBotBalanceLoading] = useState(true);
   const [venueAccount,setVenueAccount] = useState<any>(null);
+  const [lighterAccountCount,setLighterAccountCount] = useState<number|null>(null);
+  const [lighterAccountError,setLighterAccountError] = useState('');
   const [venueLoading,setVenueLoading] = useState(false);
   const [venueError,setVenueError] = useState('');
   const [fundingPolicy,setFundingPolicy] = useState<'manual'|'review'>('manual');
@@ -152,11 +155,12 @@ export const AiScreen: React.FC<AiScreenProps> = ({
     try {
       const active = await getBotWalletConnectSession();
       if (!active) {
-        setBotWalletAddress('');setBotBalances([]);setBotBalanceError('');setVenueAccount(null);
+        setBotWalletAddress('');setBotBalances([]);setBotBalanceError('');setVenueAccount(null);setLighterAccountCount(null);setLighterAccountError('');
         return;
       }
       setBotWalletAddress(active.address);
       void loadVenueAccount(active.address);
+      void fetchLighterObservation(active.address).then(s=>{setLighterAccountCount(s.accountIndices?.length??null);setLighterAccountError('');}).catch(()=>{setLighterAccountCount(null);setLighterAccountError('Discovery unavailable');});
       const res=await fetch('/api/wallet/external-evm-portfolio?'+new URLSearchParams({address:active.address}),{cache:'no-store'});
       const data=await res.json();
       if (!res.ok || !data?.ok || !Array.isArray(data.assets)) throw Error(data?.error||'Balance lookup unavailable');
@@ -504,7 +508,7 @@ export const AiScreen: React.FC<AiScreenProps> = ({
           {DEX_VENUES.map(item => <div key={item.id} className="rounded-md border border-white/10 bg-surface-base/40 p-2">
             <p className="text-[11px] font-bold text-text-primary">{item.name}</p>
             <p className="mt-1 text-[9px] text-text-muted">{item.network}</p>
-            <p className="mt-1 text-[10px] text-text-muted">{item.id==='hyperliquid' && !venueAccount ? 'Public account not checked' : item.note}</p>
+            <p className="mt-1 text-[10px] text-text-muted">{item.id==='hyperliquid' && !venueAccount ? 'Public account not checked' : item.id==='lighter' ? (lighterAccountCount!==null ? lighterAccountCount+' account index(es) discovered · balances not verified' : lighterAccountError||'Public account discovery not checked') : item.note}</p>
             <p className="mt-1 text-[9px] text-amber-300">{canUseLiveOrders(item) ? 'Verified live order controls' : 'Live orders disabled'} · {canUseAutomatedFunding(item) ? 'Funding enabled' : 'Funding disabled'}</p>
           </div>)}
         </div>
