@@ -18,7 +18,7 @@ async function test(): Promise<void> {
   assert.throws(() => registerDexAccountAdapter({venue:'dydx',observe:async()=>{throw Error('unexpected');}}), /dex_account_adapter_not_verified/);
   let invoked = false;
   registerDexAccountAdapter({venue:'hyperliquid',observe:async(wallet)=>{invoked=true;return {
-    venue:'hyperliquid',wallet,checkedAt:new Date(0).toISOString(),balances:[],positions:[],orders:[],fills:[],
+    venue:'hyperliquid',wallet,checkedAt:new Date(0).toISOString(),balances:[],positions:[],orders:[],fills:[],orderMonitoring:'unavailable',fillMonitoring:'unavailable',
   };}});
   assert.throws(() => registerDexAccountAdapter({venue:'hyperliquid',observe:async()=>{throw Error('unexpected');}}), /dex_account_adapter_duplicate/);
   await assert.rejects(observeDexAccount('hyperliquid','not-a-wallet'), /invalid_bot_wallet_address/);
@@ -26,6 +26,7 @@ async function test(): Promise<void> {
   const wallet='0x'+'a'.repeat(40);
   const snapshot=await observeDexAccount('hyperliquid',wallet);
   assert.equal(snapshot.venue,'hyperliquid');
+  assert.equal(snapshot.orderMonitoring,'unavailable');
   assert.equal(invoked,true);
   const priorFetch = globalThis.fetch;
   try {
@@ -62,6 +63,8 @@ async function test(): Promise<void> {
     const snap=await fetchLighterAccountSnapshot(wallet);
     assert.equal(snap.balances.length,2);
     assert.equal(snap.positions.length,1);
+    assert.equal(snap.orderMonitoring,'auth-required');
+    assert.equal(snap.fillMonitoring,'auth-required');
     assert.deepEqual(snap.accountIndices,[3,4]);
     globalThis.fetch=async()=>new Response(JSON.stringify({ok:true,complete:true,wallet,checkedAt:new Date(0).toISOString(),accounts:[
       {accountIndex:3,collateral:'12.50',available:'5.00',positions:[]},
