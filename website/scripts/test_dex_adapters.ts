@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { parseLighterOrders } from '../src/services/lighterOrderNormalizer';
 import { DEX_VENUES, canUseAutomatedFunding, canUseEmergencyClose, canUseLiveOrders } from '../src/services/dexVenueRegistry';
 import { observeDexAccount, registerDexAccountAdapter } from '../src/services/dexAccountAdapters';
 import { fetchHyperliquidObservation } from '../src/services/hyperliquidReadOnlyAdapter';
@@ -72,6 +73,12 @@ async function test(): Promise<void> {
     ]}),{status:200});
     await assert.rejects(fetchLighterAccountSnapshot(wallet),/lighter_snapshot_invalid/);
   } finally {globalThis.fetch=fetchBeforeSnapshot;}
+  assert.deepEqual(parseLighterOrders({code:200,orders:[{order_index:12,symbol:'ETH',status:'open',account_index:3}]},3,'active'),[
+    {id:'12',market:'ETH',status:'open',accountIndex:3},
+  ]);
+  assert.throws(()=>parseLighterOrders({code:200,orders:[{order_index:12,symbol:'ETH',status:'filled'}]},3,'active'),/lighter_order_status_mismatch/);
+  assert.throws(()=>parseLighterOrders({code:200,orders:[],next_cursor:'more'},3,'active'),/lighter_orders_incomplete/);
+  assert.throws(()=>parseLighterOrders({code:200,orders:[{order_index:12,symbol:'ETH',status:'open',account_index:9}]},3,'active'),/lighter_orders_account_mismatch/);
   console.log('DEX registry and read-only adapter checks passed');
 }
 test().catch(error=>{console.error(error);process.exitCode=1;});
