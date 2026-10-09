@@ -7,6 +7,7 @@ on:
       - 'website/src/services/hyperliquidReadOnlyAdapter.ts'
       - 'website/src/services/lighterReadOnlyAdapter.ts'
       - 'website/src/services/lighterOrderNormalizer.ts'
+      - 'website/src/services/lighterMonitoringState.ts'
       - 'website/server.ts'
       - 'website/src/components/AiScreen.tsx'
       - 'website/scripts/test_dex_adapters.ts'
