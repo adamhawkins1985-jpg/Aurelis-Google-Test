@@ -124,19 +124,21 @@ export const AiScreen: React.FC<AiScreenProps> = ({
   const [fundingPolicy,setFundingPolicy] = useState<'manual'|'review'>('manual');
   const [controlMode,setControlMode] = useState<'paused'|'review'>('paused');
   const [venueCheckedAt,setVenueCheckedAt] = useState('');
-  const loadVenueAccount=async(address:string)=>{
+  const loadVenueAccount=async(address:string, requestId:number=botObservationRequest.current)=>{
+    if(requestId!==botObservationRequest.current)return;
     if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {setVenueAccount(null);setVenueError('Connect Bot Wallet to check Hyperliquid.');return;}
     setVenueLoading(true);setVenueError('');
     try {
       const snapshot=await fetchHyperliquidObservation(address);
+      if(requestId!==botObservationRequest.current)return;
       setVenueAccount({
         perpsAccountValueUsd:snapshot.accountValueUsd ?? null,
         openPerpPositions:snapshot.openPositionCount ?? null,
         verifiedFields:snapshot.verifiedFields ?? [],
       });
       setVenueCheckedAt(new Date(snapshot.checkedAt).toLocaleTimeString());
-    }catch(e:any){setVenueError(e?.message||'Venue account unavailable');setVenueAccount(null);}
-    finally{setVenueLoading(false);}
+    }catch(e:any){if(requestId===botObservationRequest.current){setVenueError(e?.message||'Venue account unavailable');setVenueAccount(null);}}
+    finally{if(requestId===botObservationRequest.current)setVenueLoading(false);}
   };
   const readBotAddress=async()=>{
     const active=await getBotWalletConnectSession();
@@ -166,6 +168,9 @@ export const AiScreen: React.FC<AiScreenProps> = ({
       if (!active) {
         if(requestId!==botObservationRequest.current)return;
         setDexMonitoringLoading(false);
+        setVenueLoading(false);
+        setVenueError('');
+        setVenueCheckedAt('');
         setDexObservations([]);setBotWalletAddress('');setBotBalances([]);setBotBalanceError('');setVenueAccount(null);setLighterAccountCount(null);setLighterPositions(null);setLighterCollateral(null);setLighterAccountError('');setLighterOrdersStatus('Authentication required');
         return;
       }
@@ -177,7 +182,7 @@ export const AiScreen: React.FC<AiScreenProps> = ({
         .then(rows=>{if(requestId===botObservationRequest.current)setDexObservations(rows);})
         .catch(()=>{if(requestId===botObservationRequest.current)setDexObservations([]);})
         .finally(()=>{if(requestId===botObservationRequest.current)setDexMonitoringLoading(false);});
-      void loadVenueAccount(active.address);
+      void loadVenueAccount(active.address,requestId);
       void fetch('/api/bots/lighter-order-monitoring-status?'+new URLSearchParams({wallet:active.address}),{cache:'no-store'})
         .then(async res=>res.ok?res.json():Promise.reject(Error('status_unavailable')))
         .then(data=>{if(requestId===botObservationRequest.current)setLighterOrdersStatus(data.orderMonitoring==='configured-unverified'?'Credential configured · unverified':'Authentication required');})
