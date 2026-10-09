@@ -1,0 +1,23 @@
+name: Spot Round Trip Grid Read Only
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/spot-round-trip-grid.yml'
+      - 'website/scripts/probe_spot_round_trip_grid.ts'
+      - 'website/src/services/spotRoundTripScanner.ts'
+permissions:
+  contents: read
+jobs:
+  observe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 9
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: cd website && npm ci --ignore-scripts
+      - name: Probe read-only spot grid
+        run: cd website && npx tsx scripts/probe_spot_round_trip_grid.ts
