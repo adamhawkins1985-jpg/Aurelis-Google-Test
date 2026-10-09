@@ -23,7 +23,7 @@ export async function observeSpotRoundTrip(input: {
   const reverse=direction==='uniswap-cow'
     ?await fetchCowIndicativeQuote({network:'mainnet',wallet:input.wallet,sellToken:input.middleToken,buyToken:input.startToken,sellAmountBeforeFee:conservativeMiddle},signal)
     :await readUniswapV3PoolQuote({sellToken:input.middleToken,buyToken:input.startToken,amountIn:conservativeMiddle,fee:input.forwardFee},signal);
-  const reverseOutput='outputAmount' in reverse?reverse.outputAmount:reverseOutput;
+  const reverseOutput='outputAmount' in reverse?reverse.outputAmount:reverse.buyAmount;
   const reverseReserve=indicativeSlippageReserve(reverseOutput,input.slippageBasisPoints);
   const conservativeReturn=(BigInt(reverseOutput)-BigInt(reverseReserve.reserveBaseUnits)).toString();
   const grossReturnDifference=(BigInt(reverseOutput)-BigInt(input.startAmount)).toString();
