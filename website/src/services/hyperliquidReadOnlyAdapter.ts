@@ -27,6 +27,7 @@ export async function fetchHyperliquidObservation(wallet: string, signal?: Abort
   return {
     venue: 'hyperliquid', wallet, checkedAt: new Date().toISOString(),
     balances: [], positions: [], orders: [], fills: [],
+    orderMonitoring:'unavailable',fillMonitoring:'unavailable',
     accountValueUsd, openPositionCount, verifiedFields,
   };
 }
