@@ -1,0 +1,35 @@
+name: CoW spot API read-only evaluation
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/cow-spot-api-evaluation.yml'
+permissions:
+  contents: read
+jobs:
+  verify-public-api:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Probe public CoW endpoints without signatures or orders
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const registry=fs.readFileSync('website/src/services/dexVenueRegistry.ts','utf8');
+          if(!registry.includes("id: 'cow'") || !registry.includes("lifecycle: 'candidate'"))throw Error('CoW must be candidate only');
+          const networks=['mainnet','base','arbitrum_one'];
+          for(const network of networks){
+            const url='https://api.cow.fi/'+network+'/api/v1/version';
+            const response=await fetch(url,{signal:AbortSignal.timeout(12000),headers:{Accept:'application/json'}});
+            console.log(network,'public API HTTP',response.status);
+            if(!response.ok)throw Error(network+' unavailable');
+            const body=await response.json();
+            if(!body || typeof body!=='object')throw Error(network+' invalid API version');
+          }
+          console.log('CoW public APIs responsive. No quote, signing, orders or transfers performed.');
+          console.log('US access and trading eligibility NOT established by API connectivity.');
+          NODE
