@@ -15,6 +15,27 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Diagnose Lighter upstream discovery without secrets
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const source=fs.readFileSync('website/src/services/walletConnectService.ts','utf8');
+          const wallet=source.match(/const BOT_AGENT_ADDRESS = '(0x[a-fA-F0-9]{40})'/)?.[1];
+          if(!wallet) throw Error('Bot public wallet identity unavailable');
+          const url='https://mainnet.zklighter.elliot.ai/api/v1/accountsByL1Address?'+new URLSearchParams({l1_address:wallet});
+          try {
+            const response=await fetch(url,{headers:{Accept:'application/json'},signal:AbortSignal.timeout(12000)});
+            console.log('Lighter upstream HTTP:',response.status);
+            const body=await response.json().catch(()=>null);
+            console.log('Lighter upstream response code:',typeof body?.code==='number'?body.code:'unknown');
+            console.log('Lighter upstream has account list:',Array.isArray(body?.sub_accounts));
+            console.log('Lighter upstream count:',Array.isArray(body?.sub_accounts)?body.sub_accounts.length:'unknown');
+            console.log('Lighter upstream pagination:',Boolean(body?.next_cursor));
+            console.log('Lighter upstream L1 address matches:',typeof body?.l1_address==='string'&&body.l1_address.toLowerCase()===wallet.toLowerCase());
+            console.log('Lighter upstream error category:',typeof body?.error==='string'?'error returned':'none');
+          } catch(e) { console.log('Lighter upstream request failed:',e?.name||'network error'); }
+          NODE
       - name: Verify live public endpoint identity without wallet keys
         shell: bash
         run: |
