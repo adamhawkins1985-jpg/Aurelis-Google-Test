@@ -5,7 +5,7 @@
  */
 export type DexVenueId =
   | 'hyperliquid' | 'dydx' | 'lighter' | 'paradex' | 'extended'
-  | 'gmx' | 'drift' | 'aevo' | 'ostium' | 'reserve';
+  | 'gmx' | 'drift' | 'aevo' | 'ostium' | 'cow';
 
 export type VenueLifecycle = 'read-only' | 'market-data' | 'candidate' | 'restricted';
 export interface DexVenueCapabilities {
@@ -53,7 +53,7 @@ export const DEX_VENUES: readonly DexVenue[] = Object.freeze([
   { id: 'drift', name: 'Drift', lifecycle: 'candidate', network: 'Solana', note: 'Requires a separate Solana wallet/account path', capabilities: none },
   { id: 'aevo', name: 'Aevo', lifecycle: 'candidate', network: 'Aevo', note: 'Availability and integration not verified', capabilities: none },
   { id: 'ostium', name: 'Ostium', lifecycle: 'candidate', network: 'Arbitrum', note: 'Market and integration eligibility to be verified', capabilities: none },
-  { id: 'reserve', name: 'DEX #10', lifecycle: 'candidate', network: 'To be selected', note: 'Reserve slot; no exchange selected', capabilities: none },
+  { id: 'cow', name: 'CoW Protocol (spot)', lifecycle: 'candidate', network: 'Ethereum / Base / Arbitrum', note: 'Spot-only candidate; read-only API evaluation pending. US access eligibility and execution unverified', capabilities: none },
 ]);
 
 /** Live control activation must be an explicit, verified opt-in, never inferred from wallet visibility. */
