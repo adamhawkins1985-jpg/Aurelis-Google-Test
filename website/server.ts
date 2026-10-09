@@ -709,7 +709,11 @@ app.get('/api/bots/lighter-accounts', async (req,res) => {
       return res.status(502).json({ok:false,error:'lighter_account_response_invalid'});
     const indices=raw.sub_accounts.map((a:any)=>Number(a?.index)).filter((n:number)=>Number.isSafeInteger(n)&&n>=0);
     if (indices.length!==raw.sub_accounts.length) return res.status(502).json({ok:false,error:'lighter_account_index_invalid'});
-    res.json({ok:true,wallet,accountIndices:indices,checkedAt:new Date().toISOString(),source:'public_l1_discovery'});
+    if (typeof raw.next_cursor === 'string' && raw.next_cursor.length > 0)
+      return res.status(502).json({ok:false,error:'lighter_account_discovery_paginated'});
+    if (new Set(indices).size!==indices.length)
+      return res.status(502).json({ok:false,error:'lighter_duplicate_account_index'});
+    res.json({ok:true,wallet,accountIndices:indices,complete:true,checkedAt:new Date().toISOString(),source:'public_l1_discovery'});
   } catch {
     res.status(502).json({ok:false,error:'lighter_account_discovery_unavailable'});
   }
