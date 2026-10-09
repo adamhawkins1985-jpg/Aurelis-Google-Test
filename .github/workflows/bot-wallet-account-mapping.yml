@@ -1,0 +1,52 @@
+name: AURELIS Bot wallet public account mapping
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/bot-wallet-account-mapping.yml'
+permissions:
+  contents: read
+jobs:
+  observe-only:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify live public endpoint identity without wallet keys
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const source=fs.readFileSync('website/src/services/walletConnectService.ts','utf8');
+          const match=source.match(/const BOT_AGENT_ADDRESS = '(0x[a-fA-F0-9]{40})'/);
+          if(!match) throw Error('Bot address missing from wallet session guard');
+          const wallet=match[1].toLowerCase();
+          if(/^0x0{40}$/.test(wallet)) throw Error('Placeholder wallet');
+          const base='https://wallet.ahconceptsai.com/api/bots/';
+          async function check(path){
+            const url=base+path+'?'+new URLSearchParams({wallet});
+            const res=await fetch(url,{signal:AbortSignal.timeout(24000),headers:{Accept:'application/json'}});
+            if(!res.ok)throw Error(path+' HTTP '+res.status);
+            const payload=await res.json();
+            if(!payload || typeof payload!=='object')throw Error(path+' invalid JSON');
+            const reported=path==='hyperliquid-account'?payload.walletAddress:payload.wallet;
+            if(typeof reported!=='string' || reported.toLowerCase()!==wallet)throw Error(path+' wallet mismatch');
+            return payload;
+          }
+          const hyper=await check('hyperliquid-account');
+          const lighter=await check('lighter-snapshot');
+          if(lighter.ok!==true || lighter.complete!==true || !Array.isArray(lighter.accounts) || lighter.accounts.length>20)throw Error('Lighter incomplete snapshot');
+          const ids=new Set();
+          for(const account of lighter.accounts){
+            if(!Number.isSafeInteger(account.accountIndex)||account.accountIndex<0||ids.has(account.accountIndex))throw Error('Lighter invalid account index');
+            ids.add(account.accountIndex);
+          }
+          if(!('perpsAccountValueUsd' in hyper) || !('openPerpPositions' in hyper))throw Error('Hyperliquid aggregate missing');
+          console.log('Read-only Bot address association confirmed against Hyperliquid and Lighter public endpoints.');
+          console.log('Lighter discovered account count:',ids.size);
+          console.log('WalletConnect session control/cryptographic ownership NOT proven by public API checks.');
+          console.log('No keys, sign requests, trades, or transfers used.');
+          NODE
