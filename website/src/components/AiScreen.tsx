@@ -24,7 +24,6 @@ import { playHudSound, formatCurrency } from '../services/marketData';
 import { getBotWalletConnectSession } from '../services/walletConnectService';
 import { DEX_VENUES, canUseLiveOrders, canUseAutomatedFunding } from '../services/dexVenueRegistry';
 import { fetchHyperliquidObservation } from '../services/hyperliquidReadOnlyAdapter';
-import { fetchLighterAccountSnapshot } from '../services/lighterReadOnlyAdapter';
 import { observeBotDexVenues } from '../services/botDexMonitoring';
 import type { DexVenueObservation } from '../services/dexMonitoringReconciliation';
 
@@ -187,7 +186,8 @@ export const AiScreen: React.FC<AiScreenProps> = ({
         .then(async res=>res.ok?res.json():Promise.reject(Error('status_unavailable')))
         .then(data=>{if(requestId===botObservationRequest.current)setLighterOrdersStatus(data.orderMonitoring==='configured-unverified'?'Credential configured · unverified':'Authentication required');})
         .catch(()=>{if(requestId===botObservationRequest.current)setLighterOrdersStatus('Monitoring status unavailable');});
-      void fetchLighterAccountSnapshot(active.address).then(s=>{if(requestId!==botObservationRequest.current)return;setLighterAccountCount(s.accountIndices?.length??null);setLighterPositions(s.positions.length);setLighterCollateral(s.balances.map(b=>Number(b.total)).reduce((a,b)=>a+b,0).toFixed(2));setLighterAccountError('');}).catch((error:unknown)=>{if(requestId!==botObservationRequest.current)return;setLighterAccountCount(null);setLighterPositions(null);setLighterCollateral(null);setLighterAccountError(error instanceof Error && error.message.includes('lighter_snapshot_http_404')?'No Lighter account discoverable for Bot Wallet. Account registration or exchange-side verification required.':'Account snapshot unavailable');});
+      // Lighter is restricted; do not request its public account snapshot.
+      setLighterAccountCount(null);setLighterPositions(null);setLighterCollateral(null);setLighterAccountError('Restricted venue');
       const res=await fetch('/api/wallet/external-evm-portfolio?'+new URLSearchParams({address:active.address}),{cache:'no-store'});
       const data=await res.json();
       if (!res.ok || !data?.ok || !Array.isArray(data.assets)) throw Error(data?.error||'Balance lookup unavailable');
