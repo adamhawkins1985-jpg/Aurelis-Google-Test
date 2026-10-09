@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readLighterActiveOrders } from '../server/lighter_active_order_read';
 import { lighterMonitoringState } from '../src/services/lighterMonitoringState';
 import { parseLighterOrders } from '../src/services/lighterOrderNormalizer';
 import { DEX_VENUES, canUseAutomatedFunding, canUseEmergencyClose, canUseLiveOrders } from '../src/services/dexVenueRegistry';
@@ -86,6 +87,18 @@ async function test(): Promise<void> {
   assert.equal(lighterMonitoringState(wallet,wallet,undefined),'auth-required');
   assert.equal(lighterMonitoringState(wallet,wallet,'short'),'auth-required');
   assert.throws(()=>lighterMonitoringState('wrong',wallet,'1234567890123456'),/invalid_wallet_address/);
+  const beforeOrdersFetch=globalThis.fetch;
+  try {
+    globalThis.fetch=async(_url,options)=> {
+      assert.equal((options as RequestInit).method,'GET');
+      assert.equal((options as RequestInit).headers && (options as Record<string,any>).headers.authorization,'0123456789abcdef');
+      return new Response(JSON.stringify({code:200,orders:[{id:'one'}]}),{status:200});
+    };
+    assert.deepEqual(await readLighterActiveOrders(2,'0123456789abcdef'),{accountIndex:2,count:1});
+    globalThis.fetch=async()=>new Response(JSON.stringify({code:200,orders:[],next_cursor:'more'}),{status:200});
+    await assert.rejects(readLighterActiveOrders(2,'0123456789abcdef'),/lighter_order_observation_incomplete/);
+    await assert.rejects(readLighterActiveOrders(2,'short'),/lighter_monitor_authorization_missing/);
+  } finally {globalThis.fetch=beforeOrdersFetch;}
   console.log('DEX registry and read-only adapter checks passed');
 }
 test().catch(error=>{console.error(error);process.exitCode=1;});
