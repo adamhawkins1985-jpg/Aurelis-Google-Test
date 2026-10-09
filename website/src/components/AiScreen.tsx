@@ -117,6 +117,7 @@ export const AiScreen: React.FC<AiScreenProps> = ({
   const [lighterAccountError,setLighterAccountError] = useState('');
   const [lighterOrdersStatus,setLighterOrdersStatus] = useState('Authentication required');
   const [dexObservations,setDexObservations] = useState<readonly DexVenueObservation[]>([]);
+  const botObservationRequest = useRef(0);
   const [dexMonitoringLoading,setDexMonitoringLoading] = useState(false);
   const [venueLoading,setVenueLoading] = useState(false);
   const [venueError,setVenueError] = useState('');
@@ -158,6 +159,7 @@ export const AiScreen: React.FC<AiScreenProps> = ({
 
   const [botBalanceError,setBotBalanceError] = useState('');
   const loadBotBalances = async () => {
+    const requestId=++botObservationRequest.current;
     setBotBalanceLoading(true);
     try {
       const active = await getBotWalletConnectSession();
@@ -165,9 +167,14 @@ export const AiScreen: React.FC<AiScreenProps> = ({
         setDexObservations([]);setBotWalletAddress('');setBotBalances([]);setBotBalanceError('');setVenueAccount(null);setLighterAccountCount(null);setLighterPositions(null);setLighterCollateral(null);setLighterAccountError('');setLighterOrdersStatus('Authentication required');
         return;
       }
+      if(requestId!==botObservationRequest.current)return;
       setBotWalletAddress(active.address);
+      setDexObservations([]);
       setDexMonitoringLoading(true);
-      void observeBotDexVenues(active.address).then(setDexObservations).catch(()=>setDexObservations([])).finally(()=>setDexMonitoringLoading(false));
+      void observeBotDexVenues(active.address)
+        .then(rows=>{if(requestId===botObservationRequest.current)setDexObservations(rows);})
+        .catch(()=>{if(requestId===botObservationRequest.current)setDexObservations([]);})
+        .finally(()=>{if(requestId===botObservationRequest.current)setDexMonitoringLoading(false);});
       void loadVenueAccount(active.address);
       void fetch('/api/bots/lighter-order-monitoring-status?'+new URLSearchParams({wallet:active.address}),{cache:'no-store'})
         .then(async res=>res.ok?res.json():Promise.reject(Error('status_unavailable')))
