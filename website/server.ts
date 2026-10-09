@@ -745,7 +745,7 @@ app.get('/api/bots/lighter-snapshot', async (req,res) => {
       const account=body.accounts[0];
       if (Number(account?.index)!==index || String(account.l1_address||'').toLowerCase()!==wallet.toLowerCase() ||
           !Array.isArray(account.positions)) throw Error('account_mismatch');
-      const validNumber=(v:any)=>typeof v==='string' && /^(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$/.test(v) && Number.isFinite(Number(v));
+      const validNumber=(v:any)=>typeof v==='string' && /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(v) && Number.isFinite(Number(v));
       if (![account.collateral,account.available_balance].every(validNumber)) throw Error('balance_invalid');
       const positions=account.positions.filter((p:any)=>validNumber(p?.position) && Number(p.position)>0).map((p:any)=>{
         if (typeof p.symbol!=='string' || ![1,-1].includes(p.sign)) throw Error('position_invalid');
