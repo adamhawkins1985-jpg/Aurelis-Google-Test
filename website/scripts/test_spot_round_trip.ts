@@ -1,3 +1,4 @@
+import { summarizeCowSellQuoteCosts } from '../src/services/cowFeeAccounting';
 import { scanSpotPairUniverse } from '../src/services/spotPairUniverse';
 import { scanSpotRoundTrips } from '../src/services/spotRoundTripScanner';
 import assert from 'node:assert/strict';
@@ -26,7 +27,12 @@ try {
     middleToken:'0x'+'b'.repeat(40),startAmount:'100000000000000000',
     forwardFee:500,slippageBasisPoints:50
   });
+  const accounting=summarizeCowSellQuoteCosts({grossSellAmount:'100',sellAmount:'95',feeAmount:'5',buyAmount:'200'});
+  assert.equal(accounting.separatelyDeductFromBuyOutput,false);
+  assert.equal(accounting.executionGasVerified,false);
+  assert.throws(()=>summarizeCowSellQuoteCosts({grossSellAmount:'100',sellAmount:'99',feeAmount:'5',buyAmount:'200'}),/invalid_cow_fee_accounting/);
   assert.equal(result.reverseInput,'298500000');
+  assert.equal(result.cowFeeAccounting?.separatelyDeductFromBuyOutput,false);
   assert.equal(result.profitVerified,false);
   assert.equal(result.netProfit,null);
   assert.equal(result.ordersEnabled,false);
