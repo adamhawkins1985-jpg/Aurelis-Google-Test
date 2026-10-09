@@ -44,10 +44,10 @@ const market = (publicQuotes: boolean): Readonly<DexVenueCapabilities> =>
   Object.freeze({ ...none, publicQuotes });
 
 export const DEX_VENUES: readonly DexVenue[] = Object.freeze([
-  { id: 'hyperliquid', name: 'Hyperliquid', lifecycle: 'read-only', network: 'Hyperliquid', note: 'Aggregate account lookup only; balances, orders and fills unverified', capabilities: Object.freeze({ ...market(true), accountAggregates: true }) },
+  { id: 'hyperliquid', name: 'Hyperliquid', lifecycle: 'restricted', network: 'Hyperliquid', note: 'US interface restricted; retain public market observations only, never enable trading', capabilities: Object.freeze({ ...market(true), accountAggregates: true }) },
   { id: 'dydx', name: 'dYdX', lifecycle: 'market-data', network: 'dYdX Chain', note: 'Public quotes only; deployment eligibility must be reviewed before account connection', capabilities: market(true) },
   { id: 'lighter', name: 'Lighter', lifecycle: 'restricted', network: 'Lighter', note: 'Restricted for this user; account monitoring and trading disabled', capabilities: none },
-  { id: 'paradex', name: 'Paradex', lifecycle: 'candidate', network: 'Paradex', note: 'Account and market feeds not verified', capabilities: none },
+  { id: 'paradex', name: 'Paradex', lifecycle: 'restricted', network: 'Paradex', note: 'US persons explicitly restricted; trading blocked', capabilities: none },
   { id: 'extended', name: 'Extended', lifecycle: 'candidate', network: 'Starknet', note: 'Account and market feeds not verified', capabilities: none },
   { id: 'gmx', name: 'GMX', lifecycle: 'candidate', network: 'Arbitrum / Avalanche', note: 'Adapter not implemented', capabilities: none },
   { id: 'drift', name: 'Drift', lifecycle: 'candidate', network: 'Solana', note: 'Requires a separate Solana wallet/account path', capabilities: none },
