@@ -10,6 +10,7 @@ on:
       - 'website/src/services/lighterMonitoringState.ts'
       - 'website/server.ts'
       - 'website/server/lighter_active_order_read.ts'
+      - 'website/server/bot_monitor_access.ts'
       - 'website/src/components/AiScreen.tsx'
       - 'website/scripts/test_dex_adapters.ts'
       - 'website/package.json'
