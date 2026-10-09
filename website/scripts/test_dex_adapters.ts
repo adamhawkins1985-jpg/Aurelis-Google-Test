@@ -118,6 +118,8 @@ async function test(): Promise<void> {
     accountValueUsd:'42.75',openPositionCount:0,verifiedFields:['accountValueUsd','openPositionCount'],
   }]);
   assert.equal(reconciled.length,10);
+  assert.ok(reconciled.every(v=>v.ownership==='unverified'));
+
   assert.equal(reconciled.find(v=>v.venue==='hyperliquid')?.openPositionCount,0);
   assert.equal(reconciled.find(v=>v.venue==='hyperliquid')?.activeOrders,null);
   assert.equal(reconciled.find(v=>v.venue==='lighter')?.status,'unavailable');
