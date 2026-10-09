@@ -8,6 +8,7 @@ on:
       - 'website/src/services/dexVenueRegistry.ts'
       - 'website/src/services/dexAccountAdapters.ts'
       - 'website/src/services/dexMonitoringReconciliation.ts'
+      - 'website/src/services/botDexMonitoring.ts'
       - 'website/src/services/hyperliquidReadOnlyAdapter.ts'
       - 'website/src/services/lighterReadOnlyAdapter.ts'
       - 'website/src/services/lighterOrderNormalizer.ts'
