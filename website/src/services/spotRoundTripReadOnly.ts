@@ -1,3 +1,4 @@
+import { classifySpotRouteGas } from './spotRouteCostEvidence';
 import { summarizeCowSellQuoteCosts } from './cowFeeAccounting';
 import { fetchCowIndicativeQuote } from './cowReadOnlyAdapter';
 import { readUniswapV3PoolQuote } from './uniswapV3PoolReadOnly';
@@ -47,7 +48,13 @@ export async function observeSpotRoundTrip(input: {
   const cowGasCostWei=gas&&cowUnits!==undefined?(BigInt(gas.gasPriceWei)*BigInt(cowUnits)).toString():null;
   const gasCostWei=uniswapGasCostWei!==null&&cowGasCostWei!==null?(BigInt(uniswapGasCostWei)+BigInt(cowGasCostWei)).toString():null;
   const afterGasDifference=gasCostWei===null?null:(BigInt(conservativeReturn)-BigInt(input.startAmount)-BigInt(gasCostWei)).toString();
+  const costEvidence=classifySpotRouteGas({
+    uniswapQuoterGasUnits:'quoterGasEstimate' in uniswapLeg?uniswapLeg.quoterGasEstimate:null,
+    assumedUniswapGasUnits:uniswapUnits??null,assumedCowGasUnits:cowUnits??null,
+    cowQuoteFeeSellTokenUnits:'feeAmount' in cowLeg?cowLeg.feeAmount:null
+  });
   return {
+    costEvidence,
     status:fresh?'indicative_round_trip':'stale_quotes',
     forwardVenue:direction==='uniswap-cow'?'uniswap-v3-pool':'cow',reverseVenue:direction==='uniswap-cow'?'cow':'uniswap-v3-pool',chain:'mainnet',
     startAmount:input.startAmount,forwardOutput:forwardOutput,
