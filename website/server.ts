@@ -695,6 +695,26 @@ app.get('/api/bots/hyperliquid-account', async (req,res) => {
   }
 });
 
+// Lighter public account discovery. Read-only; no signing, orders or account keys.
+app.get('/api/bots/lighter-accounts', async (req,res) => {
+  const wallet=String(req.query.wallet || '');
+  if (!/^0x[a-fA-F0-9]{40}$/.test(wallet)) return res.status(400).json({ok:false,error:'invalid_wallet_address'});
+  res.setHeader('Cache-Control','no-store');
+  try {
+    const url='https://mainnet.zklighter.elliot.ai/api/v1/accountsByL1Address?'+new URLSearchParams({l1_address:wallet});
+    const upstream=await fetch(url,{signal:AbortSignal.timeout(10000),headers:{Accept:'application/json'}});
+    if (!upstream.ok) return res.status(502).json({ok:false,error:'lighter_upstream_unavailable'});
+    const raw=await upstream.json();
+    if (!raw || !Array.isArray(raw.sub_accounts) || (raw.l1_address && String(raw.l1_address).toLowerCase()!==wallet.toLowerCase()))
+      return res.status(502).json({ok:false,error:'lighter_account_response_invalid'});
+    const indices=raw.sub_accounts.map((a:any)=>Number(a?.index)).filter((n:number)=>Number.isSafeInteger(n)&&n>=0);
+    if (indices.length!==raw.sub_accounts.length) return res.status(502).json({ok:false,error:'lighter_account_index_invalid'});
+    res.json({ok:true,wallet,accountIndices:indices,checkedAt:new Date().toISOString(),source:'public_l1_discovery'});
+  } catch {
+    res.status(502).json({ok:false,error:'lighter_account_discovery_unavailable'});
+  }
+});
+
 // Hyperliquid signer readiness only; never requests signatures or submits orders.
 app.get('/api/bots/hyperliquid-readiness', async (req, res) => {
   const bot = String(req.query.bot || 'hunter');
