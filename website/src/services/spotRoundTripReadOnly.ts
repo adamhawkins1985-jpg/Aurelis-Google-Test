@@ -24,6 +24,8 @@ export async function observeSpotRoundTrip(input: {
     ?await fetchCowIndicativeQuote({network:'mainnet',wallet:input.wallet,sellToken:input.middleToken,buyToken:input.startToken,sellAmountBeforeFee:conservativeMiddle},signal)
     :await readUniswapV3PoolQuote({sellToken:input.middleToken,buyToken:input.startToken,amountIn:conservativeMiddle,fee:input.forwardFee},signal);
   const reverseOutput='outputAmount' in reverse?reverse.outputAmount:reverse.buyAmount;
+  const uniswapLeg=direction==='uniswap-cow'?forward:reverse;
+  const cowLeg=direction==='uniswap-cow'?reverse:forward;
   const reverseReserve=indicativeSlippageReserve(reverseOutput,input.slippageBasisPoints);
   const conservativeReturn=(BigInt(reverseOutput)-BigInt(reverseReserve.reserveBaseUnits)).toString();
   const grossReturnDifference=(BigInt(reverseOutput)-BigInt(input.startAmount)).toString();
@@ -44,6 +46,11 @@ export async function observeSpotRoundTrip(input: {
     conservativeReturn,forwardSlippageReserve:forwardReserve.reserveBaseUnits,
     reverseSlippageReserve:reverseReserve.reserveBaseUnits,
     grossReturnDifference,afterSlippageDifference,gasCostWei,afterGasDifference,
+    uniswapQuoterGasUnits:uniswapLeg.quoterGasEstimate,
+    uniswapQuoterGasIsExecutionEstimate:false as const,
+    cowQuoteFeeSellTokenUnits:cowLeg.feeAmount,
+    cowExecutionGasUnits:null,
+    routeGasVerified:false as const,
     indicativeCandidate:gasCostWei!==null && fresh && BigInt(afterGasDifference!)>0n,
     gasUnitsPerLegAssumed:assumed??null,
     netProfit:null,profitVerified:false as const,
