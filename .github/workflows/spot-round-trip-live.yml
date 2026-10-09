@@ -1,0 +1,21 @@
+name: Live Spot Round Trip Read Only
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/spot-round-trip-live.yml'
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        run: cd website && npm ci --ignore-scripts
+      - name: Read only live two-leg quote probe
+        run: cd website && npx tsx scripts/probe_live_spot_round_trip.ts
