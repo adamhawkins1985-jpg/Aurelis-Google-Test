@@ -8,7 +8,7 @@ export async function fetchLighterObservation(wallet:string, signal?:AbortSignal
   if (!response.ok) throw new Error('lighter_discovery_http_'+response.status);
   const data=await response.json();
   if (data?.ok!==true || String(data.wallet).toLowerCase()!==wallet.toLowerCase() ||
-      !Array.isArray(data.accountIndices) ||
+      data.complete!==true || !Array.isArray(data.accountIndices) ||
       !data.accountIndices.every((id:unknown)=>typeof id==='number' && Number.isSafeInteger(id) && id>=0) ||
       Number.isNaN(Date.parse(data.checkedAt))) throw new Error('lighter_discovery_invalid');
   return {venue:'lighter',wallet,checkedAt:data.checkedAt,balances:[],positions:[],orders:[],fills:[],
