@@ -24,8 +24,11 @@ export async function readUniswapV3PoolQuote(input:{
   if(payload?.error||typeof payload?.result!=='string')throw Error('uniswap_pool_quote_unavailable');
   const decoded=abi.decodeFunctionResult('quoteExactInputSingle',payload.result);
   const output=decoded[0] as bigint;
-  if(output<=0n)throw Error('uniswap_pool_quote_invalid');
+  const quoterGasEstimate=decoded[3] as bigint;
+  if(output<=0n||quoterGasEstimate<=0n||quoterGasEstimate>2000000n)throw Error('uniswap_pool_quote_invalid');
   return {venue:'uniswap-v3-pool',chain:'mainnet',sellToken:input.sellToken,buyToken:input.buyToken,
     inputAmount:input.amountIn,outputAmount:output.toString(),checkedAt:new Date().toISOString(),
-    feeTier:input.fee,indicative:true as const,executable:false as const};
+    feeTier:input.fee,quoterGasEstimate:quoterGasEstimate.toString(),
+    quoterGasIsExecutionEstimate:false as const,
+    indicative:true as const,executable:false as const};
 }
