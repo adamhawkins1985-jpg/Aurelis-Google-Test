@@ -8,6 +8,7 @@ export async function scanSpotRoundTrips(input:{
   wallet:string;startToken:string;middleToken:string;
   amounts?:readonly string[];fees?:readonly (500|3000|10000)[];
   slippageBasisPoints?:number;assumedGasUnitsPerLeg?:number;
+  simulateUniswapRouterGas?:boolean;
 },signal?:AbortSignal) {
   const amounts=input.amounts??SPOT_SCAN_AMOUNTS_WEI;
   const fees=input.fees??SPOT_SCAN_FEE_TIERS;
@@ -23,10 +24,14 @@ export async function scanSpotRoundTrips(input:{
           wallet:input.wallet,startToken:input.startToken,middleToken:input.middleToken,
           startAmount:amount,forwardFee:fee,direction,
           slippageBasisPoints:input.slippageBasisPoints??50,
-          assumedGasUnitsPerLeg:input.assumedGasUnitsPerLeg??200000
+          assumedGasUnitsPerLeg:input.assumedGasUnitsPerLeg??200000,
+          simulateUniswapRouterGas:input.simulateUniswapRouterGas??false
         },signal);
         results.push({amount,fee,direction,status:quote.status,
           afterGasDifference:quote.afterGasDifference,
+          routerSimulationStatus:quote.routerSimulation?.status??'not_requested',
+          routerSimulatedGasUnits:quote.routerSimulation?.estimatedGasUnits??null,
+          gasScenarioVerified:false as const,
           candidate:quote.indicativeCandidate,verifiedProfit:false as const});
       } catch(error) {
         results.push({amount,fee,direction,status:'quote_unavailable',
