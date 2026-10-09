@@ -15,6 +15,19 @@ export type SwapWidgetProvider = {
 // Rango's published Terms of Use exclude US persons and residents.
 export const isSwapWidgetUnavailable = (providerId: string) => providerId === 'rango';
 
+// Uniswap's official embed requires origin allowlisting. Do not load an iframe
+// until wallet.ahconceptsai.com has actually been approved by Uniswap Labs.
+export const isUniswapExternalLaunch = (providerId: string) => providerId === 'uniswap';
+
+const openExternalProvider = (url: string) => {
+  const desktopBridge = (window as any).AurelisDesktop;
+  if (desktopBridge?.isDesktop && typeof desktopBridge.openBrowser === 'function') {
+    desktopBridge.openBrowser(url);
+    return;
+  }
+  window.open(url, '_blank', 'noopener,noreferrer');
+};
+
 export const SWAP_WIDGET_PROVIDERS: SwapWidgetProvider[] = [
   {
     id: 'thorchain',
@@ -26,13 +39,13 @@ export const SWAP_WIDGET_PROVIDERS: SwapWidgetProvider[] = [
     accent: '#22d3ee',
   },
   {
-    id: 'llama',
-    name: 'LlamaSwap',
-    short: 'LL',
-    logo: '/provider-icons/llama.ico',
-    subtitle: 'Aggregator routes',
-    url: 'https://swap.defillama.com/',
-    accent: '#86efac',
+    id: 'uniswap',
+    name: 'Uniswap',
+    short: 'UNI',
+    logo: 'https://app.uniswap.org/favicon.png',
+    subtitle: 'DEX swaps and crypto purchases',
+    url: 'https://app.uniswap.org/swap',
+    accent: '#ff007a',
   },
   {
     id: 'rango',
@@ -182,7 +195,7 @@ export const SwapWidgetDock: React.FC = () => {
               key={provider.id}
               type="button"
               onClick={() => {
-                if (isSwapWidgetUnavailable(provider.id)) {
+                if (isSwapWidgetUnavailable(provider.id) || isUniswapExternalLaunch(provider.id)) {
                   setActiveId(selected ? null : provider.id);
                   return;
                 }
@@ -264,6 +277,24 @@ export const SwapWidgetDock: React.FC = () => {
                 The icon is preserved, but trading through this provider is disabled.
               </p>
             </div>
+          ) : isUniswapExternalLaunch(active.id) ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-4 p-5 text-center">
+              <img src={active.logo} alt="" className="h-14 w-14 rounded-2xl object-contain" />
+              <h3 className="text-base font-bold text-text-primary">Uniswap</h3>
+              <p className="max-w-sm text-xs leading-relaxed text-text-secondary">
+                Swap thousands of tokens across supported networks or buy crypto using an available payment provider.
+                Uniswap requires approval to embed its app on AURELIS, so for now it opens separately.
+                Connect your main wallet on Uniswap and review transactions there.
+              </p>
+              <button type="button" onClick={() => openExternalProvider(active.url)}
+                className="rounded-xl bg-primary-container px-5 py-2.5 text-xs font-bold text-on-primary-container">
+                Open Uniswap Swap
+              </button>
+              <button type="button" onClick={() => openExternalProvider('https://app.uniswap.org/buy')}
+                className="rounded-xl border border-primary-container/40 px-5 py-2.5 text-xs font-bold text-text-primary">
+                Buy Crypto
+              </button>
+            </div>
           ) : (
             <iframe
               key={active.id}
@@ -341,6 +372,23 @@ export const MobileSwapWidgetPage: React.FC<{ providerId?: string | null }> = ({
         <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-text-secondary">
           Rango trading is unavailable for US users under its current terms.
           The original right-side provider icon remains visible.
+        </div>
+      ) : isUniswapExternalLaunch(provider.id) ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 p-5 text-center">
+          <img src={provider.logo} alt="" className="h-14 w-14 rounded-xl object-contain" />
+          <h2 className="text-lg font-bold">Uniswap</h2>
+          <p className="max-w-sm text-xs leading-relaxed text-text-secondary">
+            Uniswap requires origin approval before embedding. Open its official website to swap or buy with
+            a supported payment provider. Connect and approve using your main wallet directly on Uniswap.
+          </p>
+          <a href={provider.url} target="_blank" rel="noopener noreferrer"
+            className="rounded-xl bg-primary-container px-5 py-2.5 text-xs font-bold text-on-primary-container">
+            Open Uniswap Swap
+          </a>
+          <a href="https://app.uniswap.org/buy" target="_blank" rel="noopener noreferrer"
+            className="rounded-xl border border-primary-container/40 px-5 py-2.5 text-xs font-bold text-text-primary">
+            Buy Crypto
+          </a>
         </div>
       ) : (
         <iframe

@@ -16,8 +16,8 @@ assert.match(primary, /src=\{LLAMASWAP_URL\}/, 'Hosted iframe uses the official 
 assert.match(primary, /top-bar connection is not automatically shared/, 'No false claims of wallet session sharing');
 assert.doesNotMatch(primary, /postMessage|walletConnectTopic|eth_sendTransaction|seedPhrase|privateKey/, 'Never bridge signing or wallet secrets across the iframe');
 assert.match(primary, /target="_blank"/, 'Fallback to official provider in new tab');
-for (const id of ['thorchain', 'llama', 'rango', 'mayan', 'swapspro']) {
-  assert.match(dock, new RegExp("id: '" + id + "'"), 'Preserve original provider icon: ' + id);
+for (const id of ['thorchain', 'uniswap', 'rango', 'mayan', 'swapspro']) {
+  assert.match(dock, new RegExp("id: '" + id + "'"), 'Preserve alternate provider icon: ' + id);
 }
 assert.match(dock, /isSwapWidgetUnavailable = \(providerId: string\) => providerId === 'rango'/, 'Disable restricted Rango provider');
 assert.match(dock, /isSwapWidgetUnavailable\(active\.id\) \? \(/, 'Disable Rango embedded desktop provider');
