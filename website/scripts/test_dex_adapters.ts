@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { lighterMonitoringState } from '../src/services/lighterMonitoringState';
 import { parseLighterOrders } from '../src/services/lighterOrderNormalizer';
 import { DEX_VENUES, canUseAutomatedFunding, canUseEmergencyClose, canUseLiveOrders } from '../src/services/dexVenueRegistry';
 import { observeDexAccount, registerDexAccountAdapter } from '../src/services/dexAccountAdapters';
@@ -79,6 +80,12 @@ async function test(): Promise<void> {
   assert.throws(()=>parseLighterOrders({code:200,orders:[{order_index:12,symbol:'ETH',status:'filled'}]},3,'active'),/lighter_order_status_mismatch/);
   assert.throws(()=>parseLighterOrders({code:200,orders:[],next_cursor:'more'},3,'active'),/lighter_orders_incomplete/);
   assert.throws(()=>parseLighterOrders({code:200,orders:[{order_index:12,symbol:'ETH',status:'open',account_index:9}]},3,'active'),/lighter_orders_account_mismatch/);
+  assert.equal(lighterMonitoringState(wallet,wallet,'1234567890123456'),'configured-unverified');
+  assert.equal(lighterMonitoringState(wallet,wallet.toUpperCase().replace('0X','0x'),'1234567890123456'),'configured-unverified');
+  assert.equal(lighterMonitoringState(wallet,'0x'+'b'.repeat(40),'1234567890123456'),'auth-required');
+  assert.equal(lighterMonitoringState(wallet,wallet,undefined),'auth-required');
+  assert.equal(lighterMonitoringState(wallet,wallet,'short'),'auth-required');
+  assert.throws(()=>lighterMonitoringState('wrong',wallet,'1234567890123456'),/invalid_wallet_address/);
   console.log('DEX registry and read-only adapter checks passed');
 }
 test().catch(error=>{console.error(error);process.exitCode=1;});
