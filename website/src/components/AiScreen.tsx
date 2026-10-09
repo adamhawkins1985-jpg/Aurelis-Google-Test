@@ -538,6 +538,7 @@ export const AiScreen: React.FC<AiScreenProps> = ({
           <div className="mt-2 grid gap-1 sm:grid-cols-2">
             {dexObservations.map(observation=><p key={observation.venue} className="text-[10px] text-text-muted">
               {DEX_VENUES.find(v=>v.id===observation.venue)?.name}: {observation.status==='observed'?'Positions '+(observation.openPositionCount??'unknown')+' · Orders '+(observation.activeOrders??'unknown')+' · Account USD '+(observation.accountValueUsd??'unknown'):'Unavailable'}
+              {observation.status==='observed' && observation.accountIndices !== null && <span className="block text-[9px] text-text-muted">Public account IDs: {observation.accountIndices.length ? observation.accountIndices.join(', ') : 'none'} · Wallet ownership unverified</span>}
             </p>)}
           </div>
         </div>
