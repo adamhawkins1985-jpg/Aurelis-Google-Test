@@ -11,7 +11,7 @@ export async function fetchLighterObservation(wallet:string, signal?:AbortSignal
       data.complete!==true || !Array.isArray(data.accountIndices) ||
       !data.accountIndices.every((id:unknown)=>typeof id==='number' && Number.isSafeInteger(id) && id>=0) ||
       Number.isNaN(Date.parse(data.checkedAt))) throw new Error('lighter_discovery_invalid');
-  return {venue:'lighter',wallet,checkedAt:data.checkedAt,balances:[],positions:[],orders:[],fills:[],
+  return {venue:'lighter',wallet,checkedAt:data.checkedAt,balances:[],positions:[],orders:[],fills:[],orderMonitoring:'auth-required',fillMonitoring:'auth-required',
     verifiedFields:['accountIndices'],accountIndices:data.accountIndices};
 }
 export function enableLighterReadOnlyAdapter():void {
@@ -41,6 +41,6 @@ export async function fetchLighterAccountSnapshot(wallet:string, signal?:AbortSi
       positions.push({market:p.market,side:p.side,size:p.size});
     }
   }
-  return {venue:'lighter',wallet,checkedAt:body.checkedAt,balances,positions,orders:[],fills:[],
+  return {venue:'lighter',wallet,checkedAt:body.checkedAt,balances,positions,orders:[],fills:[],orderMonitoring:'auth-required',fillMonitoring:'auth-required',
     accountIndices:indices,openPositionCount:positions.length,verifiedFields:['accountIndices','balances','positions']};
 }
