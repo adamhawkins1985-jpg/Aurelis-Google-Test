@@ -36,6 +36,7 @@ try {
   assert.equal(result.profitVerified,false);
   assert.equal(result.netProfit,null);
   assert.equal(result.ordersEnabled,false);
+  assert.equal(result.routerSimulation,null);
   assert.equal(result.costEvidence.executionGasVerified,false);
   assert.equal(result.costEvidence.quoterGasUsableAsExecutionGas,false);
   for(const direction of ['uniswap-cow','cow-uniswap'] as const){
@@ -52,6 +53,7 @@ try {
   assert.equal(split.routeGasVerified,false);
   const scanned=await scanSpotRoundTrips({wallet:'0x'+'c'.repeat(40),startToken:'0x'+'a'.repeat(40),middleToken:'0x'+'b'.repeat(40),amounts:['100000000000000000'],fees:[500],assumedGasUnitsPerLeg:200000});
   assert.equal(scanned.checked,2);
+  assert.equal(scanned.results.every(r=>r.status!=='indicative_round_trip'||r.routerSimulationStatus==='not_requested'),true);
   assert.equal(scanned.verifiedProfits,0);
   assert.equal(scanned.ordersEnabled,false);
   assert.equal(scanned.results.every(row=>row.verifiedProfit===false),true);
