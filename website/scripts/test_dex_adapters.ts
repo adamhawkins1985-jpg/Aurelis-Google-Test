@@ -43,11 +43,13 @@ async function test(): Promise<void> {
   } finally { globalThis.fetch = priorFetch; }
   const previous=globalThis.fetch;
   try {
-    globalThis.fetch=async()=>new Response(JSON.stringify({ok:true,wallet,accountIndices:[12,34],checkedAt:new Date(0).toISOString()}),{status:200});
+    globalThis.fetch=async()=>new Response(JSON.stringify({ok:true,wallet,complete:true,accountIndices:[12,34],checkedAt:new Date(0).toISOString()}),{status:200});
     const lighter=await fetchLighterObservation(wallet);
     assert.deepEqual(lighter.accountIndices,[12,34]);
     assert.deepEqual(lighter.balances,[]);
-    globalThis.fetch=async()=>new Response(JSON.stringify({ok:true,wallet,accountIndices:['invalid'],checkedAt:new Date(0).toISOString()}),{status:200});
+    globalThis.fetch=async()=>new Response(JSON.stringify({ok:true,wallet,complete:true,accountIndices:['invalid'],checkedAt:new Date(0).toISOString()}),{status:200});
+    await assert.rejects(fetchLighterObservation(wallet),/lighter_discovery_invalid/);
+    globalThis.fetch=async()=>new Response(JSON.stringify({ok:true,wallet,complete:false,accountIndices:[12],checkedAt:new Date(0).toISOString()}),{status:200});
     await assert.rejects(fetchLighterObservation(wallet),/lighter_discovery_invalid/);
     await assert.rejects(fetchLighterObservation('bad'),/invalid_bot_wallet_address/);
   } finally {globalThis.fetch=previous;}
