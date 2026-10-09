@@ -16,7 +16,7 @@ export async function observeSpotRoundTrip(input: {
   const forward=direction==='uniswap-cow'
     ?await readUniswapV3PoolQuote({sellToken:input.startToken,buyToken:input.middleToken,amountIn:input.startAmount,fee:input.forwardFee},signal)
     :await fetchCowIndicativeQuote({network:'mainnet',wallet:input.wallet,sellToken:input.startToken,buyToken:input.middleToken,sellAmountBeforeFee:input.startAmount},signal);
-  const forwardOutput='outputAmount' in forward?forwardOutput:forward.buyAmount;
+  const forwardOutput='outputAmount' in forward?forward.outputAmount:forward.buyAmount;
   const forwardReserve=indicativeSlippageReserve(forwardOutput,input.slippageBasisPoints);
   const conservativeMiddle=(BigInt(forwardOutput)-BigInt(forwardReserve.reserveBaseUnits)).toString();
   if(BigInt(conservativeMiddle)<=0n)throw Error('insufficient_intermediate_quote');
