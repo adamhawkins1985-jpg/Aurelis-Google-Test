@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - '.github/workflows/spot-round-trip-live.yml'
+      - 'website/src/services/spotRoundTripReadOnly.ts'
+      - 'website/scripts/probe_live_spot_round_trip.ts'
 permissions:
   contents: read
 jobs:
