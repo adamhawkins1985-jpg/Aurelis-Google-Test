@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { exchangeRouter } from './server/exchange_routes';
+import { lighterMonitoringState } from './src/services/lighterMonitoringState';
 import { registerMigratedBackend, getVerifiedWalletAddress, runAaveAgentQuery } from './server/migrated_backend';
 
 dotenv.config();
@@ -765,14 +766,14 @@ app.get('/api/bots/lighter-order-monitoring-status', (req,res) => {
   const wallet=String(req.query.wallet||'');
   if (!/^0x[a-fA-F0-9]{40}$/.test(wallet)) return res.status(400).json({ok:false,error:'invalid_wallet_address'});
   res.setHeader('Cache-Control','no-store');
-  const expected=String(process.env.AURELIS_LIGHTER_MONITOR_WALLET||'');
-  const authorized=Boolean(process.env.AURELIS_LIGHTER_MONITOR_AUTH);
-  const bound=/^0x[a-fA-F0-9]{40}$/.test(expected) && expected.toLowerCase()===wallet.toLowerCase();
+  const state=lighterMonitoringState(wallet,process.env.AURELIS_LIGHTER_MONITOR_WALLET,
+    process.env.AURELIS_LIGHTER_MONITOR_AUTH);
   res.json({ok:true,venue:'lighter',readOnly:true,
-    orderMonitoring:authorized&&bound?'configured_unverified':'auth-required',
+    orderMonitoring:state,
     fillMonitoring:'auth-required',
-    message:authorized&&bound?'Token configured; API response and account scope not yet verified':
-      'Read-only monitoring token and exact bot-wallet binding required'});
+    message:state==='configured-unverified'
+      ? 'Credentials configured; account scope and monitoring API still unverified'
+      : 'Read-only monitoring credentials and exact bot-wallet binding required'});
 });
 
 // Hyperliquid signer readiness only; never requests signatures or submits orders.
