@@ -149,6 +149,7 @@ async function test(): Promise<void> {
     assert.equal(cycle.find(v=>v.venue==='lighter')?.error,'observation_failed');
     assert.equal(cycle.find(v=>v.venue==='dydx')?.activeOrders,null);
     await assert.rejects(observeBotDexVenues('not-a-wallet'),/invalid_bot_wallet_address/);
+    await assert.rejects(observeBotDexVenues('0x'+'0'.repeat(40)),/invalid_bot_wallet_address/);
   } finally {globalThis.fetch=beforeCycle;}
   console.log('DEX registry and read-only adapter checks passed');
 }
