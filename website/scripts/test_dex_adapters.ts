@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { authorizeBotMonitoring } from '../server/bot_monitor_access';
 import { readLighterActiveOrders } from '../server/lighter_active_order_read';
 import { lighterMonitoringState } from '../src/services/lighterMonitoringState';
 import { parseLighterOrders } from '../src/services/lighterOrderNormalizer';
@@ -99,6 +100,12 @@ async function test(): Promise<void> {
     await assert.rejects(readLighterActiveOrders(2,'0123456789abcdef'),/lighter_order_observation_incomplete/);
     await assert.rejects(readLighterActiveOrders(2,'short'),/lighter_monitor_authorization_missing/);
   } finally {globalThis.fetch=beforeOrdersFetch;}
+  const internalKey='A'.repeat(40);
+  assert.equal(authorizeBotMonitoring(internalKey,internalKey),true);
+  assert.equal(authorizeBotMonitoring('B'.repeat(40),internalKey),false);
+  assert.equal(authorizeBotMonitoring(undefined,internalKey),false);
+  assert.equal(authorizeBotMonitoring(internalKey,undefined),false);
+  assert.equal(authorizeBotMonitoring('short','short'),false);
   console.log('DEX registry and read-only adapter checks passed');
 }
 test().catch(error=>{console.error(error);process.exitCode=1;});
