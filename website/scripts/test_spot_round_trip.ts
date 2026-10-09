@@ -1,3 +1,4 @@
+import { scanSpotPairUniverse } from '../src/services/spotPairUniverse';
 import { scanSpotRoundTrips } from '../src/services/spotRoundTripScanner';
 import assert from 'node:assert/strict';
 import { observeSpotRoundTrip } from '../src/services/spotRoundTripReadOnly';
@@ -41,5 +42,10 @@ try {
   assert.equal(scanned.verifiedProfits,0);
   assert.equal(scanned.ordersEnabled,false);
   assert.equal(scanned.results.every(row=>row.verifiedProfit===false),true);
-  console.log('round trip multi-direction scanner tests passed');
+  const universe=await scanSpotPairUniverse({wallet:'0x'+'c'.repeat(40),assumedGasUnitsPerLeg:200000});
+  assert.equal(universe.pairs.length,2);
+  assert.equal(universe.checked,8);
+  assert.equal(universe.verifiedProfits,0);
+  assert.equal(universe.ordersEnabled,false);
+  console.log('round trip multi-pair scanner tests passed');
 } finally {globalThis.fetch=original;}
