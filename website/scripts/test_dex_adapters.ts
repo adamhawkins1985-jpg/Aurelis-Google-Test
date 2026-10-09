@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { reconcileDexObservations } from '../src/services/dexMonitoringReconciliation';
 import { authorizeBotMonitoring } from '../server/bot_monitor_access';
 import { readLighterActiveOrders } from '../server/lighter_active_order_read';
 import { lighterMonitoringState } from '../src/services/lighterMonitoringState';
@@ -110,6 +111,23 @@ async function test(): Promise<void> {
   assert.equal(authorizeBotMonitoring(undefined,internalKey),false);
   assert.equal(authorizeBotMonitoring(internalKey,undefined),false);
   assert.equal(authorizeBotMonitoring('short','short'),false);
+  const reconciled=reconcileDexObservations([{
+    venue:'hyperliquid',wallet,checkedAt:new Date(0).toISOString(),
+    balances:[],positions:[],orders:[],fills:[],orderMonitoring:'unavailable',fillMonitoring:'unavailable',
+    accountValueUsd:'42.75',openPositionCount:0,verifiedFields:['accountValueUsd','openPositionCount'],
+  }]);
+  assert.equal(reconciled.length,10);
+  assert.equal(reconciled.find(v=>v.venue==='hyperliquid')?.openPositionCount,0);
+  assert.equal(reconciled.find(v=>v.venue==='hyperliquid')?.activeOrders,null);
+  assert.equal(reconciled.find(v=>v.venue==='lighter')?.status,'unavailable');
+  assert.equal(reconciled.find(v=>v.venue==='lighter')?.openPositionCount,null);
+  assert.throws(()=>reconcileDexObservations([{
+    venue:'hyperliquid',wallet,checkedAt:new Date(0).toISOString(),
+    balances:[],positions:[],orders:[],fills:[],orderMonitoring:'unavailable',fillMonitoring:'unavailable',
+  },{
+    venue:'hyperliquid',wallet,checkedAt:new Date(0).toISOString(),
+    balances:[],positions:[],orders:[],fills:[],orderMonitoring:'unavailable',fillMonitoring:'unavailable',
+  }]),/dex_reconciliation_duplicate_or_unknown/);
   console.log('DEX registry and read-only adapter checks passed');
 }
 test().catch(error=>{console.error(error);process.exitCode=1;});
