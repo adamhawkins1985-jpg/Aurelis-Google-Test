@@ -154,6 +154,13 @@ async function test(): Promise<void> {
     assert.equal(cycle.find(v=>v.venue==='lighter')?.status,'unavailable');
     assert.equal(cycle.find(v=>v.venue==='lighter')?.error,'observation_failed');
     assert.equal(cycle.find(v=>v.venue==='dydx')?.activeOrders,null);
+    globalThis.fetch=async (url) => String(url).includes('hyperliquid-account')
+      ? new Response(JSON.stringify({ok:true,walletAddress:wallet,perpsAccountValueUsd:'51',openPerpPositions:1}),{status:200})
+      : new Response(JSON.stringify({ok:true,wallet:'0x'+'b'.repeat(40),complete:true,checkedAt:new Date(0).toISOString(),accounts:[]}),{status:200});
+    const mismatched=await observeBotDexVenues(wallet);
+    assert.equal(mismatched.find(v=>v.venue==='hyperliquid')?.status,'observed');
+    assert.equal(mismatched.find(v=>v.venue==='lighter')?.status,'unavailable');
+    assert.equal(mismatched.find(v=>v.venue==='lighter')?.activeOrders,null);
     await assert.rejects(observeBotDexVenues('not-a-wallet'),/invalid_bot_wallet_address/);
     await assert.rejects(observeBotDexVenues('0x'+'0'.repeat(40)),/invalid_bot_wallet_address/);
   } finally {globalThis.fetch=beforeCycle;}
