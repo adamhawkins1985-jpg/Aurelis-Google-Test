@@ -1,3 +1,4 @@
+import { readEthereumGasPrice, estimateGasUsdcBaseUnits } from '../src/services/ethereumGasEstimate';
 import { estimateIndicativeNetDifference } from '../src/services/indicativeNetDifference';
 import { readUniswapV3PoolQuote } from '../src/services/uniswapV3PoolReadOnly';
 import { compareIndicativeSpotQuotes } from '../src/services/spotQuoteComparison';
@@ -68,6 +69,18 @@ async function test(): Promise<void> {
   assert.equal(knownScenario.netDifference,'24140');
   assert.equal(knownScenario.profitVerified,false);
   assert.equal(estimateIndicativeNetDifference('10',{gasCostBuyTokenUnits:'15',slippageReserveBuyTokenUnits:'1',additionalFeesBuyTokenUnits:'0'}).netDifference,'-6');
+  const gasEstimate=estimateGasUsdcBaseUnits('1000000000',200000,'10000000000000000','30000000');
+  assert.equal(gasEstimate.estimatedUsdcBaseUnits,'600000');
+  assert.equal(gasEstimate.executionGasUnverified,true);
+  assert.throws(()=>estimateGasUsdcBaseUnits('1000000000',0,'10000000000000000','30000000'),/invalid_gas_conversion_inputs/);
+  const beforeGas=globalThis.fetch;
+  try {
+    globalThis.fetch=async (_url,request)=>{
+      assert.equal(JSON.parse(String(request?.body)).method,'eth_gasPrice');
+      return new Response(JSON.stringify({jsonrpc:'2.0',id:1,result:'0x3b9aca00'}),{status:200});
+    };
+    assert.equal((await readEthereumGasPrice()).gasPriceWei,'1000000000');
+  } finally {globalThis.fetch=beforeGas;}
   assert.equal(DEX_VENUES.length, 10);
   assert.equal(new Set(DEX_VENUES.map(v => v.id)).size, 10);
   for (const v of DEX_VENUES) {
