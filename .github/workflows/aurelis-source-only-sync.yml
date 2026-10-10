@@ -43,6 +43,14 @@ jobs:
             --exclude='*.sqlite*' --exclude='*.db' --exclude='*.log' \
             --exclude='*.pre-*' --exclude='*.pre_*' --exclude='*.backup*' \
             --exclude='*.bak*' --exclude='*.old*' --exclude='*.orig' \
+            --exclude='node_modules/' --exclude='dist/' --exclude='backups/' \
+            --include='*/' --include='*.ts' --include='*.tsx' --include='*.js' \
+            --include='*.mjs' --include='*.cjs' --include='*.json' \
+            --include='*.css' --include='*.scss' --include='*.html' --include='*.svg' \
+            --include='*.png' --include='*.jpg' --include='*.jpeg' --include='*.webp' \
+            --include='*.gif' --include='*.ico' --include='*.woff' --include='*.woff2' \
+            --include='*.ttf' --include='*.otf' --include='*.txt' --include='*.md' \
+            --exclude='*' \
             -e "ssh -i $HOME/.ssh/aurelis_source -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10" \
             "$REMOTE:aurelis-source-export/" "$RUNNER_TEMP/live-source/"
 
