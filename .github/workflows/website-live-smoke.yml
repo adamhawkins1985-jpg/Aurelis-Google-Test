@@ -1,0 +1,31 @@
+name: AURELIS production read-only smoke
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/website-live-smoke.yml'
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Verify public site and owner-only bot endpoints
+        run: |
+          set -euo pipefail
+          BASE="https://wallet.ahconceptsai.com"
+          curl -fsS --retry 3 --retry-delay 2 --max-time 20 "$BASE/api/health" > "$RUNNER_TEMP/health.json"
+          node -e "const f=require('fs');const h=JSON.parse(f.readFileSync(process.argv[1],'utf8'));if(h.status!=='ok')process.exit(1);console.log('Public website health: ok')" "$RUNNER_TEMP/health.json"
+          curl -fsS --retry 2 --max-time 20 "$BASE/" > "$RUNNER_TEMP/index.html"
+          grep -Eq 'assets/index-[A-Za-z0-9_-]+\.js' "$RUNNER_TEMP/index.html"
+          echo "Website HTML and application bundle: available"
+          for route in             /api/bots/exchange-accounts             /api/bots/open-orders             /api/bots/kraken-execution-capability             /api/bots/kraken-test-readiness; do
+            code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 16 "$BASE$route")"
+            if test "$code" != 401; then
+              echo "::error::Protected route had unexpected anonymous status $code ($route)"
+              exit 1
+            fi
+            echo "Protected Bot API rejected unsigned access: $route"
+          done
+          echo "PASS: site health, client HTML, owner-only balance/order/capability routes."
