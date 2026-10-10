@@ -71,6 +71,21 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
   const [token, setToken] = useState('');
   const [krakenValidated,setKrakenValidated]=useState(false);
   const [validationStatus,setValidationStatus]=useState('');
+  const [validationExpiresAt,setValidationExpiresAt]=useState<number|null>(null);
+  useEffect(()=>{
+    if(validationExpiresAt==null)return;
+    const remaining=validationExpiresAt-Date.now();
+    if(remaining<=0){
+      setKrakenValidated(false);
+      setValidationStatus('Exchange validation has expired. Review and validate again. No trade placed.');
+      return;
+    }
+    const timer=window.setTimeout(()=>{
+      setKrakenValidated(false);
+      setValidationStatus('Exchange validation has expired. Review and validate again. No trade placed.');
+    },remaining);
+    return ()=>window.clearTimeout(timer);
+  },[validationExpiresAt]);
   const [submitResult, setSubmitResult] = useState<any | null>(null);
   const [submitError, setSubmitError] = useState('');
   const [executionEnabled,setExecutionEnabled]=useState(false);
@@ -113,6 +128,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
     setPreview(null);
     setToken('');
     setKrakenValidated(false);
+    setValidationExpiresAt(null);
     setValidationStatus('');
     setStatus('Reviewed setup loaded from Hunter. Build the final order review before submission.');
   }, [initialSetup]);
@@ -340,6 +356,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
     setBusy(true);
     setToken('');
     setKrakenValidated(false);
+    setValidationExpiresAt(null);
     setValidationStatus('');
     setSubmitResult(null);
     setSubmitError('');
@@ -382,6 +399,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
     }
     setBusy(true);
     setKrakenValidated(false);
+    setValidationExpiresAt(null);
     setValidationStatus('Validating Kraken order parameters. No trade will be placed.');
     try{
       const response=await fetch('/api/signal-desk/order/validate',{
@@ -392,8 +410,12 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
       const data=await response.json();
       if(!response.ok||!data?.ok||!data?.validated||data?.orderPlaced!==false)
         throw new Error(data?.error||'Kraken validation not confirmed');
+      const expiresAt=Math.min(Number(data.expiresAt)||0,Date.now()+28000);
+      if(!Number.isFinite(expiresAt)||expiresAt<=Date.now())
+        throw new Error('Exchange validation expired before the result was received');
       setKrakenValidated(true);
-      setValidationStatus('KRAKEN VALIDATED. No order placed. Validation lasts at most 30 seconds. Real trading is separately locked.');
+      setValidationExpiresAt(expiresAt);
+      setValidationStatus('KRAKEN VALIDATED. No order placed. Approval window expires shortly; real trading remains locked.');
     }catch(error:any){
       setKrakenValidated(false);
       setValidationStatus('Validation failed: '+(error?.message||'Unknown error')+'. No order requested.');
@@ -424,6 +446,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
       }
       setToken('');
       setKrakenValidated(false);
+      setValidationExpiresAt(null);
       setPreview(null);
       setStatus('Kraken trade submitted. Live position status is refreshing now.');
       await loadLiveStatus();
@@ -569,7 +592,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
               POSITION USD
               <input
                 value={amount}
-                onChange={(e) => { setAmount(e.target.value); setPreview(null); setToken(''); }}
+                onChange={(e) => { setAmount(e.target.value); setPreview(null); setToken(''); setKrakenValidated(false); setValidationExpiresAt(null); }}
                 inputMode="decimal"
                 className="mt-1 w-full min-w-0 p-2 rounded-lg bg-surface-base border border-white/10 text-text-primary"
               />
@@ -578,7 +601,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
               LEVERAGE
               <select
                 value={leverage}
-                onChange={(e) => { setLeverage(e.target.value); setPreview(null); setToken(''); }}
+                onChange={(e) => { setLeverage(e.target.value); setPreview(null); setToken(''); setKrakenValidated(false); setValidationExpiresAt(null); }}
                 className="mt-1 w-full min-w-0 p-2 rounded-lg bg-surface-base border border-white/10 text-text-primary"
               >
                 {(supportedLeverage.length ? supportedLeverage : [2,3,4,5]).map((x) => <option key={x} value={String(x)}>{x}x</option>)}
