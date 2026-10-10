@@ -7,11 +7,13 @@ const desk=readFileSync('src/components/SignalDeskScreen.tsx','utf8');
 const readiness=readFileSync('src/components/trade/BotTestReadiness.tsx','utf8');
 
 const prepareStart=backend.indexOf('async function prepareKrakenOrder(');
+const validatorStart=backend.indexOf('async function validateKrakenPreparedOrder(');
 const submitStart=backend.indexOf('async function submitKrakenOrder(');
 const end=backend.indexOf('const AAVE_MCP_DEFAULT_ENDPOINT',submitStart);
 assert(prepareStart>=0&&submitStart>prepareStart&&end>submitStart,'Both Kraken order handlers must exist');
 const prepare=backend.slice(prepareStart,submitStart);
 const submit=backend.slice(submitStart,end);
+const validation=backend.slice(validatorStart,submitStart);
 
 assert(prepare.includes('amount>10 || amount<10'),'First Kraken preview notional must be exactly $10');
 assert(prepare.includes('leverage>2'),'Kraken preview must reject leverage above 2x');
@@ -21,8 +23,26 @@ assert(submit.includes('Number(p.leverage)>2'),'Submit must recheck 2x max lever
 assert(submit.includes("payload?.acknowledgeLiveTest!==true"),'Submit must require fresh explicit user approval');
 assert(submit.includes("process.env.AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED!=='1'"),'Submit must be disabled by default');
 assert(submit.includes("throw new Error('trade_confirmation_used')"),'Submit must reject reused confirmation tokens');
-assert(submit.includes("'close[ordertype]':'stop-loss'"),'Conditional stop must be requested on entry');
+assert(backend.includes("'close[ordertype]':'stop-loss'"),'Protected order payload must include Kraken stop-loss');
+assert(submit.includes('krakenProtectedOrderPayload(item)'),'Submit must use the same order payload as validation');
 assert(submit.includes('kraken_price_moved_repreview'),'Submit must reject stale quotes');
+assert(submit.includes('kraken_validation_required_or_expired'),'Submission requires recent successful validation');
+assert(submit.includes("validate:'true'"),'Revalidate exact protected order before live submission');
+assert(validatorStart>prepareStart&&submitStart>validatorStart,'No-order Kraken validation handler is required');
+assert(validation.includes("validate:'true'"),'Exchange validation MUST use validate=true');
+assert(validation.includes("krakenProtectedOrderPayload(item)"),'Exchange validation must use protected payload');
+assert(validation.includes("orderPlaced:false"),'Validation response must explicitly report no order placed');
+assert(backend.includes("app.post('/api/signal-desk/order/validate'"),'Separate validation endpoint must be exposed');
+const validationRoute=backend.slice(backend.indexOf("app.post('/api/signal-desk/order/validate'"),
+    backend.indexOf("app.post('/api/signal-desk/order/submit'"));
+assert(validationRoute.includes('requireBotAccountOwner(req,res)'),'Validation must require signed owner');
+assert(live.includes('onClick={reviewKraken}'),'Live Bet must offer a usable Kraken review button');
+assert(live.includes('onClick={validateKraken}'),'Live Bet must offer validation without trading');
+assert(live.includes('!krakenValidated||busy'),'Live Bet submit must require Kraken validation');
+assert(desk.includes('onClick={handleValidateSetup}'),'Signal Desk must offer no-trade validation');
+assert(desk.includes('!krakenValidated || orderBusy'),'Signal Desk submit must require validation');
+assert(!desk.includes('setActivePosition({\\n        symbol: selectedCoinSymbol'),'Signal Desk must not invent a fill from submission');
+
 assert(backend.includes("app.post('/api/signal-desk/order/submit'"),'Owner-protected submit route must exist');
 const api=backend.slice(backend.indexOf("app.post('/api/signal-desk/order/submit'"),backend.indexOf("app.post('/api/signal-desk/order/submit'")+240);
 assert(api.includes('requireBotAccountOwner(req,res)'),'Submission must require Bot Wallet owner authorization');

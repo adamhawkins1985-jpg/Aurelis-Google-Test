@@ -63,6 +63,8 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [krakenReview, setKrakenReview] = useState<any | null>(null);
   const [krakenToken, setKrakenToken] = useState('');
+  const [krakenValidated,setKrakenValidated]=useState(false);
+  const [krakenValidationMessage,setKrakenValidationMessage]=useState('');
   const [executionEnabled,setExecutionEnabled]=useState(false);
   const [executionStatus,setExecutionStatus]=useState('Checking Kraken account execution…');
   useEffect(()=>{
@@ -247,6 +249,8 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
     setOrderBusy(true);
     setKrakenReview(null);
     setKrakenToken('');
+    setKrakenValidated(false);
+    setKrakenValidationMessage('');
     try {
       const response = await fetch('/api/signal-desk/order/prepare', {
         method: 'POST',
@@ -277,9 +281,34 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
     }
   };
 
+  const handleValidateSetup = async () => {
+    if(!krakenToken||!krakenReview){
+      setKrakenValidationMessage('Build a fresh Kraken review first.');
+      return;
+    }
+    setOrderBusy(true);
+    setKrakenValidated(false);
+    setKrakenValidationMessage('Validating with Kraken, no order will be placed…');
+    try{
+      const response=await fetch('/api/signal-desk/order/validate',{
+        method:'POST',credentials:'include',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({confirmationToken:krakenToken})
+      });
+      const data=await response.json();
+      if(!response.ok||!data?.ok||!data?.validated||data?.orderPlaced!==false)
+        throw new Error(data?.error||'Kraken validation was not confirmed');
+      setKrakenValidated(true);
+      setKrakenValidationMessage('KRAKEN PARAMETERS VALIDATED. No order placed. Expires within 30 seconds.');
+    }catch(error:any){
+      setKrakenValidated(false);
+      setKrakenValidationMessage('Exchange validation failed: '+(error?.message||'Unknown error'));
+    }finally{setOrderBusy(false)}
+  };
+
   const handleExecuteSetup = async () => {
-    if(!executionEnabled){
-      setToastMessage('Kraken execution locked. No order has been sent.');
+    if(!executionEnabled||!krakenValidated){
+      setToastMessage('A fresh Kraken validation and an enabled manual trade gate are both required. No order sent.');
       return;
     }
     if(!window.confirm('REAL LIVE TEST: Kraken Spot/Margin trade capped at $10 notional and 2x leverage. A conditional stop is requested after fill; take-profit is NOT placed. This can lose real funds. Approve this order?')){
@@ -300,19 +329,10 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
       });
       const data = await response.json();
       if (!response.ok || !data?.ok) throw new Error(data?.error || data?.message || 'Kraken submission failed.');
-      const mark = Number(data?.execution?.markPriceAtSubmit || deskPrice);
-      setActivePosition({
-        symbol: selectedCoinSymbol,
-        side: deskDirection,
-        leverage: Number(positionLeverage),
-        sizeUsd: Number(positionAmount || 10),
-        marginUsd: Number(positionAmount || 10) / Math.max(1, Number(positionLeverage)),
-        entryPrice: mark,
-        markPrice: mark,
-        unrealizedPnl: 0,
-        pnlPct: 0,
-      });
+      // Do not synthesize a position from a submitted order.
+      // The existing 5-second Kraken status poll reports actual positions.
       setKrakenToken('');
+      setKrakenValidated(false);
       setToastMessage('Kraken order submitted. Live position status will confirm execution.');
       if (soundEnabled) playHudSound('trade');
     } catch (error: any) {
@@ -325,7 +345,7 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
 
   const handleClosePosition = async () => {
     if (!activePosition?.txid || orderBusy) return;
-    if (!window.confirm(`Close ${activePosition.symbol} ${activePosition.side} at market now?`)) return;
+    if (!window.confirm(`Close ${activePosition.symbol} ${activePosition.side} at market now? WARNING: Conditional stop orders may remain open after a separate close, and may later open an opposite position. Review and cancel related stops in Kraken.`)) return;
     if (soundEnabled) playHudSound('click');
     setOrderBusy(true);
     try {
@@ -813,6 +833,7 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
                 onClick={() => {
                   if (soundEnabled) playHudSound('switch');
                   setSelectedCoinSymbol(sym);
+                  setKrakenToken('');setKrakenReview(null);setKrakenValidated(false);
                 }}
                 className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all cursor-pointer shrink-0 ${
                   isSelected
@@ -840,7 +861,7 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
               onChange={(e) => setProvider(e.target.value as any)}
               className="bg-surface-base px-2 py-1 rounded-md border border-white/10 text-[11px] text-text-primary outline-none focus:border-primary-container cursor-pointer mt-0.5"
             >
-              <option value="Kraken Futures">Kraken Futures</option>
+              <option value="Kraken Spot/Margin">Kraken Spot/Margin</option>
               <option value="Kraken Spot">Kraken Spot</option>
             </select>
           </div>
@@ -851,14 +872,14 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
             <input
               type="number"
               value={positionAmount}
-              onChange={(e) => setPositionAmount(e.target.value)}
+              onChange={(e) => {setPositionAmount(e.target.value);setKrakenValidated(false);setKrakenReview(null);setKrakenToken('')}}
               className="bg-surface-base px-2 py-1 rounded-md border border-white/10 text-[11px] text-text-primary outline-none focus:border-primary-container mt-0.5"
             />
           </div>
 
           <div className="flex flex-col">
             <span className="text-[9px] text-text-muted uppercase">LEVERAGE</span>
-            <select value={positionLeverage} onChange={(e) => { setPositionLeverage(e.target.value); setKrakenReview(null); setKrakenToken(''); }}
+            <select value={positionLeverage} onChange={(e) => { setPositionLeverage(e.target.value); setKrakenReview(null); setKrakenToken(''); setKrakenValidated(false); }}
               className="bg-surface-base px-2 py-1 rounded-md border border-white/10 text-[11px] text-text-primary outline-none focus:border-primary-container cursor-pointer mt-0.5">
               {(supportedLeverage.length ? supportedLeverage : [2,3,4,5]).map((x)=><option key={x} value={String(x)}>{x}x</option>)}
             </select>
@@ -1012,6 +1033,18 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
         </div>
       )}
       {krakenReview && (
+        <div className="rounded-xl border border-primary-container/30 bg-surface-panel p-3 space-y-2 text-[10px]">
+          <button type="button" onClick={handleValidateSetup} disabled={orderBusy||!krakenToken}
+            className="w-full rounded-lg border border-primary-container/40 bg-primary-container/10 text-primary-container px-3 py-2 font-bold disabled:opacity-40">
+            VALIDATE KRAKEN ORDER (NO TRADE)
+          </button>
+          {krakenValidationMessage&&<div role="status" className={krakenValidated?'text-primary-container':'text-amber-300'}>
+            {krakenValidationMessage}
+          </div>}
+          <p className="text-text-muted">Exchange validation checks order parameters only. It does not verify a filled position or stop activation.</p>
+        </div>
+      )}
+      {krakenReview && (
         <div className="lg:hidden p-3 rounded-xl bg-surface-panel/95 border border-primary-container/25 space-y-2 overflow-hidden">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-3.5 h-3.5 text-primary-container" />
@@ -1054,7 +1087,7 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
         <button
           type="button"
           onClick={handleExecuteSetup}
-          disabled={!executionEnabled || orderBusy || !krakenToken}
+          disabled={!executionEnabled || !krakenValidated || orderBusy || !krakenToken}
           className="px-3 py-1.5 rounded-lg bg-primary-container text-on-primary-container text-[11px] font-bold flex items-center gap-1 shadow-[0_0_10px_rgba(0,245,160,0.4)] cursor-pointer disabled:opacity-40"
         >
           <Zap className="w-3 h-3" />
