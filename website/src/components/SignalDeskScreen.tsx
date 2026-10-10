@@ -45,7 +45,7 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
     'BTC' | 'ETH' | 'SOL' | 'XRP' | 'DOGE' | 'ADA' | 'AVAX' | 'LINK' | 'ZEC'
   >('SOL');
   const [provider, setProvider] = useState<'Kraken Spot/Margin' | 'Kraken Spot'>('Kraken Spot/Margin');
-  const [positionAmount, setPositionAmount] = useState('25');
+  const [positionAmount, setPositionAmount] = useState('10');
   const [positionLeverage, setPositionLeverage] = useState('2');
   const [supportedLeverage, setSupportedLeverage] = useState<number[]>([]);
   const [timeframe, setTimeframe] = useState<'5m' | '15m' | '1H' | '4H'>('5m');
@@ -256,7 +256,7 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
           provider: 'KRAKEN',
           asset: selectedCoinSymbol,
           direction: deskDirection,
-          amount: Number(positionAmount || 25),
+          amount: Number(positionAmount || 10),
           leverage: Number(positionLeverage),
           stopLoss: deskStop,
           takeProfit: deskTarget,
@@ -282,7 +282,7 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
       setToastMessage('Kraken execution locked. No order has been sent.');
       return;
     }
-    if(!window.confirm('REAL LIVE TEST: Kraken Spot/Margin trade capped at $25 notional and 2x leverage. A conditional stop is requested after fill; take-profit is NOT placed. This can lose real funds. Approve this order?')){
+    if(!window.confirm('REAL LIVE TEST: Kraken Spot/Margin trade capped at $10 notional and 2x leverage. A conditional stop is requested after fill; take-profit is NOT placed. This can lose real funds. Approve this order?')){
       return;
     }
     if (!krakenToken) {
@@ -305,8 +305,8 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
         symbol: selectedCoinSymbol,
         side: deskDirection,
         leverage: Number(positionLeverage),
-        sizeUsd: Number(positionAmount || 25),
-        marginUsd: Number(positionAmount || 25) / Math.max(1, Number(positionLeverage)),
+        sizeUsd: Number(positionAmount || 10),
+        marginUsd: Number(positionAmount || 10) / Math.max(1, Number(positionLeverage)),
         entryPrice: mark,
         markPrice: mark,
         unrealizedPnl: 0,
