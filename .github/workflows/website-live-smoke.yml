@@ -28,4 +28,14 @@ jobs:
             fi
             echo "Protected Bot API rejected unsigned access: $route"
           done
-          echo "PASS: site health, client HTML, owner-only balance/order/capability routes."
+          # This request cannot place an order: no signed owner, no confirmation token,
+          # and the endpoint is Kraken validation-only.
+          validation_http="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 \
+            -X POST -H 'Content-Type: application/json' -d '{}' \
+            "$BASE/api/signal-desk/order/validate")"
+          test "$validation_http" = "401" || {
+            echo "::error::No-trade validation must require signed Bot Wallet owner; HTTP $validation_http"
+            exit 1
+          }
+          echo "Kraken validate-only endpoint requires signed owner: yes"
+          echo "PASS: site health, website bundle, authenticated bot APIs and no-trade validation access control."
