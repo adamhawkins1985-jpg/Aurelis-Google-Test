@@ -44,9 +44,11 @@ jobs:
         working-directory: website
         run: |
           npm ci --legacy-peer-deps
-          node scripts/test_llamaswap_primary.mjs
-          node scripts/test_uniswap_dock.mjs
-          node scripts/test_swapspro_theme.mjs
+          # The old experimental LlamaSwap/Uniswap/SwapsPro tests target
+          # modules removed from the currently deployed website.
+          # Validate the CURRENT app and manual-execution safety controls.
+          node scripts/test_kraken_manual_cap.mjs
+          npx tsc --noEmit -p tsconfig.app-ci.json
           npm run build
       - name: Store verified build artifact
         if: steps.source.outputs.available == 'true'
