@@ -44,11 +44,23 @@ jobs:
       - name: Install dependencies
         run: |
           npm ci --no-audit --no-fund
-      - name: Test DEX registry and adapters
+      - name: Check if legacy DEX adapter suite is applicable
+        id: dex_applicability
+        run: |
+          if test -f src/services/dexVenueRegistry.ts && test -f src/services/spotRoundTripScanner.ts; then
+            echo "legacy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "legacy=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Legacy DEX adapter modules were removed from the deployed website; legacy suite is not applicable."
+          fi
+      - name: Test legacy DEX registry and adapters (only when present)
+        if: steps.dex_applicability.outputs.legacy == 'true'
         id: dex_tests
         run: npm run test:dex
-      - name: Type check
-        run: npm run lint
+      - name: Type check current website app/server
+        run: npx tsc --noEmit -p tsconfig.app-ci.json
+      - name: Verify current bot execution safety
+        run: node scripts/test_kraken_manual_cap.mjs
       - name: Build
         run: npm run build
       - name: Publish job summary
@@ -56,5 +68,5 @@ jobs:
         run: |
           echo '### AURELIS DEX verification' >> "$GITHUB_STEP_SUMMARY"
           echo '- Commit: ${{ github.sha }}' >> "$GITHUB_STEP_SUMMARY"
-          echo '- Adapter tests: ${{ steps.dex_tests.outcome }}' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Legacy DEX adapter applicable: ${{ steps.dex_applicability.outputs.legacy }}'\n          echo '- Legacy DEX adapter test result: ${{ steps.dex_tests.outcome }}' >> "$GITHUB_STEP_SUMMARY"
           echo '- Trading/funding permissions: unchanged' >> "$GITHUB_STEP_SUMMARY"
