@@ -1401,12 +1401,19 @@ async function prepareKrakenOrder(payload:any) {
   const scale=10**Math.min(12,Math.max(0,lotDecimals));
   const quantity=(Math.floor((amount/mark)*scale)/scale).toFixed(lotDecimals);
   if(Number(quantity)<=0 || (Number(pair.ordermin||0)>0&&Number(quantity)<Number(pair.ordermin)))
-    throw new Error('kraken_order_below_exchange_minimum_at_10_usd');
+    throw new Error('kraken_10_usd_test_below_minimum_coin_quantity_choose_different_pair');
+  const costMin=Number(pair.costmin||0);
+  const estimatedCost=Number(quantity)*mark;
+  if(Number.isFinite(costMin)&&costMin>0&&estimatedCost<costMin)
+    throw new Error('kraken_10_usd_test_below_exchange_cost_minimum_choose_different_pair');
+  if(pair.status && String(pair.status)!=='online')
+    throw new Error('kraken_margin_pair_not_currently_open_for_trading');
   const preview={
     symbol:pair.altname, pairId:pair.pairId, asset,direction,markPrice:String(mark),
     positionValueUsd:String(amount),estimatedMarginUsd:String(margin),freeMarginUsd:String(free),
     quantity,leverage:String(Math.trunc(leverage)),stopLoss:stop.toFixed(pairDecimals),
     takeProfit:target.toFixed(pairDecimals),orderMinimum:pair.ordermin||null,
+    exchangeMinimumCost:pair.costmin||null,estimatedEntryNotionalUsd:estimatedCost.toFixed(2),
     lotDecimals,pairDecimals,broker:'Kraken Spot Margin (NOT US Futures)',
     conditionalClose:{orderType:'stop-loss',triggerPrice:stop.toFixed(pairDecimals),activation:'after_primary_fill'},
     protectionType:'kraken_conditional_stop_only',
@@ -1467,6 +1474,8 @@ async function validateKrakenPreparedOrder(payload:any){
     const result:any=await krakenPrivate('/0/private/AddOrder',{...order,validate:'true'});
     // Kraken validation usually returns a description but no order ID.
     if(result?.txid?.length)throw new Error('unexpected_order_id_from_validate_only');
+    // The signed preview might expire while Kraken's API is answering.
+    if(Date.now()>item.expiresAt)throw new Error('trade_confirmation_expired_during_validation');
     item.validatedAt=Date.now();
     return {
       ok:true,validated:true,orderPlaced:false,krakenValidationOnly:true,

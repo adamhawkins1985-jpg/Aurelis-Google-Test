@@ -65,6 +65,21 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
   const [krakenToken, setKrakenToken] = useState('');
   const [krakenValidated,setKrakenValidated]=useState(false);
   const [krakenValidationMessage,setKrakenValidationMessage]=useState('');
+  const [krakenValidationExpiresAt,setKrakenValidationExpiresAt]=useState<number|null>(null);
+  useEffect(()=>{
+    if(krakenValidationExpiresAt==null)return;
+    const remaining=krakenValidationExpiresAt-Date.now();
+    if(remaining<=0){
+      setKrakenValidated(false);
+      setKrakenValidationMessage('Validation expired. Review and validate again; no order was placed.');
+      return;
+    }
+    const timer=window.setTimeout(()=>{
+      setKrakenValidated(false);
+      setKrakenValidationMessage('Validation expired. Review and validate again; no order was placed.');
+    },remaining);
+    return ()=>window.clearTimeout(timer);
+  },[krakenValidationExpiresAt]);
   const [executionEnabled,setExecutionEnabled]=useState(false);
   const [executionStatus,setExecutionStatus]=useState('Checking Kraken account execution…');
   useEffect(()=>{
@@ -250,6 +265,7 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
     setKrakenReview(null);
     setKrakenToken('');
     setKrakenValidated(false);
+    setKrakenValidationExpiresAt(null);
     setKrakenValidationMessage('');
     try {
       const response = await fetch('/api/signal-desk/order/prepare', {
@@ -288,6 +304,7 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
     }
     setOrderBusy(true);
     setKrakenValidated(false);
+    setKrakenValidationExpiresAt(null);
     setKrakenValidationMessage('Validating with Kraken, no order will be placed…');
     try{
       const response=await fetch('/api/signal-desk/order/validate',{
@@ -298,8 +315,12 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
       const data=await response.json();
       if(!response.ok||!data?.ok||!data?.validated||data?.orderPlaced!==false)
         throw new Error(data?.error||'Kraken validation was not confirmed');
+      const expiresAt=Math.min(Number(data.expiresAt)||0,Date.now()+28000);
+      if(!Number.isFinite(expiresAt)||expiresAt<=Date.now())
+        throw new Error('Exchange validation expired before it reached the browser');
       setKrakenValidated(true);
-      setKrakenValidationMessage('KRAKEN PARAMETERS VALIDATED. No order placed. Expires within 30 seconds.');
+      setKrakenValidationExpiresAt(expiresAt);
+      setKrakenValidationMessage('KRAKEN PARAMETERS VALIDATED. No order placed. The validation window expires shortly.');
     }catch(error:any){
       setKrakenValidated(false);
       setKrakenValidationMessage('Exchange validation failed: '+(error?.message||'Unknown error'));
@@ -333,6 +354,7 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
       // The existing 5-second Kraken status poll reports actual positions.
       setKrakenToken('');
       setKrakenValidated(false);
+      setKrakenValidationExpiresAt(null);
       setToastMessage('Kraken order submitted. Live position status will confirm execution.');
       if (soundEnabled) playHudSound('trade');
     } catch (error: any) {
@@ -872,14 +894,14 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
             <input
               type="number"
               value={positionAmount}
-              onChange={(e) => {setPositionAmount(e.target.value);setKrakenValidated(false);setKrakenReview(null);setKrakenToken('')}}
+              onChange={(e) => {setPositionAmount(e.target.value);setKrakenValidated(false);setKrakenValidationExpiresAt(null);setKrakenReview(null);setKrakenToken('')}}
               className="bg-surface-base px-2 py-1 rounded-md border border-white/10 text-[11px] text-text-primary outline-none focus:border-primary-container mt-0.5"
             />
           </div>
 
           <div className="flex flex-col">
             <span className="text-[9px] text-text-muted uppercase">LEVERAGE</span>
-            <select value={positionLeverage} onChange={(e) => { setPositionLeverage(e.target.value); setKrakenReview(null); setKrakenToken(''); setKrakenValidated(false); }}
+            <select value={positionLeverage} onChange={(e) => { setPositionLeverage(e.target.value); setKrakenReview(null); setKrakenToken(''); setKrakenValidated(false); setKrakenValidationExpiresAt(null); }}
               className="bg-surface-base px-2 py-1 rounded-md border border-white/10 text-[11px] text-text-primary outline-none focus:border-primary-container cursor-pointer mt-0.5">
               {(supportedLeverage.length ? supportedLeverage : [2,3,4,5]).map((x)=><option key={x} value={String(x)}>{x}x</option>)}
             </select>
