@@ -22,7 +22,7 @@ assert(prepare.includes('pair.costmin'),'Preview must enforce exchange minimum n
 assert(prepare.includes('pair.status'),'Preview must reject nontrading market status');
 assert(backend.includes('execution_venue=bitnomial_exchange'),'US retail margin quote must use BTNL venue');
 assert(validation.includes('trade_confirmation_expired_during_validation'),'Delayed Kraken validation cannot approve an expired preview');
-assert(live.includes('validationExpiresAt')&&live.includes('validation expired')===false,'Live Bet must track validation expiration');
+assert(live.includes('validationExpiresAt')&&live.includes('setValidationExpiresAt(expiresAt)'),'Live Bet must track validation expiration');
 assert(desk.includes('krakenValidationExpiresAt'),'Signal Desk must track validation expiration');
 
 assert(prepare.includes('conditionalClose:{orderType:\'stop-loss\''),'Kraken preview must describe conditional stop');
