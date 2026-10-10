@@ -48,7 +48,7 @@ export const BotTestReadiness:React.FC<{short?:boolean}>=({short=false})=>{
     {result?.accountClearForFirstTest?' · account checks passed':' · account checks not fully cleared'}
   </div>
   {!short&&<div className="text-text-muted">
-    Test design: $10–$25 notional, maximum 2× leverage, signed Bots owner, fresh order review.
+    First test: $10 total notional maximum, maximum 2× leverage, signed Bots owner, fresh per-order approval.
     A passed balance check does not verify attached stops, actual fills or U.S. futures access.
   </div>}
   {error&&<div role="status" className="text-amber-400">{error}</div>}
