@@ -17,6 +17,14 @@ const validation=backend.slice(validatorStart,submitStart);
 
 assert(prepare.includes('amount>10 || amount<10'),'First Kraken preview notional must be exactly $10');
 assert(prepare.includes('leverage>2'),'Kraken preview must reject leverage above 2x');
+assert(prepare.includes('pair.ordermin'),'Preview must enforce exchange minimum base quantity');
+assert(prepare.includes('pair.costmin'),'Preview must enforce exchange minimum notional cost');
+assert(prepare.includes('pair.status'),'Preview must reject nontrading market status');
+assert(backend.includes('execution_venue=bitnomial_exchange'),'US retail margin quote must use BTNL venue');
+assert(validation.includes('trade_confirmation_expired_during_validation'),'Delayed Kraken validation cannot approve an expired preview');
+assert(live.includes('validationExpiresAt')&&live.includes('validation expired')===false,'Live Bet must track validation expiration');
+assert(desk.includes('krakenValidationExpiresAt'),'Signal Desk must track validation expiration');
+
 assert(prepare.includes('conditionalClose:{orderType:\'stop-loss\''),'Kraken preview must describe conditional stop');
 assert(submit.includes('Number(p.positionValueUsd)>10||Number(p.positionValueUsd)<10'),'Submit must recheck $10 max notional');
 assert(submit.includes('Number(p.leverage)>2'),'Submit must recheck 2x max leverage');
