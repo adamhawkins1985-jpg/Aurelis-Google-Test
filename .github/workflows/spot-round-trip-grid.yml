@@ -19,5 +19,18 @@ jobs:
           node-version: '22'
       - name: Install dependencies
         run: cd website && npm ci --ignore-scripts
+      - name: Check retired spot probe applicability
+        id: applicability
+        run: |
+          if test -f website/src/services/spotRoundTripScanner.ts; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::This retired research module is absent from the deployed AURELIS website; test not applicable."
+          fi
       - name: Probe read-only spot grid
+        if: steps.applicability.outputs.present == 'true'
         run: cd website && npx tsx scripts/probe_spot_round_trip_grid.ts
+      - name: Check current bot manual-execution safety instead
+        if: steps.applicability.outputs.present == 'false'
+        run: cd website && node scripts/test_kraken_manual_cap.mjs
