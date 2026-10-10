@@ -62,7 +62,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
   const fileRef = useRef<HTMLInputElement>(null);
   const [imageUrl, setImageUrl] = useState<string>('');
   const [trade, setTrade] = useState<ParsedTrade | null>(null);
-  const [amount, setAmount] = useState('25');
+  const [amount, setAmount] = useState('10');
   const [leverage, setLeverage] = useState('2');
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -106,7 +106,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
       take_profit: initialSetup.target,
       leverage: initialSetup.leverage || 1,
     });
-    setAmount(String(initialSetup.margin || 25));
+    setAmount('10');
     setLeverage(String(initialSetup.leverage || 1));
     setPreview(null);
     setToken('');
@@ -618,7 +618,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
           </div>
           <button type="button" disabled={!executionEnabled||busy||!token}
             onClick={()=>{
-              if(!window.confirm('REAL LIVE TEST: Submit a Kraken Spot/Margin market entry capped at $25 notional and 2x leverage? The stop is requested after fill, take-profit is NOT placed. The trade can lose money. Approve this specific order?'))return;
+              if(!window.confirm('REAL LIVE TEST: Submit a Kraken Spot/Margin market entry capped at $10 notional and 2x leverage? The stop is requested after fill, take-profit is NOT placed. The trade can lose money. Approve this specific order?'))return;
               void submitKraken();
             }}
             className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold disabled:opacity-40">
