@@ -1363,7 +1363,10 @@ async function readBrokerStatuses(refresh=false):Promise<any>{
  brokerStatuses.data=response;brokerStatuses.at=Date.now();return response;
 }
 
-type KrakenConfirmation={preview:any,expiresAt:number,used:boolean};
+type KrakenConfirmation={
+  preview:any,expiresAt:number,used:boolean,clientOrderId:string,
+  validatedAt?:number,validating?:boolean
+};
 const krakenConfirmations=new Map<string,KrakenConfirmation>();
 const KRAKEN_CONFIRM_TTL_MS=10*60*1000;
 
@@ -1394,7 +1397,11 @@ async function prepareKrakenOrder(payload:any) {
   const free=Number(trade?.mf||0), margin=amount/leverage;
   if(free<margin) throw new Error(`kraken_insufficient_free_margin:requires_${margin.toFixed(2)}_USD:available_${free.toFixed(2)}_USD`);
   const lotDecimals=Number(pair.lot_decimals||8), pairDecimals=Number(pair.pair_decimals||5);
-  const quantity=(amount/mark).toFixed(lotDecimals);
+  // Rounding DOWN avoids exceeding $10 at the quoted price.
+  const scale=10**Math.min(12,Math.max(0,lotDecimals));
+  const quantity=(Math.floor((amount/mark)*scale)/scale).toFixed(lotDecimals);
+  if(Number(quantity)<=0 || (Number(pair.ordermin||0)>0&&Number(quantity)<Number(pair.ordermin)))
+    throw new Error('kraken_order_below_exchange_minimum_at_10_usd');
   const preview={
     symbol:pair.altname, pairId:pair.pairId, asset,direction,markPrice:String(mark),
     positionValueUsd:String(amount),estimatedMarginUsd:String(margin),freeMarginUsd:String(free),
@@ -1406,9 +1413,73 @@ async function prepareKrakenOrder(payload:any) {
     takeProfitIsEstimateOnly:true
   };
   const token=crypto.randomBytes(32).toString('base64url');
-  krakenConfirmations.set(token,{preview,expiresAt:Date.now()+90000,used:false});
+  krakenConfirmations.set(token,{
+    preview,expiresAt:Date.now()+90000,used:false,
+    clientOrderId:'aur'+crypto.randomBytes(7).toString('hex').slice(0,14)
+  });
   return {ok:true,provider:'KRAKEN_MARGIN',preview,signal:payload?.signal||{},confirmation:{token,expiresInSeconds:90},execution:{configured:true,readOnlyPreview:process.env.AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED!=='1',
     conditionalStopRequestedOnSubmission:true,takeProfitOrderSubmitted:false,maxNotionalUsd:String(maxNotional),maxLeverage:String(maxLev)}};
+}
+
+// Kraken REST AddOrder with validate=true checks exchange order parameters
+// WITHOUT placing a trade. Use identical protected parameters at eventual submission.
+function krakenProtectedOrderPayload(item:KrakenConfirmation):Record<string,string>{
+  const p=item.preview;
+  const value=Number(p.positionValueUsd),lev=Number(p.leverage);
+  if(!Number.isFinite(value)||value!==10||!Number.isFinite(lev)||lev<1||lev>2)
+    throw new Error('manual_test_risk_limit_exceeded');
+  const stop=Number(p?.conditionalClose?.triggerPrice);
+  if(p?.conditionalClose?.orderType!=='stop-loss'||!Number.isFinite(stop)||stop<=0)
+    throw new Error('conditional_stop_missing');
+  if(!Number.isFinite(Number(p.quantity))||Number(p.quantity)<=0)
+    throw new Error('kraken_order_quantity_invalid');
+  if(!/^aur[a-f0-9]{14}$/.test(item.clientOrderId))
+    throw new Error('kraken_order_client_id_invalid');
+  return {
+    ordertype:'market',type:p.direction==='LONG'?'buy':'sell',
+    volume:String(p.quantity),pair:String(p.symbol),leverage:String(p.leverage),
+    'close[ordertype]':'stop-loss','close[price]':String(p.conditionalClose.triggerPrice),
+    cl_ord_id:item.clientOrderId
+  };
+}
+
+// The signed owner calls this only after reviewing a fresh Kraken preview.
+// 'validate=true' is sent to Kraken; neither AURELIS nor Kraken creates an order.
+async function validateKrakenPreparedOrder(payload:any){
+  const token=String(payload?.confirmationToken||'');
+  const item=krakenConfirmations.get(token);
+  if(!item||Date.now()>item.expiresAt)throw new Error('trade_confirmation_expired');
+  if(item.used)throw new Error('trade_confirmation_used');
+  if(item.validating)throw new Error('kraken_validation_already_in_progress');
+  item.validating=true;
+  item.validatedAt=undefined;
+  try{
+    const order=krakenProtectedOrderPayload(item);
+    const mark=Number((await krakenTicker(item.preview.asset)).mark);
+    const original=Number(item.preview.markPrice);
+    if(!Number.isFinite(mark)||!Number.isFinite(original)||original<=0 ||
+       Math.abs(mark/original-1)*100>1)
+      throw new Error('kraken_price_moved_repreview');
+    const stop=Number(item.preview.conditionalClose.triggerPrice);
+    if((item.preview.direction==='LONG'&&stop>=mark)||
+       (item.preview.direction==='SHORT'&&stop<=mark))
+      throw new Error('kraken_stop_not_protective_at_current_mark');
+    const result:any=await krakenPrivate('/0/private/AddOrder',{...order,validate:'true'});
+    // Kraken validation usually returns a description but no order ID.
+    if(result?.txid?.length)throw new Error('unexpected_order_id_from_validate_only');
+    item.validatedAt=Date.now();
+    return {
+      ok:true,validated:true,orderPlaced:false,krakenValidationOnly:true,
+      validatedAt:item.validatedAt,expiresAt:Math.min(item.expiresAt,item.validatedAt+30000),
+      exchangeDescription: {
+        entry:String(result?.descr?.order||'Kraken validated market entry parameters'),
+        conditionalStop:String(result?.descr?.close||'Conditional stop requested')
+      },
+      manualApprovalStillRequired:true,
+      takeProfitOrderPlaced:false,
+      warning:'Kraken validated parameters without placing any trade. This does not verify a fill or an activated protective stop.'
+    };
+  }finally{item.validating=false}
 }
 
 async function submitKrakenOrder(payload:any) {
@@ -1423,6 +1494,8 @@ async function submitKrakenOrder(payload:any) {
   const item=krakenConfirmations.get(token);
   if(!item || Date.now()>item.expiresAt) throw new Error('trade_confirmation_expired');
   if(item.used) throw new Error('trade_confirmation_used');
+  if(!item.validatedAt||Date.now()-item.validatedAt>30000)
+    throw new Error('kraken_validation_required_or_expired');
   item.used=true;
   const p=item.preview;
   if(Number(p.positionValueUsd)>10||Number(p.positionValueUsd)<10||Number(p.leverage)>2)
@@ -1442,11 +1515,12 @@ async function submitKrakenOrder(payload:any) {
   const stopPrice=Number(p.conditionalClose.triggerPrice);
   if((p.direction==='LONG' && stopPrice>=newMark)||
      (p.direction==='SHORT' && stopPrice<=newMark))throw new Error('stop_price_invalid_at_execution');
-  const entry=await krakenPrivate('/0/private/AddOrder',{
-    ordertype:'market',type:side,volume:p.quantity,pair:p.symbol,leverage:p.leverage,
-    'close[ordertype]':'stop-loss','close[price]':p.conditionalClose.triggerPrice,
-    cl_ord_id:('aur'+Date.now().toString().slice(-8)+token.replace(/[^A-Za-z0-9]/g,'').slice(0,5)).slice(0,18)
-  });
+  const exactProtectedOrder=krakenProtectedOrderPayload(item);
+  // Revalidate the EXACT protected order at Kraken immediately before entry.
+  // Future activation stays blocked by AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED.
+  const checked:any=await krakenPrivate('/0/private/AddOrder',{...exactProtectedOrder,validate:'true'});
+  if(checked?.txid?.length)throw new Error('unexpected_order_id_from_validate_only');
+  const entry=await krakenPrivate('/0/private/AddOrder',exactProtectedOrder);
   return {ok:true,provider:'KRAKEN_MARGIN',entry,preview:p,
     protection:'Kraken conditional stop requested, activated after primary fill; monitor live order status.',
     takeProfitOrderPlaced:false,submittedAt:Date.now()};
@@ -2080,6 +2154,13 @@ function registerMarketAndBotRoutes(app:Express) {
     if(!requireBotAccountOwner(req,res))return;
     try{return sendNoStore(res,await prepareKrakenOrder({...req.body,provider:'KRAKEN'}))}
     catch(e:any){const msg=e?.message||String(e);return sendNoStore(res,{ok:false,error:msg},msg.startsWith('invalid_')||msg.includes('leverage_not_supported')?400:409)}
+  });
+  app.post('/api/signal-desk/order/validate', async (req,res)=>{
+    if(!requireBotAccountOwner(req,res))return;
+    try{return sendNoStore(res,await validateKrakenPreparedOrder(req.body))}
+    catch(e:any){return sendNoStore(res,{
+      ok:false,validated:false,orderPlaced:false,error:String(e?.message||e)
+    },409)}
   });
   app.post('/api/signal-desk/order/submit', async (req,res)=>{
     if(!requireBotAccountOwner(req,res))return;
