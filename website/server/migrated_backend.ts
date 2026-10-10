@@ -1384,7 +1384,7 @@ async function prepareKrakenOrder(payload:any) {
   const maxLev=Number(process.env.AURELIS_KRAKEN_MAX_LEVERAGE||10);
   // Manual test limits, independent of deployment flags.
   // This is a NOTIONAL cap (not a margin/deposit cap).
-  if(amount>25 || amount<10)throw new Error('manual_test_notional_must_be_10_to_25_usd');
+  if(amount>10 || amount<10)throw new Error('manual_test_notional_must_be_exactly_10_usd');
   if(leverage>2)throw new Error('manual_test_maximum_leverage_2x');
   if((direction==='LONG'?Math.abs(mark-stop)/mark:Math.abs(stop-mark)/mark)>0.05)
     throw new Error('manual_test_stop_must_be_within_5_percent');
@@ -1425,7 +1425,7 @@ async function submitKrakenOrder(payload:any) {
   if(item.used) throw new Error('trade_confirmation_used');
   item.used=true;
   const p=item.preview;
-  if(Number(p.positionValueUsd)>25||Number(p.positionValueUsd)<10||Number(p.leverage)>2)
+  if(Number(p.positionValueUsd)>10||Number(p.positionValueUsd)<10||Number(p.leverage)>2)
     throw new Error('manual_test_risk_limit_exceeded');
   const side=p.direction==='LONG'?'buy':'sell';
   // Refuse to submit an entry unless a Kraken-side OTO stop was included at preparation.
@@ -2056,7 +2056,7 @@ function registerMarketAndBotRoutes(app:Express) {
         freeMarginAvailable:Number.isFinite(availableMargin)&&availableMargin>=0,
         freeMarginUsd:Number.isFinite(availableMargin)?availableMargin:null,
         openMarginPositions:positionCount,openOrders:openOrderCount,
-        testNotionalMaximumUsd:25,maxTestLeverage:2,
+        testNotionalMaximumUsd:10,maxTestLeverage:2,
         accountClearForFirstTest:allSucceeded&&positionCount===0&&openOrderCount===0,
         liveOrdersEnabled:process.env.AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED==='1',
         usPerpsAccountVerified:false
