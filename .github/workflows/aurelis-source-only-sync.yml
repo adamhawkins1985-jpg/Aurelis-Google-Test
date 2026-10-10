@@ -41,6 +41,8 @@ jobs:
           fi
           rsync -a --safe-links --exclude='.*' --exclude='*.pem' --exclude='*.key' --exclude='*.env*' \
             --exclude='*.sqlite*' --exclude='*.db' --exclude='*.log' \
+            --exclude='*.pre-*' --exclude='*.pre_*' --exclude='*.backup*' \
+            --exclude='*.bak*' --exclude='*.old*' --exclude='*.orig' \
             -e "ssh -i $HOME/.ssh/aurelis_source -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10" \
             "$REMOTE:aurelis-source-export/" "$RUNNER_TEMP/live-source/"
 
