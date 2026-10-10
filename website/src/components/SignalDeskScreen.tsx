@@ -345,7 +345,7 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
 
   const handleClosePosition = async () => {
     if (!activePosition?.txid || orderBusy) return;
-    if (!window.confirm(`Close ${activePosition.symbol} ${activePosition.side} at market now?`)) return;
+    if (!window.confirm(`Close ${activePosition.symbol} ${activePosition.side} at market now? WARNING: Conditional stop orders may remain open after a separate close, and may later open an opposite position. Review and cancel related stops in Kraken.`)) return;
     if (soundEnabled) playHudSound('click');
     setOrderBusy(true);
     try {
