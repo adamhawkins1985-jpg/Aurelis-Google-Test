@@ -5,9 +5,6 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { exchangeRouter } from './server/exchange_routes';
-import { readLighterActiveOrders } from './server/lighter_active_order_read';
-import { authorizeBotMonitoring } from './server/bot_monitor_access';
-import { lighterMonitoringState } from './src/services/lighterMonitoringState';
 import { registerMigratedBackend, getVerifiedWalletAddress, runAaveAgentQuery } from './server/migrated_backend';
 
 dotenv.config();
@@ -698,131 +695,6 @@ app.get('/api/bots/hyperliquid-account', async (req,res) => {
   }
 });
 
-// Lighter public account discovery. Read-only; no signing, orders or account keys.
-app.get('/api/bots/lighter-accounts', async (req,res) => {
-  const wallet=String(req.query.wallet || '');
-  if (!/^0x[a-fA-F0-9]{40}$/.test(wallet)) return res.status(400).json({ok:false,error:'invalid_wallet_address'});
-  res.setHeader('Cache-Control','no-store');
-  try {
-    const url='https://mainnet.zklighter.elliot.ai/api/v1/accountsByL1Address?'+new URLSearchParams({l1_address:wallet});
-    const upstream=await fetch(url,{signal:AbortSignal.timeout(10000),headers:{Accept:'application/json'}});
-    if (!upstream.ok) {
-      const upstreamError=await upstream.json().catch(()=>null);
-      if(upstream.status===400 && upstreamError?.code===21100)
-        return res.status(404).json({ok:false,error:'lighter_account_not_discoverable',readOnly:true});
-      return res.status(502).json({ok:false,error:'lighter_upstream_unavailable'});
-    }
-    const raw=await upstream.json();
-    if (!raw || !Array.isArray(raw.sub_accounts) || (raw.l1_address && String(raw.l1_address).toLowerCase()!==wallet.toLowerCase()))
-      return res.status(502).json({ok:false,error:'lighter_account_response_invalid'});
-    const indices=raw.sub_accounts.map((a:any)=>Number(a?.index)).filter((n:number)=>Number.isSafeInteger(n)&&n>=0);
-    if (indices.length!==raw.sub_accounts.length) return res.status(502).json({ok:false,error:'lighter_account_index_invalid'});
-    if (typeof raw.next_cursor === 'string' && raw.next_cursor.length > 0)
-      return res.status(502).json({ok:false,error:'lighter_account_discovery_paginated'});
-    if (new Set(indices).size!==indices.length)
-      return res.status(502).json({ok:false,error:'lighter_duplicate_account_index'});
-    res.json({ok:true,wallet,accountIndices:indices,complete:true,checkedAt:new Date().toISOString(),source:'public_l1_discovery'});
-  } catch {
-    res.status(502).json({ok:false,error:'lighter_account_discovery_unavailable'});
-  }
-});
-
-// Lighter read-only account snapshots. Indices must be discovered for the supplied Bot Wallet.
-app.get('/api/bots/lighter-snapshot', async (req,res) => {
-  const wallet=String(req.query.wallet || '');
-  if (!/^0x[a-fA-F0-9]{40}$/.test(wallet)) return res.status(400).json({ok:false,error:'invalid_wallet_address'});
-  res.setHeader('Cache-Control','no-store');
-  const host='https://mainnet.zklighter.elliot.ai/api/v1/';
-  try {
-    const discovery=await fetch(host+'accountsByL1Address?'+new URLSearchParams({l1_address:wallet}),{signal:AbortSignal.timeout(10000)});
-    if (!discovery.ok) {
-      const upstreamError=await discovery.json().catch(()=>null);
-      if(discovery.status===400 && upstreamError?.code===21100)
-        return res.status(404).json({ok:false,error:'lighter_account_not_discoverable',readOnly:true});
-      throw Error('discovery_http');
-    }
-    const found=await discovery.json();
-    if (found?.code!==200 || !Array.isArray(found.sub_accounts) ||
-        String(found.l1_address||'').toLowerCase()!==wallet.toLowerCase() ||
-        found.next_cursor) throw Error('discovery_invalid');
-    const indices=found.sub_accounts.map((v:any)=>v?.index);
-    if (indices.length>20 || indices.some((v:any)=>!Number.isSafeInteger(v)||v<0) ||
-        new Set(indices).size!==indices.length) throw Error('discovery_invalid');
-    const snapshots=[];
-    for (const index of indices) {
-      const response=await fetch(host+'account?'+new URLSearchParams({by:'index',value:String(index)}),
-        {signal:AbortSignal.timeout(10000)});
-      if (!response.ok) throw Error('account_http');
-      const body=await response.json();
-      if (body?.code!==200 || !Array.isArray(body.accounts) || body.accounts.length!==1) throw Error('account_invalid');
-      const account=body.accounts[0];
-      if (Number(account?.index)!==index || String(account.l1_address||'').toLowerCase()!==wallet.toLowerCase() ||
-          !Array.isArray(account.positions)) throw Error('account_mismatch');
-      const validNumber=(v:any)=>typeof v==='string' && /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/.test(v) && Number.isFinite(Number(v));
-      if (![account.collateral,account.available_balance].every(validNumber)) throw Error('balance_invalid');
-      const positions=account.positions.filter((p:any)=>validNumber(p?.position) && Number(p.position)>0).map((p:any)=>{
-        if (typeof p.symbol!=='string' || ![1,-1].includes(p.sign)) throw Error('position_invalid');
-        return {market:p.symbol,side:p.sign===1?'long':'short',size:p.position,accountIndex:index};
-      });
-      snapshots.push({accountIndex:index,collateral:account.collateral,available:account.available_balance,positions});
-    }
-    res.json({ok:true,wallet,complete:true,checkedAt:new Date().toISOString(),accounts:snapshots});
-  } catch {
-    res.status(502).json({ok:false,error:'lighter_snapshot_unavailable'});
-  }
-});
-
-// Server-side Lighter monitoring readiness. Never expose authentication tokens to browsers.
-// The token must be provisioned out-of-band for a specific Bot Wallet account.
-app.get('/api/bots/lighter-order-monitoring-status', (req,res) => {
-  const wallet=String(req.query.wallet||'');
-  if (!/^0x[a-fA-F0-9]{40}$/.test(wallet)) return res.status(400).json({ok:false,error:'invalid_wallet_address'});
-  res.setHeader('Cache-Control','no-store');
-  const state=lighterMonitoringState(wallet,process.env.AURELIS_LIGHTER_MONITOR_WALLET,
-    process.env.AURELIS_LIGHTER_MONITOR_AUTH);
-  res.json({ok:true,venue:'lighter',readOnly:true,
-    orderMonitoring:state,
-    fillMonitoring:'auth-required',
-    message:state==='configured-unverified'
-      ? 'Credentials configured; account scope and monitoring API still unverified'
-      : 'Read-only monitoring credentials and exact bot-wallet binding required'});
-});
-
-// Authenticated order COUNT monitoring, bound to the configured Bot Wallet.
-// This endpoint never returns an authorization token or grants trading permissions.
-app.get('/api/bots/lighter-active-order-counts', async (req,res) => {
-  if (!authorizeBotMonitoring(req.get('x-aurelis-bot-monitor-key'),process.env.AURELIS_BOT_MONITOR_ACCESS_KEY))
-    return res.status(403).json({ok:false,error:'bot_monitor_access_denied'});
-  const wallet=String(req.query.wallet||'');
-  if (!/^0x[a-fA-F0-9]{40}$/.test(wallet)) return res.status(400).json({ok:false,error:'invalid_wallet_address'});
-  res.setHeader('Cache-Control','no-store');
-  if(lighterMonitoringState(wallet,process.env.AURELIS_LIGHTER_MONITOR_WALLET,
-       process.env.AURELIS_LIGHTER_MONITOR_AUTH)!=='configured-unverified')
-    return res.status(403).json({ok:false,error:'lighter_monitor_not_configured'});
-  try {
-    const host='https://mainnet.zklighter.elliot.ai/api/v1/';
-    const response=await fetch(host+'accountsByL1Address?'+new URLSearchParams({l1_address:wallet}),
-      {signal:AbortSignal.timeout(10000),headers:{Accept:'application/json'},cache:'no-store'});
-    if(!response.ok) throw Error('lighter_discovery_unavailable');
-    const discovered=await response.json();
-    if(discovered?.code!==200||!Array.isArray(discovered.sub_accounts)||
-       String(discovered.l1_address||'').toLowerCase()!==wallet.toLowerCase()||discovered.next_cursor)
-      throw Error('lighter_discovery_invalid');
-    const ids=discovered.sub_accounts.map((a:any)=>a?.index);
-    if(ids.length>20||ids.some((n:any)=>!Number.isSafeInteger(n)||n<0)||new Set(ids).size!==ids.length)
-      throw Error('lighter_accounts_invalid');
-    const counts=[];
-    for(const accountIndex of ids){
-      counts.push(await readLighterActiveOrders(accountIndex,process.env.AURELIS_LIGHTER_MONITOR_AUTH!,
-        AbortSignal.timeout(10000)));
-    }
-    res.json({ok:true,venue:'lighter',wallet,complete:true,checkedAt:new Date().toISOString(),
-      monitoring:'verified-active-counts-only',accounts:counts});
-  } catch {
-    res.status(502).json({ok:false,error:'lighter_active_order_monitoring_unavailable'});
-  }
-});
-
 // Hyperliquid signer readiness only; never requests signatures or submits orders.
 app.get('/api/bots/hyperliquid-readiness', async (req, res) => {
   const bot = String(req.query.bot || 'hunter');
@@ -1132,15 +1004,23 @@ app.get('/api/signal-desk/deep/:asset', async (req, res) => {
   }
 });
 
-app.get('/api/kraken/balances', async (_req, res) => {
+let krakenBalanceNonce=0n;
+app.get('/api/kraken/balances', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
+  const owner = String(process.env.AURELIS_BOTS_OWNER_WALLET_ADDRESS || '').trim().toLowerCase();
+  const address = getVerifiedWalletAddress(req, res);
+  if (!owner || !address || address.toLowerCase() !== owner) {
+    return res.status(403).json({ok:false,error:'bot_account_owner_not_authorized'});
+  }
   const key = process.env.KRAKEN_SPOT_API_KEY || process.env.KRAKEN_API_KEY || '';
   const secret = process.env.KRAKEN_SPOT_API_SECRET || process.env.KRAKEN_API_SECRET || '';
   if (!key || !secret) return res.status(409).json({ ok: false, error: 'kraken_not_configured' });
 
   try {
     const pathName = '/0/private/Balance';
-    const nonce = String(Date.now() * 1000);
+    const candidate=BigInt(Date.now())*1000000n+process.hrtime.bigint()%1000000n;
+    krakenBalanceNonce=candidate>krakenBalanceNonce?candidate:krakenBalanceNonce+1n;
+    const nonce=krakenBalanceNonce.toString();
     const postData = new URLSearchParams({ nonce }).toString();
     const hash = crypto.createHash('sha256').update(nonce + postData).digest();
     const signature = crypto.createHmac('sha512', Buffer.from(secret, 'base64'))
@@ -1190,7 +1070,9 @@ app.get('/api/kraken/margin-info/:asset', async (req, res) => {
     const match = entries.find(([id, row]) => {
       const alt = String(row?.altname || id).toUpperCase().replace(/[^A-Z0-9]/g, '');
       const ws = String(row?.wsname || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-      return alt === asset + 'USD' || ws === asset + 'USD';
+      const krakenBase = asset==='BTC'?'XBT':asset==='DOGE'?'XDG':asset;
+      return alt === krakenBase + 'USD' || ws === krakenBase + 'USD' ||
+        alt === asset + 'USD' || ws === asset + 'USD';
     });
     if (!match) return res.status(404).json({ ok: false, error: 'kraken_pair_not_found' });
     const [pairId, pair] = match;

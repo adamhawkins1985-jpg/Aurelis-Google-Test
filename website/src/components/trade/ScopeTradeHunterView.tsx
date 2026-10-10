@@ -2,12 +2,14 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Crosshair, RefreshCw, TrendingUp, TrendingDown } from 'lucide-react';
 import { playHudSound, formatCurrency } from '../../services/marketData';
 import { fetchKrakenRadar, KrakenRadarCandidate } from '../../services/krakenBots';
+import type { SetupCandidate } from './TradeRadarView';
 
 interface ScopeTradeHunterViewProps {
   soundEnabled: boolean;
+  onSendToLiveBet?: (setup: SetupCandidate) => void;
 }
 
-export const ScopeTradeHunterView: React.FC<ScopeTradeHunterViewProps> = ({ soundEnabled }) => {
+export const ScopeTradeHunterView: React.FC<ScopeTradeHunterViewProps> = ({ soundEnabled, onSendToLiveBet }) => {
   const [candidates, setCandidates] = useState<KrakenRadarCandidate[]>([]);
   const [scanned, setScanned] = useState(0);
   const [deep, setDeep] = useState(0);
@@ -36,6 +38,33 @@ export const ScopeTradeHunterView: React.FC<ScopeTradeHunterViewProps> = ({ soun
   }, []);
 
   const best = useMemo(() => candidates[0] || null, [candidates]);
+  // Only pass actual scanner-provided protective levels and a qualified LONG/SHORT.
+  // This is an order REVIEW handoff, never a direct trade.
+  const canReview=Boolean(best&&best.score>=79&&['LONG','SHORT'].includes(best.direction)&&
+    Number(best.entry||best.price)>0&&Number(best.invalidation)>0&&Number(best.target)>0&&
+    (best.direction==='LONG'
+      ? Number(best.invalidation)<Number(best.entry||best.price)&&Number(best.target)>Number(best.entry||best.price)
+      : Number(best.invalidation)>Number(best.entry||best.price)&&Number(best.target)<Number(best.entry||best.price)));
+  const reviewTop=()=>{
+    if(!best||!canReview||!onSendToLiveBet)return;
+    if(soundEnabled)playHudSound('switch');
+    const price=Number(best.entry||best.price);
+    const stop=Number(best.invalidation);
+    const target=Number(best.target);
+    const stopPct=Math.abs(price-stop)/price;
+    const rr=stopPct>0?(Math.abs(target-price)/price)/stopPct:0;
+    const candidate:SetupCandidate={
+      id:'scope-'+best.asset.toLowerCase(),rank:'01',symbol:best.asset,name:best.asset,
+      direction:best.direction==='SHORT'?'SHORT':'LONG',isFresh:true,payoff:rr>=2?'HIGH PAYOFF':rr>=1.2?'FAIR PAYOFF':'CAUTION',
+      score:Number(best.score),indicators:'Live Kraken scan',
+      commentary:(best.reasons||[]).join(' · ')||'Scope Trade research candidate.',
+      entry:price,stop,target,netRr:rr,forge:0,pulse:0,scope:Number(best.score),atlas:0,aegis:0,
+      notes:[],margin:25,leverage:2,targetNet:0,stopLoss:stopPct*100,tradeCost:0,
+      qualified:true
+    };
+    onSendToLiveBet(candidate);
+  };
+
 
   return (
     <div className="space-y-4 font-mono select-none text-text-primary text-xs">
@@ -83,6 +112,16 @@ export const ScopeTradeHunterView: React.FC<ScopeTradeHunterViewProps> = ({ soun
         ) : !loading && <div className="mt-3 text-text-muted">No qualified Kraken setup right now.</div>}
       </div>
 
+      <div className="rounded-xl border border-white/10 bg-surface-panel p-3 flex flex-wrap gap-3 items-center justify-between">
+        <div className="text-[10px] text-text-muted">
+          Scope is Kraken market research, not a broker. Qualified signals can be sent to Live Bet's
+          Kraken Spot/Margin review; no futures order is submitted here.
+        </div>
+        <button type="button" onClick={reviewTop} disabled={!canReview || !onSendToLiveBet}
+          className="rounded-lg border border-primary-container/30 bg-primary-container/15 px-3 py-2 text-primary-container font-bold disabled:opacity-40">
+          REVIEW QUALIFIED SETUP IN LIVE BET
+        </button>
+      </div>
       <div className="p-3.5 rounded-2xl bg-surface-panel/95 border border-white/10">
         <div className="flex items-center gap-2 mb-2"><Crosshair className="w-4 h-4 text-cyan-400" /><strong>Kraken Finalists</strong></div>
         <div className="overflow-x-auto">

@@ -25,6 +25,7 @@ import { AssetTemplateScreen } from './components/AssetTemplateScreen';
 import { SwapWidgetDock, MobileSwapWidgetPage } from './components/SwapWidgetDock';
 import { AiChatDock } from './components/AiChatDock';
 import { DesktopUtilityWindow } from './components/DesktopUtilityWindow';
+import { OneKeyActionRouter } from './components/OneKeyActionRouter';
 import { INITIAL_COINS } from './data/initialCoins';
 import { CoinData, HUDTab, NavigationTab, Timeframe, ThemeMode, WalletHolding, WalletTransaction } from './types';
 import { fetchLiveCryptoMarkets, fetchTopCryptoMarkets, playHudSound, formatCurrency } from './services/marketData';
@@ -125,6 +126,15 @@ export default function App() {
     return typeof unsubscribe === 'function' ? unsubscribe : undefined;
   }, []);
 
+  useEffect(() => {
+    const onFundingWallet = () => {
+      setSelectedAssetKey(null);
+      setNavigationTab('wallet');
+    };
+    window.addEventListener('aurelis:open-wallet', onFundingWallet);
+    return () => window.removeEventListener('aurelis:open-wallet', onFundingWallet);
+  }, []);
+
   // Top dropdown panel for Chart, Watchlist, Heatmap from current page
   const [marketsDropdownTab, setMarketsDropdownTab] = useState<HUDTab | null>(null);
 
@@ -148,8 +158,6 @@ export default function App() {
     return ['bitcoin', 'ethereum', 'solana'];
   });
 
-  // Agent Money is reserved for Bots and must not populate the main wallet.
-  const isBotOnlyAddress = (value: unknown) => String(value || '').trim().toLowerCase() === '0xd2919c82e5fecbb0c4be7a7c37bfc066579f233e';
   // Real AURELIS wallet state. Android supplies a native snapshot; desktop resolves saved wallet addresses.
   const [isWalletConnected, setIsWalletConnected] = useState<boolean>(false);
   const [walletAddress, setWalletAddress] = useState<string>('');
@@ -161,7 +169,7 @@ export default function App() {
     const applySnapshot = (snapshot: any) => {
       if (!snapshot || typeof snapshot !== 'object') return;
       const evm = snapshot.evmAddress || snapshot.address || '';
-      if (evm && !isBotOnlyAddress(evm)) {
+      if (evm) {
         setWalletAddress(evm);
         setIsWalletConnected(true);
       }
@@ -196,7 +204,7 @@ export default function App() {
     const getSavedExternalWalletAddress = () => {
       try {
         const saved = localStorage.getItem('aurelis_wallet_address') || '';
-        return /^0x[a-fA-F0-9]{40}$/.test(saved) && !isBotOnlyAddress(saved) ? saved : '';
+        return /^0x[a-fA-F0-9]{40}$/.test(saved) ? saved : '';
       } catch {
         return '';
       }
@@ -208,21 +216,23 @@ export default function App() {
           const values = Object.values(addresses).filter(Boolean);
           const evm = firstEvmAddress(addresses);
           const savedExternal = getSavedExternalWalletAddress();
-          const nextAddress = [evm,...values,savedExternal].find(value=>value && !isBotOnlyAddress(value)) || '';
+          const nextAddress = evm || values[0] || savedExternal;
           setWalletAddress(nextAddress);
           setIsWalletConnected(Boolean(nextAddress));
         })
         .catch(() => {
           const savedExternal = getSavedExternalWalletAddress();
-          setWalletAddress(savedExternal);
-          setIsWalletConnected(Boolean(savedExternal));
+          if (savedExternal) {
+            setWalletAddress(savedExternal);
+            setIsWalletConnected(true);
+          }
         });
     };
     const refreshWalletHoldings = () => {
       getLatestWalletPortfolio()
         .then((assets) => {
           setWalletHoldings(
-            assets.filter(item => !isBotOnlyAddress(item.accountAddress)).map((item) => ({
+            assets.map((item) => ({
               symbol: item.symbol,
               name: item.name,
               amount: item.amount,
@@ -237,7 +247,7 @@ export default function App() {
             }))
           );
         })
-        .catch(() => setWalletHoldings([]));
+        .catch(() => {});
     };
     const onWalletAuthenticated = () => {
       refreshWalletAddresses();
@@ -271,7 +281,7 @@ export default function App() {
             return '';
           }
         })();
-        const nextAddress = [evm,...values,savedExternal].find(value=>value && !isBotOnlyAddress(value)) || '';
+        const nextAddress = evm || values[0] || savedExternal;
         if (nextAddress) {
           setWalletAddress((current) => current || nextAddress);
           setIsWalletConnected(true);
@@ -280,7 +290,7 @@ export default function App() {
       .catch(() => {
         try {
           const saved = localStorage.getItem('aurelis_wallet_address') || '';
-          if (/^0x[a-fA-F0-9]{40}$/.test(saved) && !isBotOnlyAddress(saved)) {
+          if (/^0x[a-fA-F0-9]{40}$/.test(saved)) {
             setWalletAddress((current) => current || saved);
             setIsWalletConnected(true);
           }
@@ -291,7 +301,7 @@ export default function App() {
       getLatestWalletPortfolio()
         .then((assets) => {
           setWalletHoldings(
-            assets.filter(item => !isBotOnlyAddress(item.accountAddress)).map((item) => ({
+            assets.map((item) => ({
               symbol: item.symbol,
               name: item.name,
               amount: item.amount,
@@ -526,7 +536,7 @@ export default function App() {
   // Wallet & Trade Handlers
   const handleConnectWallet = (address?: string, provider?: string) => {
     const addr = address || walletAddress;
-    if (!addr || isBotOnlyAddress(addr)) return;
+    if (!addr) return;
     setIsWalletConnected(true);
     setWalletAddress(addr);
     try {
@@ -717,7 +727,7 @@ export default function App() {
   );
 
   if (isStandaloneSwapWidget) {
-    return <MobileSwapWidgetPage providerId={swapWidgetParams?.get('swapWidget')} theme={theme} />;
+    return <MobileSwapWidgetPage providerId={swapWidgetParams?.get('swapWidget')} />;
   }
 
   // Check for standalone isolated wallet access mode (?walletOnly=true or ?page=wallet)
@@ -1319,9 +1329,11 @@ export default function App() {
       {!isPopout && (
         <>
           <AiChatDock coins={coins} selectedCoin={selectedCoin} soundEnabled={soundEnabled} holdings={walletHoldings} onNavigate={setNavigationTab} />
-          <SwapWidgetDock theme={theme} />
+          <SwapWidgetDock />
         </>
       )}
+
+      <OneKeyActionRouter />
 
       {/* Windows Desktop Widget Guide Modal */}
       <WindowsWidgetGuideModal

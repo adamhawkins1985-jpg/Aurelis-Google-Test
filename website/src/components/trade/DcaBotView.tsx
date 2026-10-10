@@ -13,6 +13,7 @@ import {
 import { CoinData } from '../../types';
 import { playHudSound, formatCurrency } from '../../services/marketData';
 import { fetchKrakenRadar, KrakenRadarCandidate } from '../../services/krakenBots';
+import { BrokerAccountsPanel } from './BrokerAccountsPanel';
 
 interface DcaBotViewProps {
   coins: CoinData[];
@@ -21,21 +22,27 @@ interface DcaBotViewProps {
 
 export const DcaBotView: React.FC<DcaBotViewProps> = ({ coins, soundEnabled }) => {
   const [selectedAsset, setSelectedAsset] = useState<string>('BTC');
+  const [brokerVenue, setBrokerVenue] = useState<'kraken'|'coinbase'>('kraken');
+  const [brokerPreview, setBrokerPreview] = useState<string>('');
   const [totalBudget, setTotalBudget] = useState<string>('1000');
   const [maxBuy, setMaxBuy] = useState<string>('100');
   const [cadence, setCadence] = useState<string>('Daily review');
   const [aggressiveness, setAggressiveness] = useState<string>('Balanced');
-  const [mode, setMode] = useState<string>('Phone approval');
+  const [mode, setMode] = useState<string>('Preview only');
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [showConfirmModal, setShowConfirmModal] = useState<boolean>(false);
 
   const [radarCandidates, setRadarCandidates] = useState<KrakenRadarCandidate[]>([]);
+  const [radarError,setRadarError]=useState('');
 
   const loadRadar = async () => {
     setIsScanning(true);
     try {
       const data = await fetchKrakenRadar();
       setRadarCandidates(data.candidates);
+      setRadarError('');
+    } catch(error:any) {
+      setRadarError(error?.message||'Kraken market research unavailable');
     } finally {
       setIsScanning(false);
     }
@@ -81,6 +88,9 @@ export const DcaBotView: React.FC<DcaBotViewProps> = ({ coins, soundEnabled }) =
 
   return (
     <div className="space-y-4 font-mono select-none text-text-primary text-xs">
+      {radarError && <div role="status" className="rounded-lg border border-amber-400/30 bg-amber-400/10 text-amber-300 px-3 py-2 text-[10px]">
+        Scanner refresh failed: {radarError}. Broker connections are independent; no order was placed.
+      </div>}
       {/* 1. Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 sm:p-4 rounded-xl bg-surface-panel/95 border border-white/10 shadow-lg">
         <div>
@@ -91,22 +101,24 @@ export const DcaBotView: React.FC<DcaBotViewProps> = ({ coins, soundEnabled }) =
             DCA
           </h1>
           <p className="text-[11px] text-text-muted font-sans mt-0.5 max-w-xl">
-            Adaptive accumulation using live Kraken Trade Radar research instead of blind scheduled buys.
+            Kraken market research • Kraken Spot / Coinbase Advanced broker accounts • execution pending verification.
           </p>
         </div>
 
         <span className="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold self-start sm:self-auto">
-          KRAKEN RESEARCH LIVE
+          KRAKEN MARKET RESEARCH
         </span>
       </div>
 
       {/* 2. Phone Approval Required Banner */}
       <div className="p-2.5 px-3.5 rounded-lg bg-surface-base border border-white/5 flex items-center gap-2 text-[10.5px]">
         <span className="text-text-muted uppercase font-bold tracking-wider">
-          PHONE APPROVAL REQUIRED
+          BROKER ACCOUNT REVIEW
         </span>
-        <span className="text-text-secondary font-sans">Wallet signs every buy.</span>
+        <span className="text-text-secondary font-sans">Exchange trading privileges must be verified before orders are enabled.</span>
       </div>
+
+      <BrokerAccountsPanel selected={brokerVenue} onSelect={setBrokerVenue} strategy="dca" requiredUsd={Number(totalBudget)||0} />
 
       {/* 3. DCA Settings Card */}
       <div className="p-4 sm:p-5 rounded-2xl bg-surface-panel/95 border border-white/10 shadow-xl space-y-3">
@@ -191,8 +203,8 @@ export const DcaBotView: React.FC<DcaBotViewProps> = ({ coins, soundEnabled }) =
               onChange={(e) => setMode(e.target.value)}
               className="p-2 rounded-lg bg-surface-base border border-white/10 text-text-primary outline-none font-bold text-xs w-full cursor-pointer"
             >
-              <option value="Phone approval">Phone approval</option>
-              <option value="Autonomous">Autonomous</option>
+              <option value="Preview only">Preview only</option>
+              <option value="Autonomous" disabled>Autonomous (locked)</option>
             </select>
           </div>
         </div>
@@ -243,16 +255,16 @@ export const DcaBotView: React.FC<DcaBotViewProps> = ({ coins, soundEnabled }) =
             <strong className="text-xs text-text-primary">{Number(selectedCandidate?.score || 0).toFixed(1)}</strong>
           </div>
           <div>
-            <span className="text-[8.5px] text-text-muted uppercase block">BUY NOW</span>
-            <strong className="text-xs text-text-primary font-mono">$0.00</strong>
+            <span className="text-[8.5px] text-text-muted uppercase block">PROPOSED BUY</span>
+            <strong className="text-xs text-text-primary font-mono">{plannedBuy>0?formatCurrency(plannedBuy):'WAIT'}</strong>
           </div>
           <div>
-            <span className="text-[8.5px] text-text-muted uppercase block">BUDGET LEFT</span>
-            <strong className="text-xs text-text-primary font-mono">${totalBudget}.00</strong>
+            <span className="text-[8.5px] text-text-muted uppercase block">PLANNED BUDGET</span>
+            <strong className="text-xs text-text-primary font-mono">{formatCurrency(Math.max(0,Number(totalBudget||0)))}</strong>
           </div>
           <div>
-            <span className="text-[8.5px] text-text-muted uppercase block">ALLOCATION</span>
-            <strong className="text-xs text-text-primary">0%</strong>
+            <span className="text-[8.5px] text-text-muted uppercase block">PLANNED SHARE</span>
+            <strong className="text-xs text-text-primary">{Number(totalBudget)>0?(100*plannedBuy/Number(totalBudget)).toFixed(1)+'%':'—'}</strong>
           </div>
           <div>
             <span className="text-[8.5px] text-text-muted uppercase block">NEXT REVIEW</span>
@@ -261,7 +273,7 @@ export const DcaBotView: React.FC<DcaBotViewProps> = ({ coins, soundEnabled }) =
         </div>
 
         <div className="p-2.5 rounded-lg bg-surface-base border border-white/5 text-[10px] text-text-muted">
-          WAIT · keep ${totalBudget}.00 reserved
+          {plannedBuy>0?'BUY IDEA · review required, no order submitted':'WAIT · no proposed buy'} · configured budget {formatCurrency(Math.max(0,Number(totalBudget||0)))}
         </div>
 
         {/* Action Buttons */}
@@ -278,12 +290,24 @@ export const DcaBotView: React.FC<DcaBotViewProps> = ({ coins, soundEnabled }) =
             type="button"
             onClick={() => {
               if (soundEnabled) playHudSound('click');
+              const amount=plannedBuy;
+              setBrokerPreview('Broker order review only; checking authenticated account access.');
+              if (amount>0) fetch('/api/bots/cex-order/preview',{
+                method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({strategy:'dca',venue:brokerVenue,asset:selectedAsset,quoteUsd:amount})
+              }).then(async r=>{
+                const body=await r.json();
+                if(!r.ok)throw Error(body.error||'broker_not_verified');
+                setBrokerPreview((body.connected?'Broker balance readable. ':'Broker disconnected. ')+
+                  'No order submitted. Kraken/Coinbase trading permissions have not passed validation.');
+              }).catch(e=>setBrokerPreview(String(e?.message||'broker_not_verified').replaceAll('_',' ')));
+              else setBrokerPreview('Current Hunter signal does not justify a buy.');
               setShowConfirmModal(true);
               window.setTimeout(() => document.getElementById('dca-prepared-review')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
             }}
             className="px-4 py-2 rounded-xl bg-surface-base border border-white/10 hover:bg-white/10 text-text-secondary hover:text-text-primary font-bold text-xs cursor-pointer"
           >
-            PREPARE DCA BUY
+            PREVIEW DCA BUY
           </button>
         </div>
       </div>
@@ -297,14 +321,15 @@ export const DcaBotView: React.FC<DcaBotViewProps> = ({ coins, soundEnabled }) =
             </div>
             <span className="px-2 py-1 rounded bg-primary-container/10 border border-primary-container/25 text-primary-container text-[9px] font-bold">PREPARED</span>
           </div>
+          {brokerPreview && <div className="p-2 text-[10px] text-amber-400 border border-amber-400/20 rounded">{brokerPreview}</div>}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <div className="p-2.5 rounded-lg bg-surface-base border border-white/5"><div className="text-[8px] text-text-muted uppercase">Asset</div><div className="font-bold mt-1">{selectedAsset}</div></div>
             <div className="p-2.5 rounded-lg bg-surface-base border border-white/5"><div className="text-[8px] text-text-muted uppercase">Next buy</div><div className={`font-bold mt-1 ${plannedBuy > 0 ? 'text-primary-container' : 'text-amber-400'}`}>{plannedBuy > 0 ? formatCurrency(plannedBuy) : 'WAIT'}</div></div>
             <div className="p-2.5 rounded-lg bg-surface-base border border-white/5"><div className="text-[8px] text-text-muted uppercase">Budget after buy</div><div className="font-bold mt-1">{formatCurrency(Math.max(0, Number(totalBudget || 0) - plannedBuy))}</div></div>
             <div className="p-2.5 rounded-lg bg-surface-base border border-white/5"><div className="text-[8px] text-text-muted uppercase">Cadence</div><div className="font-bold mt-1">{cadence}</div></div>
           </div>
-          <div className="text-[10px] text-text-muted">Kraken signal: {selectedCandidate?.direction || 'NO_TRADE'} · score {Number(selectedCandidate?.score || 0).toFixed(1)} · {aggressiveness} profile.</div>
-          <div className="px-3 py-2 rounded-lg bg-surface-base border border-white/5 text-[10px] text-text-secondary">{plannedBuy > 0 ? 'Next step: phone approval for this buy. No order has been submitted yet.' : 'The current signal does not justify a buy, so this DCA cycle stays in WAIT.'}</div>
+          <div className="text-[10px] text-text-muted">Target broker: {brokerVenue === 'kraken' ? 'Kraken Spot' : 'Coinbase Advanced'} · Kraken signal: {selectedCandidate?.direction || 'NO_TRADE'} · score {Number(selectedCandidate?.score || 0).toFixed(1)} · {aggressiveness} profile.</div>
+          <div className="px-3 py-2 rounded-lg bg-surface-base border border-white/5 text-[10px] text-text-secondary">{plannedBuy > 0 ? 'Kraken / Coinbase API order submission is locked until account, fills and cancel paths are verified.' : 'The current signal does not justify a buy, so this DCA cycle stays in WAIT.'}</div>
         </div>
       )}
 

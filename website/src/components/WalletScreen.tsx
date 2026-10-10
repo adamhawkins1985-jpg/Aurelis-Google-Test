@@ -1,3 +1,4 @@
+import { openOneKeyAction } from './OneKeyActionRouter';
 import React, { useState, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
@@ -100,7 +101,6 @@ export const WalletScreen: React.FC<WalletScreenProps> = ({
   const [sendPickerOpen, setSendPickerOpen] = useState(false);
   const [sendAmount, setSendAmount] = useState<string>('');
   const [sendRecipient, setSendRecipient] = useState<string>('');
-  const [tradeExpectedFrom, setTradeExpectedFrom] = useState<string>('');
   const [sendSuccess, setSendSuccess] = useState<boolean>(false);
   const [sendTxHash, setSendTxHash] = useState<string>('');
   const [isSendingWebTx, setIsSendingWebTx] = useState<boolean>(false);
@@ -154,10 +154,10 @@ export const WalletScreen: React.FC<WalletScreenProps> = ({
           if (!active) return;
         }
 
-        // Agent Money is reserved for the dedicated Bot WalletConnect session.
-        // Main Wallet can connect other OneKey accounts or supported wallets.
-        if (approved.address.toLowerCase() === '0xd2919c82e5fecbb0c4be7a7c37bfc066579f233e') {
-          throw new Error('Agent Money is reserved for Bots. Select another account in Main Wallet.');
+        // OneKey sessions must resolve to the pinned Agent Money account.
+        // Never silently use another OneKey account or wallet.
+        if (walletConnectBrand.id === 'onekey' && approved.address.toLowerCase() !== '0xd2919c82e5fecbb0c4be7a7c37bfc066579f233e') {
+          throw new Error('OneKey connected to a different account. Select Agent Money in OneKey and retry.');
         }
 
         // Mark the wallet connected immediately after WalletConnect approval.
@@ -320,16 +320,23 @@ export const WalletScreen: React.FC<WalletScreenProps> = ({
     if (!raw) return;
     try {
       const prefill = JSON.parse(raw);
-      const pinned = String(prefill?.expectedFrom || '');
-      if (!/^0x[a-fA-F0-9]{40}$/.test(pinned)) throw new Error('Trade prefill requires a selected EVM wallet');
-      setTradeExpectedFrom(pinned);
       const symbol = String(prefill?.symbol || '').toUpperCase();
       const network = String(prefill?.network || '').toUpperCase();
+      const krakenFunding=String(prefill?.destinationSource||'')==='kraken';
+      const botWalletAddress='0xd2919c82e5fecbb0c4be7a7c37bfc066579f233e';
       const match = sendAssetOptions.find((item) => {
         const itemNetwork = String(item.network || '').toUpperCase();
-        return item.symbol.toUpperCase() === symbol &&
-          (itemNetwork === network || itemNetwork.includes(network) || network.includes(itemNetwork));
-      }) || sendAssetOptions.find((item) => item.symbol.toUpperCase() === symbol);
+        const sameNetwork=itemNetwork===network || itemNetwork.includes(network) || network.includes(itemNetwork);
+        // Funding must never select an asset from the Home wallet or another wallet profile.
+        const ownerOk=!krakenFunding || String(item.accountAddress||'').toLowerCase()===botWalletAddress;
+        return item.symbol.toUpperCase() === symbol && sameNetwork && ownerOk;
+      }) || (krakenFunding ? undefined :
+        sendAssetOptions.find((item) => item.symbol.toUpperCase() === symbol));
+      if (krakenFunding && !match) {
+        setSendError('The OneKey Bot Wallet must have USDC on the selected network. No transfer has been prepared; a different wallet will not be used.');
+        localStorage.removeItem('aurelis_web_send_prefill');
+        return;
+      }
       if (match) setSendAssetKey(match.key);
       setSendRecipient(String(prefill?.recipient || ''));
       setSendAmount(String(prefill?.amount || ''));
@@ -382,35 +389,34 @@ export const WalletScreen: React.FC<WalletScreenProps> = ({
 
   const handleReceiveClick = () => {
     if (soundEnabled) playHudSound('switch');
-    if (isOneKeyHost && openOneKeyNativeReceive()) {
-      setArcNotice('Opening OneKey Receive so you can choose BTC, SOL, NEAR, and other networks.');
-      return;
-    }
-    if (!isOneKeyHost) {
-      const bridge = (window as any).AurelisNative;
-      if (bridge && typeof bridge.openNativeScreen === 'function') {
-        bridge.openNativeScreen('receive');
-        return;
+    openOneKeyAction('receive', () => {
+      if (isOneKeyHost && openOneKeyNativeReceive()) return;
+      if (!isOneKeyHost) {
+        const bridge = (window as any).AurelisNative;
+        if (bridge && typeof bridge.openNativeScreen === 'function') {
+          bridge.openNativeScreen('receive');
+          return;
+        }
       }
-    }
-    setShowReceiveModal(true);
+      setShowReceiveModal(true);
+    });
   };
 
   const handleSendClick = () => {
     if (soundEnabled) playHudSound('switch');
-    setTradeExpectedFrom('');
-    if (isOneKeyHost) {
-      setSendError('OneKey send/signing is not wired into Aurelis yet. Use the OneKey wallet Send screen for real transfers until this is connected.');
-      setArcNotice('Receive is connected to the OneKey address bridge. Send still needs the OneKey signing route.');
+    openOneKeyAction('send', () => {
+      if (isOneKeyHost) {
+        setSendError('OneKey signing is not connected to AURELIS Send. Complete the transfer inside OneKey.');
+        setShowSendModal(true);
+        return;
+      }
+      const bridge = (window as any).AurelisNative;
+      if (bridge && typeof bridge.openNativeScreen === 'function') {
+        bridge.openNativeScreen('send');
+        return;
+      }
       setShowSendModal(true);
-      return;
-    }
-    const bridge = (window as any).AurelisNative;
-    if (bridge && typeof bridge.openNativeScreen === 'function') {
-      bridge.openNativeScreen('send');
-      return;
-    }
-    setShowSendModal(true);
+    });
   };
 
   const handleAddWatchAddress = () => {
@@ -570,7 +576,7 @@ export const WalletScreen: React.FC<WalletScreenProps> = ({
               <Grid className="w-4 h-4 text-primary-container" />
               Open Swap
             </span>
-            <span className="block mt-1 text-[11px] text-text-muted font-mono">Use widgets with phone approval</span>
+            <span className="block mt-1 text-[11px] text-text-muted font-mono">DeFiLlama swap · wallet approval required</span>
           </button>
           <button
             type="button"
@@ -1065,12 +1071,8 @@ export const WalletScreen: React.FC<WalletScreenProps> = ({
                     if (soundEnabled) playHudSound('trade');
                     if (!selectedSendAsset || isSendingWebTx) return;
 
-                    if (tradeExpectedFrom && (!walletAddress || tradeExpectedFrom.toLowerCase() !== walletAddress.toLowerCase())) {
-                      setSendError('The selected Trade wallet changed. Return to Trade and review the deposit.');
-                      return;
-                    }
                     const nativeBridge = (window as any).AurelisNative;
-                    if (!tradeExpectedFrom && nativeBridge && typeof nativeBridge.openNativeScreen === 'function' && selectedSendAsset.assetId) {
+                    if (nativeBridge && typeof nativeBridge.openNativeScreen === 'function' && selectedSendAsset.assetId) {
                       nativeBridge.openNativeScreen(
                         'send-prefill:' + JSON.stringify({
                           assetId: selectedSendAsset.assetId,
@@ -1091,7 +1093,6 @@ export const WalletScreen: React.FC<WalletScreenProps> = ({
                         symbol: selectedSendAsset.symbol,
                         recipient: sendRecipient,
                         amount: sendAmount,
-                        expectedFrom: tradeExpectedFrom || undefined,
                       });
                       setSendTxHash(sent.txHash);
                       setSendSuccess(true);

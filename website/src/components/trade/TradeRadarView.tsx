@@ -405,7 +405,7 @@ Commentary: ${activeSetup.commentary}`;
                     : 'bg-white/5 text-text-muted border border-white/10 cursor-not-allowed'
                 }`}
               >
-                {activeSetup.qualified ? 'Place trade' : 'No trade'}
+                {activeSetup.qualified ? 'Review in Hunter' : 'No trade'}
               </button>
             </div>
           </div>
@@ -596,7 +596,7 @@ Commentary: ${activeSetup.commentary}`;
         </div>
       )}
 
-      {/* PLACE TRADE MODAL */}
+      {/* RESEARCH HANDOFF MODAL, NO ORDER SENT */}
       {showOrderModal && (
         <div
           role="dialog"
@@ -624,7 +624,7 @@ Commentary: ${activeSetup.commentary}`;
             <div className="p-3 bg-surface-base rounded-xl border border-white/5 space-y-2 text-xs">
               <div className="flex justify-between">
                 <span className="text-text-muted">Symbol:</span>
-                <strong>{activeSetup.symbol}USDT ({activeSetup.direction})</strong>
+                <strong>{activeSetup.symbol}/USD ({activeSetup.direction})</strong>
               </div>
               <div className="flex justify-between">
                 <span className="text-text-muted">Entry:</span>
@@ -660,6 +660,7 @@ Commentary: ${activeSetup.commentary}`;
               </div>
             </div>
 
+            <p className="text-[10px] text-amber-400">This sends a research setup to Hunter for review. No exchange order is placed.</p>
             <button
               type="button"
               onClick={() => {
@@ -669,7 +670,7 @@ Commentary: ${activeSetup.commentary}`;
               }}
               className="w-full py-2.5 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-black font-bold text-xs shadow-[0_0_12px_rgba(0,210,255,0.35)] cursor-pointer"
             >
-              Confirm & Open Perps
+              Send Setup to Hunter
             </button>
           </div>
         </div>

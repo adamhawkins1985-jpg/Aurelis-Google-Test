@@ -1,13 +1,8 @@
 import SignClient from '@walletconnect/sign-client';
 import { verifyTypedData } from 'ethers';
-import { selectSafeEvmAccount } from './walletConnectAccountGuard';
 
 let client: any = null;
 let pendingApproval: null | (() => Promise<any>) = null;
-let pendingBotApproval: null | (() => Promise<any>) = null;
-const BOT_TOPIC_KEY = 'aurelis:bot-walletconnect-topic';
-const BOT_AGENT_ADDRESS = '0xd2919c82e5fecbb0c4be7a7c37bfc066579f233e';
-const botTopic = () => { try { return window.localStorage.getItem(BOT_TOPIC_KEY) || ''; } catch { return ''; } };
 
 async function getClient() {
   if (client) return client;
@@ -56,10 +51,11 @@ export async function getReusableWalletConnectSession(walletId?: string): Promis
   const sessions: any[] = signClient?.session?.getAll?.() || [];
 
   const candidates = sessions
-    .filter((session) => (!session?.expiry || Number(session.expiry) > now + 30) && session?.topic !== botTopic())
+    .filter((session) => !session?.expiry || Number(session.expiry) > now + 30)
     .sort((a, b) => Number(b?.expiry || 0) - Number(a?.expiry || 0));
 
   const wanted = String(walletId || '').toLowerCase();
+  const agentMoneyAddress = '0xd2919c82e5fecbb0c4be7a7c37bfc066579f233e';
   for (const session of candidates) {
     if (wanted && wanted !== 'walletconnect') {
       const peerName = String(session?.peer?.metadata?.name || '').toLowerCase();
@@ -73,76 +69,16 @@ export async function getReusableWalletConnectSession(walletId?: string): Promis
       if (!matches) continue;
     }
     const parsed = parseEvmSession(session);
-    if (parsed && parsed.address.toLowerCase() !== BOT_AGENT_ADDRESS) return parsed;
+    if (parsed && (wanted !== 'onekey' || parsed.address.toLowerCase() === agentMoneyAddress)) return parsed;
   }
 
   return null;
 }
 
-// Bot WalletConnect is a separate pairing topic, never a fallback to the main wallet.
-export async function getBotWalletConnectSession(): Promise<{address:string;chainId:number;session:any}|null> {
-  const topic = botTopic();
-  if (!topic) return null;
-  const signClient = await getClient();
-  const session = (signClient.session.getAll() as any[]).find(s => s.topic === topic);
-  if (!session || (session.expiry && Number(session.expiry) <= Date.now()/1000 + 30)) return null;
-  const parsed = parseEvmSession(session);
-  if (!parsed || parsed.address.toLowerCase() !== BOT_AGENT_ADDRESS) return null;
-  return parsed;
-}
-
-export async function startBotWalletConnectPairing(): Promise<{uri:string}> {
-  const signClient = await getClient();
-  const {uri,approval} = await signClient.connect({
-    requiredNamespaces: {eip155: {
-      methods:['personal_sign','eth_signTypedData_v4'],
-      chains:['eip155:1'],
-      events:['accountsChanged','chainChanged'],
-    }},
-  });
-  if (!uri) throw new Error('OneKey did not return a Bot WalletConnect pairing URI');
-  pendingBotApproval = approval;
-  return {uri};
-}
-
-export async function waitForBotWalletConnectApproval(): Promise<{address:string;chainId:number;session:any}> {
-  if (!pendingBotApproval) throw new Error('No Bot WalletConnect pairing is pending');
-  const approval = pendingBotApproval;
-  pendingBotApproval = null;
-  const session = await approval();
-  const parsed = parseEvmSession(session);
-  if (!parsed || parsed.address.toLowerCase() !== BOT_AGENT_ADDRESS) {
-    // Never save another wallet as the Agent Money bot identity.
-    try { await (await getClient()).disconnect({topic:session.topic,reason:{code:6000,message:'Wrong bot wallet account'}}); } catch {}
-    throw new Error('Bot wallet must be OneKey Agent Money. Select the Agent Money account on your phone.');
-  }
-  const name = String(session?.peer?.metadata?.name || '').toLowerCase();
-  const url = String(session?.peer?.metadata?.url || '').toLowerCase();
-  if (!(name+' '+url).includes('onekey')) {
-    try { await (await getClient()).disconnect({topic:session.topic,reason:{code:6000,message:'Not OneKey'}}); } catch {}
-    throw new Error('Connect the Bot Wallet using OneKey.');
-  }
-  window.localStorage.setItem(BOT_TOPIC_KEY,session.topic);
-  window.dispatchEvent(new Event('aurelis:bot-wallet-connected'));
-  return parsed;
-}
-
-export async function disconnectBotWalletConnect(): Promise<void> {
-  const topic=botTopic();
-  window.localStorage.removeItem(BOT_TOPIC_KEY);
-  if (topic) {
-    const signClient=await getClient();
-    if ((signClient.session.getAll() as any[]).some(s=>s.topic===topic)) {
-      await signClient.disconnect({topic,reason:{code:6000,message:'Bot wallet disconnected by user'}});
-    }
-  }
-  window.dispatchEvent(new Event('aurelis:bot-wallet-connected'));
-}
-
 // User-triggered, non-authorizing EIP-712 capability test. Never returns the signature.
 export async function testOneKeyTypedDataCapability(selectedSession?: {address: string; chainId: number; session: any}): Promise<{address: string; chainId: number; supported: boolean}> {
-  const active = selectedSession || await getBotWalletConnectSession();
-  if (!active) throw new Error('No dedicated Bot WalletConnect session found. Connect Bot Wallet above.');
+  const active = selectedSession || await getReusableWalletConnectSession('onekey');
+  if (!active) throw new Error('No active OneKey WalletConnect session found. Refresh the wallet connection or reconnect from Wallet.');
   const signClientForValidation = await getClient();
   const liveSession = signClientForValidation?.session?.get?.(active.session?.topic);
   if (!liveSession || (liveSession.expiry && Number(liveSession.expiry) <= Date.now()/1000 + 30)) {
@@ -315,7 +251,6 @@ export async function sendWalletConnectErc20Transfer(params: {
   decimals: number
   recipient: string
   amount: string
-  expectedFrom?: string
 }): Promise<{ txHash: string; from: string }> {
   const signClient = await getClient()
   const now = Math.floor(Date.now() / 1000)
@@ -323,13 +258,17 @@ export async function sendWalletConnectErc20Transfer(params: {
   const targetChain = `eip155:${params.chainId}`
 
   for (const session of sessions) {
-    if (session?.topic === botTopic()) continue
     if (session?.expiry && Number(session.expiry) <= now + 30) continue
     const ns = session?.namespaces?.eip155
+    const accounts: string[] = ns?.accounts || []
+    const account = accounts.find((item) =>
+      item.toLowerCase().startsWith(targetChain.toLowerCase() + ':0x')
+    )
+    if (!account) continue
     if (!Array.isArray(ns?.methods) || !ns.methods.includes('eth_sendTransaction')) continue
 
-    const from = selectSafeEvmAccount(ns?.accounts, targetChain, params.expectedFrom, BOT_AGENT_ADDRESS)
-    if (!from) continue
+    const from = account.split(':')[2]
+    if (!/^0x[a-fA-F0-9]{40}$/.test(from)) continue
     if (!/^0x[a-fA-F0-9]{40}$/.test(params.tokenContract)) {
       throw new Error('Invalid token contract')
     }
@@ -368,7 +307,6 @@ export async function sendWalletConnectNativeTransfer(params: {
   chainId: number
   recipient: string
   amount: string
-  expectedFrom?: string
 }): Promise<{ txHash: string; from: string }> {
   if (!/^0x[a-fA-F0-9]{40}$/.test(params.recipient)) {
     throw new Error('Invalid EVM recipient')
@@ -383,13 +321,17 @@ export async function sendWalletConnectNativeTransfer(params: {
   const targetChain = `eip155:${params.chainId}`
 
   for (const session of sessions) {
-    if (session?.topic === botTopic()) continue
     if (session?.expiry && Number(session.expiry) <= now + 30) continue
     const ns = session?.namespaces?.eip155
+    const accounts: string[] = ns?.accounts || []
+    const account = accounts.find((item) =>
+      item.toLowerCase().startsWith(targetChain.toLowerCase() + ':0x')
+    )
+    if (!account) continue
     if (!Array.isArray(ns?.methods) || !ns.methods.includes('eth_sendTransaction')) continue
 
-    const from = selectSafeEvmAccount(ns?.accounts, targetChain, params.expectedFrom, BOT_AGENT_ADDRESS)
-    if (!from) continue
+    const from = account.split(':')[2]
+    if (!/^0x[a-fA-F0-9]{40}$/.test(from)) continue
 
     const result = await signClient.request({
       topic: session.topic,
@@ -446,7 +388,6 @@ export async function sendWalletConnectAssetTransfer(params: {
   symbol: string
   recipient: string
   amount: string
-  expectedFrom?: string
 }): Promise<{ txHash: string; from: string }> {
   const evm = normalizeEvmNetworkName(params.network)
   if (!evm) throw new Error('This asset network is not supported by the web sender yet')
@@ -459,7 +400,6 @@ export async function sendWalletConnectAssetTransfer(params: {
       chainId: evm.chainId,
       recipient: params.recipient,
       amount: params.amount,
-      expectedFrom: params.expectedFrom,
     })
   }
 
@@ -483,6 +423,5 @@ export async function sendWalletConnectAssetTransfer(params: {
     decimals: Number(meta.decimals),
     recipient: params.recipient,
     amount: params.amount,
-    expectedFrom: params.expectedFrom,
   })
 }

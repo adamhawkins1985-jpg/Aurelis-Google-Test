@@ -71,6 +71,25 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
   const [token, setToken] = useState('');
   const [submitResult, setSubmitResult] = useState<any | null>(null);
   const [submitError, setSubmitError] = useState('');
+  const [executionEnabled,setExecutionEnabled]=useState(false);
+  const [executionCapabilityMessage,setExecutionCapabilityMessage]=useState('Checking execution safeguards…');
+  useEffect(()=>{
+    let active=true;
+    const check=async()=>{
+      try{
+        const response=await fetch('/api/bots/kraken-execution-capability',{cache:'no-store',credentials:'same-origin'});
+        const body=await response.json();
+        if(active){
+          setExecutionEnabled(Boolean(response.ok&&body?.enabled));
+          setExecutionCapabilityMessage(response.ok?(body?.enabled?'Kraken Spot/Margin manual approval available':'Kraken order submission locked until exchange validation'):(body?.error||'Auth required'));
+        }
+      }catch{if(active){setExecutionEnabled(false);setExecutionCapabilityMessage('Execution capability cannot be verified')}}
+    };
+    void check();
+    window.addEventListener('aurelis:wallet-authenticated',check);
+    return ()=>{active=false;window.removeEventListener('aurelis:wallet-authenticated',check)};
+  },[]);
+
   const [supportedLeverage, setSupportedLeverage] = useState<number[]>([]);
   const [liveStatus, setLiveStatus] = useState<{positions:any[];orders:any[]}>({positions:[],orders:[]});
   const [liveStatusError, setLiveStatusError] = useState('');
@@ -362,7 +381,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmationToken: token }),
+        body: JSON.stringify({ confirmationToken: token, acknowledgeLiveTest:true }),
       });
       const responseText = await response.text();
       let data: any = null;
@@ -589,13 +608,23 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
               </div>
             ))}
           </div>
-          <button
-            type="button"
-            disabled={true}
-            className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold disabled:opacity-40"
-          >
-            DEX EXECUTION NOT ENABLED
+          <div className="p-2.5 border border-amber-400/30 bg-amber-400/5 rounded-lg text-[10px] text-amber-300">
+            Kraken Spot/Margin entry preview, not Kraken U.S. perpetual futures.
+            Stop and target values are research estimates; no protective orders have been placed.
+          </div>
+          <div className="p-2.5 rounded-lg bg-amber-400/10 border border-amber-400/25 text-amber-300 text-[10px]">
+            This is a Kraken Spot/Margin market entry with a requested conditional stop-loss after fill.
+            The take-profit shown above is a planned level, not a live Kraken order.
+          </div>
+          <button type="button" disabled={!executionEnabled||busy||!token}
+            onClick={()=>{
+              if(!window.confirm('REAL LIVE TEST: Submit a Kraken Spot/Margin market entry capped at $25 notional and 2x leverage? The stop is requested after fill, take-profit is NOT placed. The trade can lose money. Approve this specific order?'))return;
+              void submitKraken();
+            }}
+            className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold disabled:opacity-40">
+            {executionEnabled?'APPROVE & EXECUTE ON KRAKEN':'KRAKEN EXECUTION TEMPORARILY LOCKED'}
           </button>
+          <div className="text-[10px] text-text-muted">{executionCapabilityMessage}</div>
           {submitError && (
             <div className="p-2.5 rounded-lg bg-red-500/10 border border-red-500/25 text-red-300 text-[10px] break-words">
               Submission stopped: {submitError}

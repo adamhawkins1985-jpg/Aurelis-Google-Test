@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ExternalLink, X, ArrowLeft, ChevronRight } from 'lucide-react';
-import type { ThemeMode } from '../types';
 
 export type SwapWidgetProvider = {
   id: string;
@@ -10,23 +9,7 @@ export type SwapWidgetProvider = {
   subtitle: string;
   url: string;
   accent: string;
-};
-
-// Keep Rango's launcher visible, but do not provide trading access from this US-only personal setup.
-// Rango's published Terms of Use exclude US persons and residents.
-export const isSwapWidgetUnavailable = (providerId: string) => providerId === 'rango';
-
-// Uniswap's official embed requires origin allowlisting. Do not load an iframe
-// until wallet.ahconceptsai.com has actually been approved by Uniswap Labs.
-export const isUniswapExternalLaunch = (providerId: string) => providerId === 'uniswap';
-
-const openExternalProvider = (url: string) => {
-  const desktopBridge = (window as any).AurelisDesktop;
-  if (desktopBridge?.isDesktop && typeof desktopBridge.openBrowser === 'function') {
-    desktopBridge.openBrowser(url);
-    return;
-  }
-  window.open(url, '_blank', 'noopener,noreferrer');
+  externalOnly?: boolean;
 };
 
 export const SWAP_WIDGET_PROVIDERS: SwapWidgetProvider[] = [
@@ -43,10 +26,11 @@ export const SWAP_WIDGET_PROVIDERS: SwapWidgetProvider[] = [
     id: 'uniswap',
     name: 'Uniswap',
     short: 'UNI',
-    logo: 'https://app.uniswap.org/favicon.png',
-    subtitle: 'DEX swaps and crypto purchases',
-    url: 'https://app.uniswap.org/swap',
-    accent: '#ff007a',
+    logo: '/provider-icons/uniswap.ico',
+    subtitle: 'Uniswap (opens in browser)',
+    url: 'https://app.uniswap.org/',
+    accent: '#f472b6',
+    externalOnly: true,
   },
   {
     id: 'rango',
@@ -72,18 +56,10 @@ export const SWAP_WIDGET_PROVIDERS: SwapWidgetProvider[] = [
     short: 'SP',
     logo: '/provider-icons/swapspro.ico',
     subtitle: 'Multi-DEX widget',
-    url: 'https://www.swaps.pro/embed?theme=light&accent=%23059669&radius=18&width=440&font=mono',
+    url: 'https://www.swaps.pro/embed?theme=dark&accent=%2300d7c7&radius=18&width=440',
     accent: '#2dd4bf',
   },
 ];
-
-// AURELIS controls only SwapsPro's published styling parameters. Quotes,
-// wallet permissions and signatures remain exclusively inside the provider.
-export const getSwapWidgetUrl = (provider: SwapWidgetProvider, theme: ThemeMode): string => {
-  if (provider.id !== 'swapspro') return provider.url;
-  const accent = theme === 'light' ? '059669' : '00F5A0';
-  return `https://www.swaps.pro/embed?theme=${theme}&accent=%23${accent}&radius=18&width=440&font=mono`;
-};
 
 type DockGeometry = {
   railLeft: number;
@@ -139,7 +115,7 @@ function useDockGeometry(): DockGeometry | null {
   return geometry;
 }
 
-export const SwapWidgetDock: React.FC<{ theme?: ThemeMode }> = ({ theme = 'light' }) => {
+export const SwapWidgetDock: React.FC = () => {
   const geometry = useDockGeometry();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [panelPos, setPanelPos] = useState<{left:number;top:number}|null>(null);
@@ -204,11 +180,15 @@ export const SwapWidgetDock: React.FC<{ theme?: ThemeMode }> = ({ theme = 'light
               key={provider.id}
               type="button"
               onClick={() => {
-                if (isSwapWidgetUnavailable(provider.id) || isUniswapExternalLaunch(provider.id)) {
-                  setActiveId(selected ? null : provider.id);
+                const desktopBridge = (window as any).AurelisDesktop;
+                if (provider.externalOnly) {
+                  if (desktopBridge?.isDesktop && typeof desktopBridge.openBrowser === 'function') {
+                    desktopBridge.openBrowser(provider.url);
+                  } else {
+                    window.open(provider.url, '_blank', 'noopener,noreferrer');
+                  }
                   return;
                 }
-                const desktopBridge = (window as any).AurelisDesktop;
                 if (desktopBridge?.isDesktop && typeof desktopBridge.openUtility === 'function') {
                   desktopBridge.openUtility('swap', provider.id);
                   return;
@@ -226,7 +206,7 @@ export const SwapWidgetDock: React.FC<{ theme?: ThemeMode }> = ({ theme = 'light
             >
               <img src={provider.logo} alt="" className="w-6 h-6 object-contain rounded-md" />
               <span className="pointer-events-none absolute right-full mr-2 px-2 py-1 rounded-md bg-surface-canvas border border-white/10 text-text-primary text-[10px] font-medium whitespace-nowrap opacity-0 translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all">
-                {provider.name}{isSwapWidgetUnavailable(provider.id) ? ' · unavailable in US' : ''}
+                {provider.name}
               </span>
             </button>
           );
@@ -257,17 +237,15 @@ export const SwapWidgetDock: React.FC<{ theme?: ThemeMode }> = ({ theme = 'light
               </div>
             </div>
             <div className="flex items-center gap-1">
-              {!isSwapWidgetUnavailable(active.id) && (
-                <a
-                  href={getSwapWidgetUrl(active, theme)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-white/5"
-                  title="Open provider in new tab"
-                >
-                  <ExternalLink className="w-4 h-4" />
-                </a>
-              )}
+              <a
+                href={active.url}
+                target="_blank"
+                rel="noreferrer"
+                className="p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-white/5"
+                title="Open provider in new tab"
+              >
+                <ExternalLink className="w-4 h-4" />
+              </a>
               <button
                 type="button"
                 onClick={() => setActiveId(null)}
@@ -279,48 +257,21 @@ export const SwapWidgetDock: React.FC<{ theme?: ThemeMode }> = ({ theme = 'light
             </div>
           </header>
 
-          {isSwapWidgetUnavailable(active.id) ? (
-            <div className="flex flex-1 items-center justify-center p-6 text-center">
-              <p className="max-w-xs text-sm text-text-secondary">
-                Rango is unavailable for US users under its current terms.
-                The icon is preserved, but trading through this provider is disabled.
-              </p>
-            </div>
-          ) : isUniswapExternalLaunch(active.id) ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-4 p-5 text-center">
-              <img src={active.logo} alt="" className="h-14 w-14 rounded-2xl object-contain" />
-              <h3 className="text-base font-bold text-text-primary">Uniswap</h3>
-              <p className="max-w-sm text-xs leading-relaxed text-text-secondary">
-                Swap thousands of tokens across supported networks or buy crypto using an available payment provider.
-                Uniswap requires approval to embed its app on AURELIS, so for now it opens separately.
-                Connect your main wallet on Uniswap and review transactions there.
-              </p>
-              <button type="button" onClick={() => openExternalProvider(active.url)}
-                className="rounded-xl bg-primary-container px-5 py-2.5 text-xs font-bold text-on-primary-container">
-                Open Uniswap Swap
-              </button>
-              <button type="button" onClick={() => openExternalProvider('https://app.uniswap.org/buy')}
-                className="rounded-xl border border-primary-container/40 px-5 py-2.5 text-xs font-bold text-text-primary">
-                Buy Crypto
-              </button>
-            </div>
-          ) : (
-            <iframe
-              key={active.id}
-              title={active.name}
-              src={getSwapWidgetUrl(active, theme)}
-              className="w-full flex-1 min-h-0 bg-white"
-              allow="clipboard-read; clipboard-write; payment"
-              referrerPolicy="strict-origin-when-cross-origin"
-            />
-          )}
+          <iframe
+            key={active.id}
+            title={active.name}
+            src={active.url}
+            className="w-full flex-1 min-h-0 bg-white"
+            allow="clipboard-read; clipboard-write; payment"
+            referrerPolicy="strict-origin-when-cross-origin"
+          />
         </section>
       )}
     </>
   );
 };
 
-export const MobileSwapWidgetPage: React.FC<{ providerId?: string | null; theme?: ThemeMode }> = ({ providerId, theme = 'light' }) => {
+export const MobileSwapWidgetPage: React.FC<{ providerId?: string | null }> = ({ providerId }) => {
   const provider = SWAP_WIDGET_PROVIDERS.find((item) => item.id === providerId);
 
   if (!provider) {
@@ -338,7 +289,9 @@ export const MobileSwapWidgetPage: React.FC<{ providerId?: string | null; theme?
             {SWAP_WIDGET_PROVIDERS.map((item) => (
               <a
                 key={item.id}
-                href={`${window.location.pathname}?swapWidget=${encodeURIComponent(item.id)}`}
+                href={item.externalOnly ? item.url : `${window.location.pathname}?swapWidget=${encodeURIComponent(item.id)}`}
+                target={item.externalOnly ? '_blank' : undefined}
+                rel={item.externalOnly ? 'noopener noreferrer' : undefined}
                 className="flex items-center justify-between gap-3 p-3 rounded-xl bg-surface-panel border border-white/10"
               >
                 <div className="flex items-center gap-3 min-w-0">
@@ -362,6 +315,19 @@ export const MobileSwapWidgetPage: React.FC<{ providerId?: string | null; theme?
     );
   }
 
+  if (provider.externalOnly) {
+    return (
+      <main className="min-h-screen bg-surface-canvas p-5 font-mono text-text-primary">
+        <a href={window.location.pathname} className="text-xs text-text-muted">← AURELIS</a>
+        <h1 className="mt-4 text-lg font-bold">{provider.name}</h1>
+        <p className="mt-2 text-xs text-text-muted">Uniswap opens separately because it is not an AURELIS-embedded swap provider.</p>
+        <a href={provider.url} target="_blank" rel="noopener noreferrer"
+           className="mt-4 inline-flex rounded-lg bg-primary-container px-3 py-2 text-xs font-bold text-on-primary-container">
+          Open Uniswap
+        </a>
+      </main>
+    );
+  }
   return (
     <main className="h-screen bg-surface-canvas text-text-primary flex flex-col font-mono">
       <header className="h-12 px-3 flex items-center justify-between border-b border-white/10 bg-surface-panel shrink-0">
@@ -369,45 +335,17 @@ export const MobileSwapWidgetPage: React.FC<{ providerId?: string | null; theme?
           <ArrowLeft className="w-4 h-4" /> Providers
         </a>
         <span className="text-xs font-bold">{provider.name}</span>
-        {isSwapWidgetUnavailable(provider.id) ? (
-          <span className="text-[10px] text-text-muted">US unavailable</span>
-        ) : (
-          <a href={getSwapWidgetUrl(provider, theme)} target="_blank" rel="noopener noreferrer" className="p-1.5 text-text-muted" aria-label="Open externally">
-            <ExternalLink className="w-4 h-4" />
-          </a>
-        )}
+        <a href={provider.url} target="_blank" rel="noreferrer" className="p-1.5 text-text-muted" aria-label="Open externally">
+          <ExternalLink className="w-4 h-4" />
+        </a>
       </header>
-      {isSwapWidgetUnavailable(provider.id) ? (
-        <div className="flex flex-1 items-center justify-center p-6 text-center text-sm text-text-secondary">
-          Rango trading is unavailable for US users under its current terms.
-          The original right-side provider icon remains visible.
-        </div>
-      ) : isUniswapExternalLaunch(provider.id) ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4 p-5 text-center">
-          <img src={provider.logo} alt="" className="h-14 w-14 rounded-xl object-contain" />
-          <h2 className="text-lg font-bold">Uniswap</h2>
-          <p className="max-w-sm text-xs leading-relaxed text-text-secondary">
-            Uniswap requires origin approval before embedding. Open its official website to swap or buy with
-            a supported payment provider. Connect and approve using your main wallet directly on Uniswap.
-          </p>
-          <a href={provider.url} target="_blank" rel="noopener noreferrer"
-            className="rounded-xl bg-primary-container px-5 py-2.5 text-xs font-bold text-on-primary-container">
-            Open Uniswap Swap
-          </a>
-          <a href="https://app.uniswap.org/buy" target="_blank" rel="noopener noreferrer"
-            className="rounded-xl border border-primary-container/40 px-5 py-2.5 text-xs font-bold text-text-primary">
-            Buy Crypto
-          </a>
-        </div>
-      ) : (
-        <iframe
-          title={provider.name}
-          src={getSwapWidgetUrl(provider, theme)}
-          className="w-full flex-1 bg-white"
-          allow="clipboard-read; clipboard-write; payment"
-          referrerPolicy="strict-origin-when-cross-origin"
-        />
-      )}
+      <iframe
+        title={provider.name}
+        src={provider.url}
+        className="w-full flex-1 bg-white"
+        allow="clipboard-read; clipboard-write; payment"
+        referrerPolicy="strict-origin-when-cross-origin"
+      />
     </main>
   );
 };

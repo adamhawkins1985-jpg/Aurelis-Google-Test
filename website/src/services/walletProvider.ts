@@ -65,10 +65,6 @@ function parseMaybeJson(value: unknown): any {
   }
 }
 
-// Agent Money belongs exclusively to Bots. Never include it in the main portfolio.
-const BOT_ONLY_ADDRESS = '0xd2919c82e5fecbb0c4be7a7c37bfc066579f233e';
-const isBotOnlyAddress = (value: string) => String(value || '').trim().toLowerCase() === BOT_ONLY_ADDRESS;
-
 function getSavedExternalWalletAddress(): string {
   if (typeof window === 'undefined') return '';
   try {
@@ -76,7 +72,7 @@ function getSavedExternalWalletAddress(): string {
     const provider = String(localStorage.getItem('aurelis_wallet_provider') || '').toLowerCase();
     const address = String(localStorage.getItem('aurelis_wallet_address') || '').trim();
     const looksExternal = !provider || !provider.includes('aurelis');
-    return connected && looksExternal && /^0x[a-fA-F0-9]{40}$/.test(address) && !isBotOnlyAddress(address) ? address : '';
+    return connected && looksExternal && /^0x[a-fA-F0-9]{40}$/.test(address) ? address : '';
   } catch {
     return '';
   }
@@ -91,7 +87,7 @@ function getSavedWatchAddresses(): Record<string, string[]> {
     const out: Record<string, string[]> = {};
     for (const [chain, value] of Object.entries(parsed)) {
       const list = Array.isArray(value) ? value : [value];
-      out[String(chain).toLowerCase()] = Array.from(new Set(list.map((item) => String(item || '').trim()).filter(item => item && !isBotOnlyAddress(item))));
+      out[String(chain).toLowerCase()] = Array.from(new Set(list.map((item) => String(item || '').trim()).filter(Boolean)));
     }
     return out;
   } catch {
@@ -137,7 +133,6 @@ function normalizeProfileAddresses(value: unknown): Record<string, string> {
     const address = String(rawValue || '').trim();
     if (!key || !address) continue;
     if (/seed|mnemonic|private/i.test(key) || /seed phrase|private key|mnemonic/i.test(address)) continue;
-    if (isBotOnlyAddress(address)) continue;
     out[key] = address;
   }
   return out;
@@ -294,7 +289,7 @@ class AurelisServerWalletProvider implements AurelisWalletProvider {
     if (externalAddress || Object.keys(watch).length || profiles.length) {
       const addresses: WalletAddressMap = {};
       const put = (key: string, value: string) => {
-        if (key && value && !isBotOnlyAddress(value) && !addresses[key]) addresses[key] = value;
+        if (key && value && !addresses[key]) addresses[key] = value;
       };
       if (externalAddress) {
         for (const key of ['ETH','ethereum','evm--1','BASE','base','evm--8453','ARBITRUM','arbitrum','evm--42161','OPTIMISM','optimism','evm--10','BSC','bsc','evm--56','POLYGON','polygon','evm--137','AVAX','avalanche','evm--43114']) {
@@ -322,7 +317,7 @@ class AurelisServerWalletProvider implements AurelisWalletProvider {
     if (!res.ok || !data?.ok || !data.addresses) {
       throw new Error(data?.error || 'AURELIS wallet addresses unavailable');
     }
-    return Object.fromEntries(Object.entries(data.addresses).filter(([,value]) => !isBotOnlyAddress(String(value)))) as WalletAddressMap;
+    return data.addresses;
   }
 
   async getPortfolio(): Promise<WalletPortfolioAsset[]> {
@@ -337,7 +332,7 @@ class AurelisServerWalletProvider implements AurelisWalletProvider {
     if (!res.ok || !data?.ok || !Array.isArray(data.assets)) {
       throw new Error(data?.error || 'AURELIS wallet portfolio unavailable');
     }
-    return normalizePortfolio(data.assets).filter(item => !isBotOnlyAddress(item.accountAddress || ''));
+    return normalizePortfolio(data.assets);
   }
 }
 

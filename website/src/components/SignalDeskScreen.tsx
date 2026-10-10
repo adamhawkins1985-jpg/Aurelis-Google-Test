@@ -44,7 +44,7 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
   const [selectedCoinSymbol, setSelectedCoinSymbol] = useState<
     'BTC' | 'ETH' | 'SOL' | 'XRP' | 'DOGE' | 'ADA' | 'AVAX' | 'LINK' | 'ZEC'
   >('SOL');
-  const [provider, setProvider] = useState<'Kraken Futures' | 'Kraken Spot'>('Kraken Futures');
+  const [provider, setProvider] = useState<'Kraken Spot/Margin' | 'Kraken Spot'>('Kraken Spot/Margin');
   const [positionAmount, setPositionAmount] = useState('25');
   const [positionLeverage, setPositionLeverage] = useState('2');
   const [supportedLeverage, setSupportedLeverage] = useState<number[]>([]);
@@ -63,6 +63,24 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [krakenReview, setKrakenReview] = useState<any | null>(null);
   const [krakenToken, setKrakenToken] = useState('');
+  const [executionEnabled,setExecutionEnabled]=useState(false);
+  const [executionStatus,setExecutionStatus]=useState('Checking Kraken account execution…');
+  useEffect(()=>{
+    let active=true;
+    const check=async()=>{
+      try{
+        const res=await fetch('/api/bots/kraken-execution-capability',{cache:'no-store',credentials:'same-origin'});
+        const info=await res.json();
+        if(!active)return;
+        setExecutionEnabled(Boolean(res.ok&&info?.enabled));
+        setExecutionStatus(res.ok?(info?.enabled?'Kraken Spot/Margin manual execution available':'New orders locked until Kraken stop-order validation'):(info?.error||'Bot Wallet authorization required'));
+      }catch{if(active){setExecutionEnabled(false);setExecutionStatus('Kraken execution capability unavailable')}}
+    };
+    void check();
+    window.addEventListener('aurelis:wallet-authenticated',check);
+    return ()=>{active=false;window.removeEventListener('aurelis:wallet-authenticated',check)};
+  },[]);
+
   const [orderBusy, setOrderBusy] = useState(false);
   const [liveBars, setLiveBars] = useState<any[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
@@ -260,6 +278,13 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
   };
 
   const handleExecuteSetup = async () => {
+    if(!executionEnabled){
+      setToastMessage('Kraken execution locked. No order has been sent.');
+      return;
+    }
+    if(!window.confirm('REAL LIVE TEST: Kraken Spot/Margin trade capped at $25 notional and 2x leverage. A conditional stop is requested after fill; take-profit is NOT placed. This can lose real funds. Approve this order?')){
+      return;
+    }
     if (!krakenToken) {
       setToastMessage('Review the Kraken setup first.');
       setTimeout(() => setToastMessage(null), 3000);
@@ -271,7 +296,7 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmationToken: krakenToken }),
+        body: JSON.stringify({ confirmationToken: krakenToken, acknowledgeLiveTest:true }),
       });
       const data = await response.json();
       if (!response.ok || !data?.ok) throw new Error(data?.error || data?.message || 'Kraken submission failed.');
@@ -975,6 +1000,18 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
       )}
 
       {krakenReview && (
+        <div className="p-3 rounded-xl border border-amber-400/30 bg-amber-400/5 text-[10px] text-amber-300">
+          Kraken Spot/Margin entry review only. Stop-loss and take-profit are estimates, NOT submitted protective orders.
+          New submissions remain locked while protection and ownership checks are completed.
+        </div>
+      )}
+      {krakenReview && (
+        <div className="rounded-lg border border-white/10 bg-surface-panel px-3 py-2 text-[10px]">
+          {executionStatus}. This previews a Kraken Spot/Margin entry, not a U.S. perpetual future.
+          A conditional stop is requested after fill; the take-profit is not placed automatically.
+        </div>
+      )}
+      {krakenReview && (
         <div className="lg:hidden p-3 rounded-xl bg-surface-panel/95 border border-primary-container/25 space-y-2 overflow-hidden">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-3.5 h-3.5 text-primary-container" />
@@ -1017,11 +1054,11 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
         <button
           type="button"
           onClick={handleExecuteSetup}
-          disabled={orderBusy || !krakenToken}
+          disabled={!executionEnabled || orderBusy || !krakenToken}
           className="px-3 py-1.5 rounded-lg bg-primary-container text-on-primary-container text-[11px] font-bold flex items-center gap-1 shadow-[0_0_10px_rgba(0,245,160,0.4)] cursor-pointer disabled:opacity-40"
         >
           <Zap className="w-3 h-3" />
-          <span>Execute ${positionAmount}</span>
+          <span>{executionEnabled?'APPROVE KRAKEN ORDER':'EXECUTION LOCKED'}</span>
         </button>
       </div>
 

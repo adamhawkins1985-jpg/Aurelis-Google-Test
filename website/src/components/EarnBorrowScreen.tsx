@@ -26,6 +26,7 @@ import { CoinData, NavigationTab } from '../types';
 import { playHudSound, formatCurrency } from '../services/marketData';
 import { CoinIcon } from './CoinIcon';
 import { ExportBorrowModal } from './ExportBorrowModal';
+import { openOneKeyAction } from './OneKeyActionRouter';
 
 interface EarnBorrowScreenProps {
   soundEnabled: boolean;
@@ -309,6 +310,14 @@ export const EarnBorrowScreen: React.FC<EarnBorrowScreenProps> = ({
         </div>
 
         <div className="flex items-center gap-2 self-start md:self-auto shrink-0">
+          <button type="button" onClick={() => openOneKeyAction('stake')}
+            className="rounded-lg border border-primary-container/30 px-2.5 py-2 text-[10px] font-bold text-text-primary hover:bg-primary-container/10">
+            Open OneKey for Stake
+          </button>
+          <button type="button" onClick={() => openOneKeyAction('borrow')}
+            className="rounded-lg border border-primary-container/30 px-2.5 py-2 text-[10px] font-bold text-text-primary hover:bg-primary-container/10">
+            Open OneKey for Borrow
+          </button>
           {/* Export Desk Button */}
           <button
             type="button"
@@ -382,7 +391,7 @@ export const EarnBorrowScreen: React.FC<EarnBorrowScreenProps> = ({
             <p className="text-[10.5px] text-text-muted font-sans mt-0.5">
               {isWalletConnected
                 ? `${walletAddress ? walletAddress.slice(0, 6) + '...' + walletAddress.slice(-4) : 'AURELIS Wallet'} (native wallet)`
-                : 'Connect AURELIS Wallet to review and approve loan transactions with one tap.'}
+                : 'Connect a wallet to view supported holdings and positions. This screen only previews borrowing routes; it does not execute loans.'}
             </p>
           </div>
         </div>
@@ -788,7 +797,7 @@ export const EarnBorrowScreen: React.FC<EarnBorrowScreenProps> = ({
             className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-mono font-bold text-xs transition-all shadow-[0_0_14px_rgba(0,245,160,0.35)] hover:opacity-95 cursor-pointer flex items-center justify-center gap-2"
           >
             <Zap className="w-3.5 h-3.5" />
-            <span>{previewApproved ? 'Review Dispatched to Wallet...' : 'Review and Approve on Phone / Wallet'}</span>
+            <span>{previewApproved ? 'Loan Route Selected' : 'Select Route (Preview Only)'}</span>
           </button>
         </section>
       )}
