@@ -69,6 +69,8 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
   const [status, setStatus] = useState('Drop or choose a bet screenshot.');
   const [preview, setPreview] = useState<any | null>(null);
   const [token, setToken] = useState('');
+  const [krakenValidated,setKrakenValidated]=useState(false);
+  const [validationStatus,setValidationStatus]=useState('');
   const [submitResult, setSubmitResult] = useState<any | null>(null);
   const [submitError, setSubmitError] = useState('');
   const [executionEnabled,setExecutionEnabled]=useState(false);
@@ -110,6 +112,8 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
     setLeverage(String(initialSetup.leverage || 1));
     setPreview(null);
     setToken('');
+    setKrakenValidated(false);
+    setValidationStatus('');
     setStatus('Reviewed setup loaded from Hunter. Build the final order review before submission.');
   }, [initialSetup]);
   const normalized = useMemo(() => {
@@ -335,6 +339,8 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
     }
     setBusy(true);
     setToken('');
+    setKrakenValidated(false);
+    setValidationStatus('');
     setSubmitResult(null);
     setSubmitError('');
     try {
@@ -369,9 +375,34 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
     }
   };
 
+  const validateKraken = async () => {
+    if(!token||!preview){
+      setValidationStatus('Create a fresh Kraken review first.');
+      return;
+    }
+    setBusy(true);
+    setKrakenValidated(false);
+    setValidationStatus('Validating Kraken order parameters. No trade will be placed.');
+    try{
+      const response=await fetch('/api/signal-desk/order/validate',{
+        method:'POST',credentials:'include',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({confirmationToken:token})
+      });
+      const data=await response.json();
+      if(!response.ok||!data?.ok||!data?.validated||data?.orderPlaced!==false)
+        throw new Error(data?.error||'Kraken validation not confirmed');
+      setKrakenValidated(true);
+      setValidationStatus('KRAKEN VALIDATED. No order placed. Validation lasts at most 30 seconds. Real trading is separately locked.');
+    }catch(error:any){
+      setKrakenValidated(false);
+      setValidationStatus('Validation failed: '+(error?.message||'Unknown error')+'. No order requested.');
+    }finally{setBusy(false)}
+  };
+
   const submitKraken = async () => {
-    if (!token) {
-      setStatus('Build a fresh Kraken review first.');
+    if (!token||!krakenValidated) {
+      setStatus('Fresh Kraken validation is required before any submission.');
       return;
     }
     setBusy(true);
@@ -392,6 +423,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
         throw new Error(message);
       }
       setToken('');
+      setKrakenValidated(false);
       setPreview(null);
       setStatus('Kraken trade submitted. Live position status is refreshing now.');
       await loadLiveStatus();
@@ -575,13 +607,13 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
             </div>
           )}
 
-          <button
-            type="button"
-            onClick={reviewDex}
-            disabled={busy}
-            className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold disabled:opacity-40"
-          >
-            REVIEW DEX PAPER ROUTE
+          <button type="button" onClick={reviewKraken} disabled={busy}
+            className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold disabled:opacity-40">
+            REVIEW KRAKEN $10 SPOT/MARGIN TEST
+          </button>
+          <button type="button" onClick={reviewDex} disabled={busy}
+            className="w-full py-2 rounded-xl border border-white/10 text-text-secondary font-bold disabled:opacity-40">
+            DEX PAPER ROUTE (RESEARCH ONLY)
           </button>
         </div>
       )}
@@ -616,7 +648,12 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
             This is a Kraken Spot/Margin market entry with a requested conditional stop-loss after fill.
             The take-profit shown above is a planned level, not a live Kraken order.
           </div>
-          <button type="button" disabled={!executionEnabled||busy||!token}
+          <button type="button" onClick={validateKraken} disabled={busy||!token}
+            className="w-full py-2.5 rounded-xl border border-primary-container/40 bg-primary-container/10 text-primary-container font-bold disabled:opacity-40">
+            VALIDATE WITH KRAKEN (NO TRADE)
+          </button>
+          {validationStatus && <div role="status" className={krakenValidated?'text-primary-container text-[10px]':'text-amber-300 text-[10px]'}>{validationStatus}</div>}
+          <button type="button" disabled={!executionEnabled||!krakenValidated||busy||!token}
             onClick={()=>{
               if(!window.confirm('REAL LIVE TEST: Submit a Kraken Spot/Margin market entry capped at $10 notional and 2x leverage? The stop is requested after fill, take-profit is NOT placed. The trade can lose money. Approve this specific order?'))return;
               void submitKraken();
