@@ -19,9 +19,9 @@ jobs:
           fetch-depth: 1
       - name: Retrieve allowlisted live source from restricted deploy account
         env:
-          HOST: \${{ secrets.VPS_HOST }}
-          KEY: \${{ secrets.VPS_SSH_KEY }}
-          KNOWN: \${{ secrets.VPS_KNOWN_HOSTS }}
+          HOST: ${{ secrets.VPS_HOST }}
+          KEY: ${{ secrets.VPS_SSH_KEY }}
+          KNOWN: ${{ secrets.VPS_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
           test -n "$HOST" && test -n "$KEY" && test -n "$KNOWN"
@@ -35,7 +35,7 @@ jobs:
           printf '%s\n' "$KNOWN" > "$HOME/.ssh/known_hosts"
           SSH=(ssh -i "$HOME/.ssh/aurelis_source" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10)
           REMOTE="aurelisdeploy@$HOST"
-          if ! "\${SSH[@]}" "$REMOTE" 'test -r "$HOME/aurelis-source-export/server/migrated_backend.ts" && test -r "$HOME/aurelis-source-export/src/components/AiScreen.tsx"'; then
+          if ! "${SSH[@]}" "$REMOTE" 'test -r "$HOME/aurelis-source-export/server/migrated_backend.ts" && test -r "$HOME/aurelis-source-export/src/components/AiScreen.tsx"'; then
             echo "::error::One-time sanitized source export is missing on VPS. No deployment attempted."
             exit 1
           fi
@@ -46,7 +46,7 @@ jobs:
 
       - name: Check source snapshot for credentials and untrusted files
         env:
-          SNAP: \${{ runner.temp }}/live-source
+          SNAP: ${{ runner.temp }}/live-source
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -69,7 +69,7 @@ jobs:
                   raise SystemExit('Unexpected large file: '+str(rel))
               if p.suffix.lower() in {'.ts','.tsx','.js','.mjs','.cjs','.json','.css','.scss','.html','.svg','.txt','.md'}:
                   data=p.read_text(errors='replace')
-                  for pattern in ('-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----',r'(?i)\\bghp_[a-z0-9]{30,}',r'(?i)\\bsk_live_[a-z0-9]{12,}'):
+                  for pattern in ('-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----',r'(?i)ghp_[a-z0-9]{30,}',r'(?i)sk_live_[a-z0-9]{12,}'):
                       if re.search(pattern,data):
                           raise SystemExit('Embedded credential marker: '+str(rel))
           backend=(root/'server/migrated_backend.ts').read_text()
@@ -79,7 +79,7 @@ jobs:
           PY
       - name: Reconcile source in isolated GitHub branch only
         env:
-          SNAP: \${{ runner.temp }}/live-source
+          SNAP: ${{ runner.temp }}/live-source
         run: |
           set -euo pipefail
           for dir in src server public; do
@@ -98,13 +98,8 @@ jobs:
             echo "Live source already synchronized"
             exit 0
           fi
+          (cd website && npm ci --legacy-peer-deps && npm run lint && npm run build)
           git config user.name 'aurelis-source-sync[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'Import sanitized current live AURELIS website source (no runtime credentials)'
           git push origin HEAD:sync/live-vps-source-20261010
-      - name: Check compilation
-        working-directory: website
-        run: |
-          npm ci --legacy-peer-deps
-          npm run lint
-          npm run build
