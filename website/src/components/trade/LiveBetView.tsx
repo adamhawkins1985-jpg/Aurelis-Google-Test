@@ -230,7 +230,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
   };
 
   const closeKrakenPosition = async (txid:string) => {
-    if (!window.confirm('Close this Kraken margin position at market now?')) return;
+    if (!window.confirm('Close this Kraken margin position at market? IMPORTANT: Kraken conditional stop-loss orders may remain active after a separate close and could open an opposite position later. Review and cancel any associated conditional stops in Kraken after closing.')) return;
     setActionBusy('position:'+txid);
     try {
       const response = await fetch('/api/kraken/close-position', {
