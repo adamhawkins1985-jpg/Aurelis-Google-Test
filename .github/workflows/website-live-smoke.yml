@@ -37,5 +37,14 @@ jobs:
             echo "::error::No-trade validation must require signed Bot Wallet owner; HTTP $validation_http"
             exit 1
           }
+          # No order token is supplied. Unsigned submit MUST fail before any broker request.
+          submit_http="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 \
+            -X POST -H 'Content-Type: application/json' -d '{}' \
+            "$BASE/api/signal-desk/order/submit")"
+          test "$submit_http" = "401" || {
+            echo "::error::Real trade submission unexpectedly accepted unsigned access: HTTP $submit_http"
+            exit 1
+          }
+          echo "Kraken submit endpoint rejects unsigned requests: yes"
           echo "Kraken validate-only endpoint requires signed owner: yes"
           echo "PASS: site health, website bundle, authenticated bot APIs and no-trade validation access control."
