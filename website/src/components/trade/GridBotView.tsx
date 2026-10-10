@@ -10,6 +10,7 @@ import {
 import { CoinData } from '../../types';
 import { playHudSound, formatCurrency } from '../../services/marketData';
 import { fetchKrakenRadar, KrakenRadarCandidate } from '../../services/krakenBots';
+import { BrokerAccountsPanel } from './BrokerAccountsPanel';
 
 interface GridBotViewProps {
   coins: CoinData[];
@@ -18,21 +19,27 @@ interface GridBotViewProps {
 
 export const GridBotView: React.FC<GridBotViewProps> = ({ coins, soundEnabled }) => {
   const [selectedAsset, setSelectedAsset] = useState<string>('BTC');
+  const [brokerVenue, setBrokerVenue] = useState<'kraken'|'coinbase'>('kraken');
+  const [brokerPreview, setBrokerPreview] = useState<string>('');
   const [capital, setCapital] = useState<string>('1000');
   const [rangeMode, setRangeMode] = useState<string>('AI Range');
   const [gridLevels, setGridLevels] = useState<number>(10);
   const [breakoutGuard, setBreakoutGuard] = useState<string>('Enabled');
-  const [mode, setMode] = useState<string>('Phone approval');
+  const [mode, setMode] = useState<string>('Preview only');
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [preparedReview, setPreparedReview] = useState<boolean>(false);
 
   const [radarCandidates, setRadarCandidates] = useState<KrakenRadarCandidate[]>([]);
+  const [radarError,setRadarError]=useState('');
 
   const loadRadar = async () => {
     setIsScanning(true);
     try {
       const data = await fetchKrakenRadar();
       setRadarCandidates(data.candidates);
+      setRadarError('');
+    } catch(error:any) {
+      setRadarError(error?.message||'Kraken market research unavailable');
     } finally {
       setIsScanning(false);
     }
@@ -92,6 +99,9 @@ export const GridBotView: React.FC<GridBotViewProps> = ({ coins, soundEnabled })
 
   return (
     <div className="space-y-4 font-mono select-none text-text-primary text-xs">
+      {radarError && <div role="status" className="rounded-lg border border-amber-400/30 bg-amber-400/10 text-amber-300 px-3 py-2 text-[10px]">
+        Scanner refresh failed: {radarError}. Broker connections are independent; no order was placed.
+      </div>}
       {/* 1. Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 sm:p-4 rounded-xl bg-surface-panel/95 border border-white/10 shadow-lg">
         <div>
@@ -107,19 +117,21 @@ export const GridBotView: React.FC<GridBotViewProps> = ({ coins, soundEnabled })
         </div>
 
         <span className="px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold self-start sm:self-auto">
-          KRAKEN RESEARCH LIVE
+          KRAKEN MARKET RESEARCH
         </span>
       </div>
 
       {/* 2. Phone Approval Required Banner */}
       <div className="p-2.5 px-3.5 rounded-lg bg-surface-base border border-white/5 flex items-center gap-2 text-[10.5px]">
         <span className="text-text-muted uppercase font-bold tracking-wider">
-          PHONE APPROVAL REQUIRED
+          BROKER ACCOUNT REVIEW
         </span>
         <span className="text-text-secondary font-sans">
-          Wallet signs every fund-moving action.
+          Kraken / Coinbase broker orders are disabled pending verification.
         </span>
       </div>
+
+      <BrokerAccountsPanel selected={brokerVenue} onSelect={setBrokerVenue} strategy="grid" requiredUsd={Number(capital)||0} />
 
       {/* 3. Grid Settings Card */}
       <div className="p-4 sm:p-5 rounded-2xl bg-surface-panel/95 border border-white/10 shadow-xl space-y-3">
@@ -201,8 +213,8 @@ export const GridBotView: React.FC<GridBotViewProps> = ({ coins, soundEnabled })
               onChange={(e) => setMode(e.target.value)}
               className="p-2 rounded-lg bg-surface-base border border-white/10 text-text-primary outline-none font-bold text-xs w-full cursor-pointer"
             >
-              <option value="Phone approval">Phone approval</option>
-              <option value="Autonomous">Autonomous</option>
+              <option value="Preview only">Preview only</option>
+              <option value="Autonomous" disabled>Autonomous (locked)</option>
             </select>
           </div>
         </div>
@@ -213,7 +225,7 @@ export const GridBotView: React.FC<GridBotViewProps> = ({ coins, soundEnabled })
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-white/10">
           <div>
             <span className="text-[9px] text-cyan-400 uppercase font-bold tracking-wider block mb-0.5">
-              CURRENT GRID DECISION
+              CURRENT GRID RANGE RESEARCH
             </span>
             <h2 className="text-base sm:text-lg font-headline font-bold text-text-primary">
               {selectedAsset} — {selectedCandidate ? 'KRAKEN RANGE CHECK' : 'WAITING FOR KRAKEN DATA'}
@@ -261,7 +273,7 @@ export const GridBotView: React.FC<GridBotViewProps> = ({ coins, soundEnabled })
             <strong className="text-xs text-text-primary font-mono">${step}</strong>
           </div>
           <div>
-            <span className="text-[8.5px] text-text-muted uppercase block">CAPITAL / GRID</span>
+            <span className="text-[8.5px] text-text-muted uppercase block">PLANNED / GRID</span>
             <strong className="text-xs text-text-primary font-mono">${capitalPerGrid}</strong>
           </div>
           <div>
@@ -284,12 +296,22 @@ export const GridBotView: React.FC<GridBotViewProps> = ({ coins, soundEnabled })
             type="button"
             onClick={() => {
               if (soundEnabled) playHudSound('click');
+              setBrokerPreview('Reviewing broker order preflight. No order will be sent.');
+              const amount=Math.max(0,Number(capital||0)/Math.max(1,Number(gridLevels)||1));
+              fetch('/api/bots/cex-order/preview',{
+                method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({strategy:'grid',venue:brokerVenue,asset:selectedAsset,quoteUsd:amount})
+              }).then(async r=>{
+                const body=await r.json();if(!r.ok)throw Error(body.error||'broker_not_verified');
+                setBrokerPreview((body.connected?'Account balance readable. ':'Broker disconnected. ')+
+                  'Order submission and grid order lifecycle remain locked.');
+              }).catch(e=>setBrokerPreview(String(e?.message||'broker_not_verified').replaceAll('_',' ')));
               setPreparedReview(true);
               window.setTimeout(() => document.getElementById('grid-prepared-review')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
             }}
             className="px-4 py-2 rounded-xl bg-surface-base border border-white/10 hover:bg-white/10 text-text-secondary hover:text-text-primary font-bold text-xs cursor-pointer"
           >
-            PREPARE GRID
+            PREVIEW GRID
           </button>
         </div>
       </div>
@@ -301,8 +323,9 @@ export const GridBotView: React.FC<GridBotViewProps> = ({ coins, soundEnabled })
               <div className="text-[9px] uppercase font-bold tracking-wider text-primary-container">STEP 2 · GRID REVIEW</div>
               <div className="text-sm font-bold mt-1">{selectedAsset} grid plan prepared</div>
             </div>
-            <span className="px-2 py-1 rounded bg-primary-container/10 border border-primary-container/25 text-primary-container text-[9px] font-bold">PREPARED</span>
+            <span className="px-2 py-1 rounded bg-primary-container/10 border border-primary-container/25 text-primary-container text-[9px] font-bold">PREVIEW ONLY</span>
           </div>
+          {brokerPreview && <div className="p-2 text-[10px] text-amber-400 border border-amber-400/20 rounded">{brokerPreview}</div>}
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
             <div className="p-2.5 rounded-lg bg-surface-base border border-white/5"><div className="text-[8px] text-text-muted uppercase">Lower</div><div className="font-bold mt-1">${lowerRange}</div></div>
             <div className="p-2.5 rounded-lg bg-surface-base border border-white/5"><div className="text-[8px] text-text-muted uppercase">Upper</div><div className="font-bold mt-1">${upperRange}</div></div>
@@ -310,8 +333,8 @@ export const GridBotView: React.FC<GridBotViewProps> = ({ coins, soundEnabled })
             <div className="p-2.5 rounded-lg bg-surface-base border border-white/5"><div className="text-[8px] text-text-muted uppercase">Per grid</div><div className="font-bold mt-1">${capitalPerGrid}</div></div>
             <div className="p-2.5 rounded-lg bg-surface-base border border-white/5"><div className="text-[8px] text-text-muted uppercase">Breakout guard</div><div className="font-bold mt-1">{breakoutGuard}</div></div>
           </div>
-          <div className="text-[10px] text-text-muted">Range mode {rangeMode} · capital {formatCurrency(Number(capital || 0))} · step ${step} · Kraken signal {selectedCandidate?.direction || 'NO_TRADE'}.</div>
-          <div className="px-3 py-2 rounded-lg bg-surface-base border border-white/5 text-[10px] text-text-secondary">Next step: review the individual grid orders and approve them on the phone. No grid orders have been submitted yet.</div>
+          <div className="text-[10px] text-text-muted">Range mode {rangeMode} · capital {formatCurrency(Number(capital || 0))} · step ${step} · target broker {brokerVenue === 'kraken' ? 'Kraken Spot' : 'Coinbase Advanced'} · Kraken signal {selectedCandidate?.direction || 'NO_TRADE'}.</div>
+          <div className="px-3 py-2 rounded-lg bg-surface-base border border-white/5 text-[10px] text-text-secondary">Review only. Grid orders require live exchange order placement, fill status, cancellation and breakout controls before activation.</div>
         </div>
       )}
 

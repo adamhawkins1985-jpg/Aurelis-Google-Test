@@ -1,0 +1,125 @@
+name: AURELIS source-only VPS to GitHub sync
+on:
+  push:
+    branches: [sync/live-vps-source-20261010]
+    paths: ['.github/workflows/aurelis-source-only-sync.yml']
+permissions:
+  contents: write
+concurrency:
+  group: aurelis-live-source-sync
+  cancel-in-progress: false
+jobs:
+  sync-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: sync/live-vps-source-20261010
+          fetch-depth: 1
+      - name: Retrieve allowlisted live source from restricted deploy account
+        env:
+          HOST: ${{ secrets.VPS_HOST }}
+          KEY: ${{ secrets.VPS_SSH_KEY }}
+          KNOWN: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          test -n "$HOST" && test -n "$KEY" && test -n "$KNOWN"
+          umask 077
+          mkdir -p "$HOME/.ssh" "$RUNNER_TEMP/live-source"
+          trap 'rm -f "$HOME/.ssh/aurelis_source" "$HOME/.ssh/known_hosts"' EXIT
+          python3 -c 'import os,pathlib;pathlib.Path.home().joinpath(".ssh/aurelis_source").write_text(os.environ["KEY"].replace(chr(92)+"n",chr(10)).rstrip()+chr(10))'
+          unset KEY
+          chmod 600 "$HOME/.ssh/aurelis_source"
+          ssh-keygen -y -P '' -f "$HOME/.ssh/aurelis_source" >/dev/null
+          printf '%s\n' "$KNOWN" > "$HOME/.ssh/known_hosts"
+          SSH=(ssh -i "$HOME/.ssh/aurelis_source" -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10)
+          REMOTE="aurelisdeploy@$HOST"
+          if ! "${SSH[@]}" "$REMOTE" 'test -r "$HOME/aurelis-source-export/server/migrated_backend.ts" && test -r "$HOME/aurelis-source-export/src/components/AiScreen.tsx"'; then
+            echo "::error::One-time sanitized source export is missing on VPS. No deployment attempted."
+            exit 1
+          fi
+          rsync -a --safe-links --exclude='.*' --exclude='*.pem' --exclude='*.key' --exclude='*.env*' \
+            --exclude='*.sqlite*' --exclude='*.db' --exclude='*.log' \
+            --exclude='*.pre-*' --exclude='*.pre_*' --exclude='*.backup*' \
+            --exclude='*.bak*' --exclude='*.old*' --exclude='*.orig' \
+            --exclude='node_modules/' --exclude='dist/' --exclude='backups/' \
+            --include='*/' --include='*.ts' --include='*.tsx' --include='*.js' \
+            --include='*.mjs' --include='*.cjs' --include='*.json' \
+            --include='*.css' --include='*.scss' --include='*.html' --include='*.svg' \
+            --include='*.png' --include='*.jpg' --include='*.jpeg' --include='*.webp' \
+            --include='*.gif' --include='*.ico' --include='*.woff' --include='*.woff2' \
+            --include='*.ttf' --include='*.otf' --include='*.txt' --include='*.md' \
+            --exclude='*' \
+            -e "ssh -i $HOME/.ssh/aurelis_source -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o BatchMode=yes -o ConnectTimeout=10" \
+            "$REMOTE:aurelis-source-export/" "$RUNNER_TEMP/live-source/"
+
+      - name: Check source snapshot for credentials and untrusted files
+        env:
+          SNAP: ${{ runner.temp }}/live-source
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os,re
+          root=Path(os.environ['SNAP'])
+          allowed={'.ts','.tsx','.js','.mjs','.cjs','.json','.css','.scss','.html','.svg','.png','.jpg','.jpeg','.webp','.gif','.ico','.woff','.woff2','.ttf','.otf','.txt','.md'}
+          require=('server/migrated_backend.ts','src/components/AiScreen.tsx',
+                   'src/components/trade/LiveBetView.tsx','src/components/trade/BotTestReadiness.tsx',
+                   'server.ts','package.json','package-lock.json')
+          for item in require:
+              if not (root/item).is_file():
+                  raise SystemExit('Missing current live source file: '+item)
+          for p in root.rglob('*'):
+              rel=p.relative_to(root)
+              if p.is_symlink(): raise SystemExit('Symlink rejected: '+str(rel))
+              if not p.is_file(): continue
+              if p.name.startswith('.') or p.suffix.lower() not in allowed:
+                  raise SystemExit('Unapproved filename: '+str(rel))
+              if p.stat().st_size>10_000_000:
+                  raise SystemExit('Unexpected large file: '+str(rel))
+              if p.suffix.lower() in {'.ts','.tsx','.js','.mjs','.cjs','.json','.css','.scss','.html','.svg','.txt','.md'}:
+                  data=p.read_text(errors='replace')
+                  for pattern in ('-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----',r'(?i)ghp_[a-z0-9]{30,}',r'(?i)sk_live_[a-z0-9]{12,}'):
+                      if re.search(pattern,data):
+                          raise SystemExit('Embedded credential marker: '+str(rel))
+          backend=(root/'server/migrated_backend.ts').read_text()
+          if 'krakenPrivateTail' not in backend or 'AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED' not in backend:
+              raise SystemExit('Source is not the newer live backend. Rejecting stale import.')
+          print('Allowed current source and credential hygiene: PASS')
+          PY
+      - name: Reconcile source in isolated GitHub branch only
+        env:
+          SNAP: ${{ runner.temp }}/live-source
+        run: |
+          set -euo pipefail
+          for dir in src server public; do
+            test -d "$SNAP/$dir"
+            mkdir -p "website/$dir"
+            rsync -a --delete "$SNAP/$dir/" "website/$dir/"
+          done
+          for file in server.ts index.html package.json package-lock.json tsconfig.json vite.config.ts; do
+            test -f "$SNAP/$file"
+            cp "$SNAP/$file" "website/$file"
+          done
+          git add -A website/src website/server website/public website/server.ts website/index.html \
+             website/package.json website/package-lock.json website/tsconfig.json website/vite.config.ts
+          git diff --cached --name-only | wc -l | xargs -I '{}' echo "Source files changed: {}"
+          if git diff --cached --quiet; then
+            echo "Live source already synchronized"
+            exit 0
+          fi
+          # Legacy GitHub research test scripts depend on removed modules.
+          # Verify all current app/server modules without silently deleting tests.
+          cat > website/tsconfig.source-sync-ci.json <<'JSON'
+          {
+            "extends": "./tsconfig.json",
+            "include": ["src/**/*.ts", "src/**/*.tsx", "server/**/*.ts", "server.ts"],
+            "exclude": ["scripts", "node_modules", "dist"]
+          }
+          JSON
+          (cd website && npm ci --legacy-peer-deps && npx tsc --noEmit -p tsconfig.source-sync-ci.json && npm run build)
+          rm -f website/tsconfig.source-sync-ci.json
+          git config user.name 'aurelis-source-sync[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Import sanitized current live AURELIS website source (no runtime credentials)'
+          git push origin HEAD:sync/live-vps-source-20261010

@@ -57,9 +57,10 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
     [radar, selectedAsset]
   );
 
+  const matchingSetup=initialSetup?.symbol.toUpperCase()===selectedAsset.toUpperCase()?initialSetup:null;
   const bias: 'LONG' | 'SHORT' =
-    initialSetup?.direction === 'SHORT' ? 'SHORT' :
-    initialSetup?.direction === 'LONG' ? 'LONG' :
+    matchingSetup?.direction === 'SHORT' ? 'SHORT' :
+    matchingSetup?.direction === 'LONG' ? 'LONG' :
     candidate?.direction === 'SHORT' ? 'SHORT' :
     candidate?.direction === 'LONG' ? 'LONG' :
     (ticker?.change24h ?? 0) >= 0 ? 'LONG' : 'SHORT';
@@ -82,9 +83,9 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
   }, [selectedAsset, bias]);
 
   const mark = Number(ticker?.markPrice || 0);
-  const target = Number(initialSetup?.target || candidate?.target || (bias === 'LONG' ? mark * 1.03 : mark * 0.97));
-  const stop = Number(initialSetup?.stop || candidate?.invalidation || (bias === 'LONG' ? mark * 0.985 : mark * 1.015));
-  const entry = Number(initialSetup?.entry || candidate?.entry || mark);
+  const target = Number(matchingSetup?.target || candidate?.target || (bias === 'LONG' ? mark * 1.03 : mark * 0.97));
+  const stop = Number(matchingSetup?.stop || candidate?.invalidation || (bias === 'LONG' ? mark * 0.985 : mark * 1.015));
+  const entry = Number(matchingSetup?.entry || candidate?.entry || mark);
   const sizing = useMemo(() => {
     const position = Number(betAmount);
     const lev = Number(leverage);
@@ -97,19 +98,19 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
   }, [betAmount, leverage, entry, stop, target]);
 
   const sendToLiveBet = () => {
-    if (!initialSetup || !onSendToLiveBet) return;
+    if (!matchingSetup || !onSendToLiveBet) return;
     if (soundEnabled) playHudSound('trade');
     const amount = Number(betAmount);
     const lev = Number(leverage);
     onSendToLiveBet({
-      ...initialSetup,
+      ...matchingSetup,
       symbol: selectedAsset.toUpperCase(),
       name: selectedAsset.toUpperCase(),
       direction: bias,
       entry,
       stop,
       target,
-      margin: Number.isFinite(amount) && amount > 0 ? amount : initialSetup.margin,
+      margin: Number.isFinite(amount) && amount > 0 ? amount : matchingSetup.margin,
       leverage: Number.isFinite(lev) && lev > 0 ? lev : 1,
     });
   };
@@ -119,11 +120,11 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 sm:p-4 rounded-xl bg-surface-panel/95 border border-white/10">
         <div>
           <div className="text-[10px] text-primary-container font-bold uppercase tracking-wider">AURELIS HUNTER PERPS</div>
-          <h1 className="text-xl sm:text-2xl font-headline font-bold">Kraken Futures Hunter</h1>
-          <p className="text-[11px] text-text-muted font-sans mt-1">Live Kraken perpetuals + Kraken Trade Radar research.</p>
+          <h1 className="text-xl sm:text-2xl font-headline font-bold">Kraken Futures Market Hunter</h1>
+          <p className="text-[11px] text-text-muted font-sans mt-1">Public Kraken perpetuals market data + Kraken Trade Radar research. Futures order API NOT connected.</p>
         </div>
         <div className="flex items-center gap-2">
-          <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold">KRAKEN LIVE</span>
+          <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold">LIVE MARKET DATA</span>
           <button onClick={load} className="p-2 rounded-lg bg-surface-base border border-white/10 text-cyan-400">
             <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
@@ -165,7 +166,7 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
         <div className="lg:col-span-8 p-4 rounded-2xl bg-surface-panel/95 border border-white/10 space-y-3">
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-[10px] text-text-muted">LIVE KRAKEN PERPETUAL</div>
+              <div className="text-[10px] text-text-muted">PUBLIC KRAKEN PERPETUAL QUOTE</div>
               <div className="text-xl font-headline font-bold">{selectedAsset} · {formatCurrency(mark)}</div>
             </div>
             <div className={`flex items-center gap-1 font-bold ${bias === 'LONG' ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -200,9 +201,9 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
           </div>
           <div className="p-3 rounded-xl bg-surface-base border border-white/5 text-[10.5px] text-text-secondary">
             <ShieldCheck className="inline w-3.5 h-3.5 text-primary-container mr-1.5" />
-            Research source: Kraken Futures + Kraken Trade Radar. Order submission still requires the existing AURELIS review/signing flow.
+            Research only: public Kraken futures quotes plus Kraken Trade Radar signals. The connected account shown above is Kraken SPOT, not a funded or authorized futures account. Live Bet is a separate Spot/Margin review.
           </div>
-          {initialSetup && onSendToLiveBet && (
+          {matchingSetup && onSendToLiveBet && (
             <button
               type="button"
               onClick={sendToLiveBet}

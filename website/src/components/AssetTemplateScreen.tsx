@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import { CoinIcon } from './CoinIcon';
 import { NetworkIcon } from './NetworkIcon';
+import { openOneKeyAction } from './OneKeyActionRouter';
 import { CoinData, WalletHolding, NavigationTab, Timeframe } from '../types';
 import { fetchLiveOHLC, generateTechnicalChartData } from '../services/marketData';
 
@@ -267,34 +268,34 @@ export const AssetTemplateScreen: React.FC<AssetTemplateScreenProps> = ({
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                <button onClick={() => {
+                <button onClick={() => openOneKeyAction('receive', () => {
                   const bridge = (window as any).AurelisNative;
                   if (bridge && typeof bridge.openNativeScreen === 'function') {
                     bridge.openNativeScreen('receive');
                     return;
                   }
                   setShowReceive(true);
-                }} className="flex items-center justify-center gap-1.5 py-2.5 rounded-lg bg-primary-container text-on-primary-container font-bold text-[11px]">
+                })} className="flex items-center justify-center gap-1.5 py-2.5 rounded-lg bg-primary-container text-on-primary-container font-bold text-[11px]">
                   <Download className="w-3.5 h-3.5" /> Receive
                 </button>
-                <button onClick={() => {
+                <button onClick={() => openOneKeyAction('send', () => {
                   const bridge = (window as any).AurelisNative;
                   if (bridge && typeof bridge.openNativeScreen === 'function') {
                     bridge.openNativeScreen('send');
                     return;
                   }
                   setShowSend(true);
-                }} className="flex items-center justify-center gap-1.5 py-2.5 rounded-lg bg-surface-container border border-primary-container/40 text-primary-container font-bold text-[11px]">
+                })} className="flex items-center justify-center gap-1.5 py-2.5 rounded-lg bg-surface-container border border-primary-container/40 text-primary-container font-bold text-[11px]">
                   <Send className="w-3.5 h-3.5" /> Send
                 </button>
-                <button onClick={() => {
+                <button onClick={() => openOneKeyAction('swap', () => {
                   const bridge = (window as any).AurelisNative;
                   if (bridge && typeof bridge.openNativeScreen === 'function') {
                     bridge.openNativeScreen('swap');
                     return;
                   }
                   onOpenTrade?.(coin);
-                }} className="flex items-center justify-center gap-1.5 py-2.5 rounded-lg bg-surface-container border border-white/10 text-text-primary font-bold text-[11px]">
+                })} className="flex items-center justify-center gap-1.5 py-2.5 rounded-lg bg-surface-container border border-white/10 text-text-primary font-bold text-[11px]">
                   <ArrowLeftRight className="w-3.5 h-3.5" /> Swap
                 </button>
                 <button onClick={() => onOpenTrade?.(coin)} className="flex items-center justify-center gap-1.5 py-2.5 rounded-lg bg-surface-container border border-white/10 text-text-primary font-bold text-[11px]">

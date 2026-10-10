@@ -21,11 +21,6 @@ import {
 } from 'lucide-react';
 import { CoinData, Timeframe, NavigationTab } from '../types';
 import { playHudSound, formatCurrency } from '../services/marketData';
-import { getBotWalletConnectSession } from '../services/walletConnectService';
-import { DEX_VENUES, canUseLiveOrders, canUseAutomatedFunding } from '../services/dexVenueRegistry';
-import { fetchHyperliquidObservation } from '../services/hyperliquidReadOnlyAdapter';
-import { observeBotDexVenues } from '../services/botDexMonitoring';
-import type { DexVenueObservation } from '../services/dexMonitoringReconciliation';
 
 // Bot Views
 import { TradeRadarView } from './trade/TradeRadarView';
@@ -33,15 +28,14 @@ import type { SetupCandidate } from './trade/TradeRadarView';
 import { HunterPerpsView } from './trade/HunterPerpsView';
 import { ScopeTradeHunterView } from './trade/ScopeTradeHunterView';
 import { DcaBotView } from './trade/DcaBotView';
+import { BotWalletAuth } from './trade/BotWalletAuth';
+import { BotExchangeBalances } from './trade/BotExchangeBalances';
+import { BrokerOpenOrders } from './trade/BrokerOpenOrders';
+import { BotTestReadiness } from './trade/BotTestReadiness';
 import { GridBotView } from './trade/GridBotView';
 import { ArbitrageBotView } from './trade/ArbitrageBotView';
 import { SignalDeskScreen } from './SignalDeskScreen';
 import { LiveBetView } from './trade/LiveBetView';
-import { DexRouteReview } from './trade/DexRouteReview';
-import { DexPaperRiskReview } from './trade/DexPaperRiskReview';
-import { DexIntentReview } from './trade/DexIntentReview';
-import { DexHunterView } from './trade/DexHunterView';
-import { DexTradeRadarView } from './trade/DexTradeRadarView';
 
 export type AiBotTab =
   | 'radar'
@@ -106,107 +100,6 @@ export const AiScreen: React.FC<AiScreenProps> = ({
   const [activeBotTab, setActiveBotTab] = useState<AiBotTab>('radar');
   const [isBotExpanded, setIsBotExpanded] = useState<boolean>(false);
   const [pendingTradeSetup, setPendingTradeSetup] = useState<SetupCandidate | null>(null);
-  const [botWalletAddress,setBotWalletAddress] = useState('');
-  const [botBalances,setBotBalances] = useState<{asset:string;amount:number;network:string;valueUsd:number|null}[]>([]);
-  const [botBalanceLoading,setBotBalanceLoading] = useState(true);
-  const [venueAccount,setVenueAccount] = useState<any>(null);
-  const [lighterAccountCount,setLighterAccountCount] = useState<number|null>(null);
-  const [lighterPositions,setLighterPositions] = useState<number|null>(null);
-  const [lighterCollateral,setLighterCollateral] = useState<string|null>(null);
-  const [lighterAccountError,setLighterAccountError] = useState('');
-  const [lighterOrdersStatus,setLighterOrdersStatus] = useState('Authentication required');
-  const [dexObservations,setDexObservations] = useState<readonly DexVenueObservation[]>([]);
-  const botObservationRequest = useRef(0);
-  const [dexMonitoringLoading,setDexMonitoringLoading] = useState(false);
-  const [venueLoading,setVenueLoading] = useState(false);
-  const [venueError,setVenueError] = useState('');
-  const [fundingPolicy,setFundingPolicy] = useState<'manual'|'review'>('manual');
-  const [controlMode,setControlMode] = useState<'paused'|'review'>('paused');
-  const [venueCheckedAt,setVenueCheckedAt] = useState('');
-  const loadVenueAccount=async(address:string, requestId:number=botObservationRequest.current)=>{
-    if(requestId!==botObservationRequest.current)return;
-    if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {setVenueAccount(null);setVenueError('Connect Bot Wallet to check Hyperliquid.');return;}
-    setVenueLoading(true);setVenueError('');
-    try {
-      const snapshot=await fetchHyperliquidObservation(address);
-      if(requestId!==botObservationRequest.current)return;
-      setVenueAccount({
-        perpsAccountValueUsd:snapshot.accountValueUsd ?? null,
-        openPerpPositions:snapshot.openPositionCount ?? null,
-        verifiedFields:snapshot.verifiedFields ?? [],
-      });
-      setVenueCheckedAt(new Date(snapshot.checkedAt).toLocaleTimeString());
-    }catch(e:any){if(requestId===botObservationRequest.current){setVenueError(e?.message||'Venue account unavailable');setVenueAccount(null);}}
-    finally{if(requestId===botObservationRequest.current)setVenueLoading(false);}
-  };
-  const readBotAddress=async()=>{
-    const active=await getBotWalletConnectSession();
-    return active?.address||'';
-  };
-  useEffect(()=>{
-    try{
-      const policy=localStorage.getItem('aurelis_bot_funding_policy');
-      if(policy==='manual'||policy==='review')setFundingPolicy(policy);
-    }catch{}
-  },[]);
-  const selectFundingPolicy=(next:'manual'|'review')=>{
-    setFundingPolicy(next);
-    try{localStorage.setItem('aurelis_bot_funding_policy',next);}catch{}
-  };
-  const updateControlMode=(next:'paused'|'review')=>{
-    // This controls only the UI's paper review mode, not exchange positions or other execution services.
-    setControlMode(next);
-  };
-
-  const [botBalanceError,setBotBalanceError] = useState('');
-  const loadBotBalances = async () => {
-    const requestId=++botObservationRequest.current;
-    setBotBalanceLoading(true);
-    try {
-      const active = await getBotWalletConnectSession();
-      if (!active) {
-        if(requestId!==botObservationRequest.current)return;
-        setDexMonitoringLoading(false);
-        setVenueLoading(false);
-        setVenueError('');
-        setVenueCheckedAt('');
-        setDexObservations([]);setBotWalletAddress('');setBotBalances([]);setBotBalanceError('');setVenueAccount(null);setLighterAccountCount(null);setLighterPositions(null);setLighterCollateral(null);setLighterAccountError('');setLighterOrdersStatus('Authentication required');
-        return;
-      }
-      if(requestId!==botObservationRequest.current)return;
-      setBotWalletAddress(active.address);
-      setDexObservations([]);
-      setDexMonitoringLoading(true);
-      void observeBotDexVenues(active.address)
-        .then(rows=>{if(requestId===botObservationRequest.current)setDexObservations(rows);})
-        .catch(()=>{if(requestId===botObservationRequest.current)setDexObservations([]);})
-        .finally(()=>{if(requestId===botObservationRequest.current)setDexMonitoringLoading(false);});
-      void loadVenueAccount(active.address,requestId);
-      setLighterOrdersStatus('Restricted venue');
-      // Lighter is restricted; do not request its public account snapshot.
-      setLighterAccountCount(null);setLighterPositions(null);setLighterCollateral(null);setLighterAccountError('Restricted venue');
-      const res=await fetch('/api/wallet/external-evm-portfolio?'+new URLSearchParams({address:active.address}),{cache:'no-store'});
-      const data=await res.json();
-      if (!res.ok || !data?.ok || !Array.isArray(data.assets)) throw Error(data?.error||'Balance lookup unavailable');
-      if(requestId!==botObservationRequest.current)return;
-      setBotBalances(data.assets.map((item:any)=>({
-        asset:String(item.symbol||'').toUpperCase(),
-        amount:Number(item.amount||0),
-        network:String(item.chain||item.network||'EVM'),
-        valueUsd:Number.isFinite(Number(item.valueUsd)) ? Number(item.valueUsd) : (Number.isFinite(Number(item.balanceUsd))?Number(item.balanceUsd):null),
-      })).filter((item:any)=>item.asset && item.amount>0));
-      setBotBalanceError('');
-    } catch(e:any) {if(requestId===botObservationRequest.current){setBotBalanceError(e?.message||'Bot Wallet balances unavailable');setBotBalances([]);}}
-    finally {if(requestId===botObservationRequest.current)setBotBalanceLoading(false);}
-  };
-  useEffect(()=>{
-    void loadBotBalances();
-    const timer=window.setInterval(()=>void loadBotBalances(),60000);
-    const refresh=()=>void loadBotBalances();
-    window.addEventListener('aurelis:bot-wallet-connected',refresh);
-    return ()=>{window.clearInterval(timer);window.removeEventListener('aurelis:bot-wallet-connected',refresh);};
-  },[]);
-
   useEffect(() => {
     if (!initialTradeAlert) return;
     setPendingTradeSetup(initialTradeAlert);
@@ -390,13 +283,24 @@ export const AiScreen: React.FC<AiScreenProps> = ({
     { id: 'signals', label: 'SIGNAL DESK' },
   ];
 
+  const brokerRouteMessage: Record<AiBotTab,string> = {
+    radar:'Kraken-backed trading signals with read-only account balances. Trade Radar → Hunter → Live Bet for review. No futures API order execution verified.',
+    hunter:'Kraken public futures prices plus Trade Radar research. Kraken Spot balances are NOT perpetual-futures collateral. Only a reviewed proposal can advance to Live Bet.',
+    scope:'Kraken market-data research and shortlist only. Balances are read-only. Scope Trade does not submit brokerage orders.',
+    dca:'Target accounts: Kraken Spot and Coinbase Advanced. Account status and funding plan shown below.',
+    grid:'Target accounts: Kraken Spot and Coinbase Advanced. Orders, fills and cancellations await validation.',
+    arbitrage:'PAPER ONLY. Restricted-venue data cannot be used for U.S. order execution. No funds move.',
+    live:'Kraken SPOT MARGIN preview, NOT perpetual futures. Existing balances are read-only; live submission locked pending protected-order validation.',
+    signals:'Existing Kraken SPOT MARGIN review path, NOT verified Kraken Derivatives US perpetual futures. Live submission locked.',
+  };
+
   const activeBotView = (
     <>
-      <DexRouteReview tab={activeBotTab} />
-      <DexPaperRiskReview tab={activeBotTab} />
-      <DexIntentReview tab={activeBotTab} />
+      <div className="px-3 py-2.5 text-[10px] text-amber-300 bg-amber-400/5 border border-amber-400/15 rounded-lg">
+        {brokerRouteMessage[activeBotTab]}
+      </div>
       {activeBotTab === 'radar' && (
-        <DexTradeRadarView
+        <TradeRadarView
           coins={coins}
           soundEnabled={soundEnabled}
           onPlaceTrade={(setup) => {
@@ -407,7 +311,7 @@ export const AiScreen: React.FC<AiScreenProps> = ({
         />
       )}
       {activeBotTab === 'hunter' && (
-        <DexHunterView
+        <HunterPerpsView
           soundEnabled={soundEnabled}
           initialSetup={pendingTradeSetup}
           onSendToLiveBet={(setup) => {
@@ -416,7 +320,8 @@ export const AiScreen: React.FC<AiScreenProps> = ({
           }}
         />
       )}
-      {activeBotTab === 'scope' && <ScopeTradeHunterView soundEnabled={soundEnabled} />}
+      {activeBotTab === 'scope' && <ScopeTradeHunterView soundEnabled={soundEnabled}
+        onSendToLiveBet={(setup)=>{setPendingTradeSetup(setup);setActiveBotTab('live')}} />}
       {activeBotTab === 'dca' && <DcaBotView coins={coins} soundEnabled={soundEnabled} />}
       {activeBotTab === 'grid' && <GridBotView coins={coins} soundEnabled={soundEnabled} />}
       {activeBotTab === 'arbitrage' && <ArbitrageBotView coins={coins} soundEnabled={soundEnabled} />}
@@ -446,6 +351,7 @@ export const AiScreen: React.FC<AiScreenProps> = ({
         </button>
       </div>
       <div className={`min-h-0 overflow-auto ${isBotExpanded ? 'flex-1 p-3' : 'p-0 pt-2'}`}>
+        <BotWalletAuth />
         {activeBotView}
       </div>
     </div>
@@ -485,84 +391,18 @@ export const AiScreen: React.FC<AiScreenProps> = ({
 
       </div>
 
-      <div className="mb-2 flex min-w-0 items-center gap-2 rounded-xl border border-white/5 bg-surface-panel/45 px-3 py-2">
-        <div className="shrink-0">
-          <div className="text-[8px] font-mono font-bold uppercase tracking-wider text-text-muted">OneKey Agent Money</div>
-          <div className="text-[9px] font-mono text-primary-container">BOT WALLET · ON-CHAIN</div>
-        </div>
-        <div className="min-w-0 flex-1 overflow-x-auto scrollbar-none">
-          <div className="flex min-w-max items-center gap-2">
-            {botBalanceLoading && !botBalances.length ? (
-              <div className="flex items-center gap-1.5 text-[9px] font-mono text-text-muted"><Loader2 className="h-3 w-3 animate-spin"/>Checking Bot Wallet</div>
-            ) : botBalanceError ? (
-              <div className="text-[9px] font-mono text-red-400">{botBalanceError}</div>
-            ) : !botWalletAddress ? (
-              <div className="text-[9px] font-mono text-text-muted">Connect Agent Money in Bots → OneKey · DEX</div>
-            ) : botBalances.length ? botBalances.map((row,i) => (
-              <div key={row.network+row.asset+i} className="flex items-baseline gap-1 rounded-lg border border-white/5 bg-surface-base/65 px-2 py-1.5">
-                <span className="text-[9px] font-mono font-bold text-text-primary">{row.asset}</span>
-                <span className="text-[9px] font-mono tabular-nums text-text-secondary">{row.amount.toLocaleString('en-US',{maximumFractionDigits:8})}</span>
-                <span className="text-[8px] text-text-muted">{row.network}</span>
-              </div>
-            )) : (
-              <div className="text-[9px] font-mono text-text-muted">No non-zero Bot Wallet balances detected</div>
-            )}
-          </div>
-        </div>
-        <button type="button" onClick={()=>void loadBotBalances()} className="shrink-0 rounded-lg border border-white/5 bg-surface-base/60 p-1.5 text-text-muted hover:text-text-primary" title="Refresh Bot Wallet balances">
-          <RefreshCw className={`h-3.5 w-3.5 ${botBalanceLoading ? 'animate-spin' : ''}`}/>
-        </button>
-      </div>
+      {(['radar','hunter','scope','live','signals','arbitrage'] as AiBotTab[]).includes(activeBotTab) && (
+        <BotExchangeBalances futuresResearch={activeBotTab==='hunter'}/>
+      )}
+      {(['radar','hunter','scope','live','signals'] as AiBotTab[]).includes(activeBotTab) && (
+        <BrokerOpenOrders/>
+      )}
+      {(['radar','hunter','scope','live','signals'] as AiBotTab[]).includes(activeBotTab) && (
+        <BotTestReadiness short/>
+      )}
 
-      <section className="mb-3 rounded-xl border border-white/10 bg-surface-panel/50 p-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-xs font-bold text-text-primary">Central Bot Trade Manager</h3>
-          <span className="text-[10px] text-amber-300">LIVE EXECUTION LOCKED</span>
-        </div>
-        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <div className="rounded-md border border-white/10 p-2 text-xs">Bot Wallet: {botWalletAddress?'Connected':'Disconnected'}</div>
-          <div className="rounded-md border border-white/10 p-2 text-xs">Hyperliquid value: {venueAccount?.perpsAccountValueUsd??'Not verified'}</div>
-          <div className="rounded-md border border-white/10 p-2 text-xs">Open positions: {venueAccount?.openPerpPositions??'Not verified'}</div>
-          <div className="rounded-md border border-white/10 p-2 text-xs">Other venue P/L: Not connected</div>
-        </div>
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-          <span className="text-[10px] font-semibold text-text-primary">DEX network · {DEX_VENUES.length} slots</span>
-          <span className="text-[10px] text-text-muted">Read-only monitoring and candidates are not live integrations</span>
-        </div>
-        <div className="mt-2 rounded-md border border-white/10 p-2" aria-label="Read-only consolidated DEX observations">
-          <p className="text-[11px] font-semibold text-text-primary">Central account observations · {dexMonitoringLoading?'Checking':dexObservations.filter(v=>v.status==='observed').length+' of 10 observed'}</p>
-          <p className="mt-1 text-[10px] text-text-muted">Exchange account observations are public and wallet ownership is unverified. Unknown values do not mean zero. No signing, transfers, or live orders.</p>
-          <div className="mt-2 grid gap-1 sm:grid-cols-2">
-            {dexObservations.map(observation=><p key={observation.venue} className="text-[10px] text-text-muted">
-              {DEX_VENUES.find(v=>v.id===observation.venue)?.name}: {observation.status==='observed'?'Positions '+(observation.openPositionCount??'unknown')+' · Orders '+(observation.activeOrders??'unknown')+' · Account USD '+(observation.accountValueUsd??'unknown'):'Unavailable'}
-              {observation.status==='observed' && observation.accountIndices !== null && <span className="block text-[9px] text-text-muted">Public account IDs: {observation.accountIndices.length ? observation.accountIndices.join(', ') : 'none'} · Wallet ownership unverified</span>}
-            </p>)}
-          </div>
-        </div>
-        <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-5" aria-label="DEX venue account coverage">
-          {DEX_VENUES.map(item => <div key={item.id} className="rounded-md border border-white/10 bg-surface-base/40 p-2">
-            <p className="text-[11px] font-bold text-text-primary">{item.name}</p>
-            <p className="mt-1 text-[9px] text-text-muted">{item.network}</p>
-            <p className="mt-1 text-[10px] text-text-muted">{item.id==='hyperliquid' && !venueAccount ? 'Public account not checked' : item.id==='lighter' ? (lighterAccountCount!==null ? lighterAccountCount+' account(s) · '+(lighterPositions??0)+' position(s) · Orders: '+lighterOrdersStatus : lighterAccountError||'Public account discovery not checked') : item.note}</p>
-            <p className="mt-1 text-[9px] text-amber-300">{canUseLiveOrders(item) ? 'Verified live order controls' : 'Live orders disabled'} · {canUseAutomatedFunding(item) ? 'Funding enabled' : 'Funding disabled'}</p>
-          </div>)}
-        </div>
-        <p className="mt-2 text-[10px] text-text-muted">Public market-price feeds are not exchange account connections. Other DEX balances, orders, fills, P/L and cancellation remain unverified until their authenticated account adapters are integrated.</p>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button type="button" disabled={venueLoading} onClick={()=>void readBotAddress().then(loadVenueAccount)} className="rounded-md border border-white/10 px-2 py-1 text-xs">Refresh exchange</button>
-          <span className="text-[10px] text-text-muted">Hyperliquid Mainnet · {venueCheckedAt||'Not checked'}</span>
-          {venueError&&<span className="text-[10px] text-red-400">{venueError}</span>}
-        </div>
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <span className="text-xs text-text-primary">Funding preference:</span>
-          <button type="button" onClick={()=>selectFundingPolicy('manual')} className="rounded border border-white/10 px-2 py-1 text-xs">Manual {fundingPolicy==='manual'?'✓':''}</button>
-          <button type="button" onClick={()=>selectFundingPolicy('review')} className="rounded border border-white/10 px-2 py-1 text-xs">Review before funding {fundingPolicy==='review'?'✓':''}</button>
-          <button type="button" disabled className="rounded border border-white/10 px-2 py-1 text-xs opacity-40">Stop all live orders</button>
-          <button type="button" disabled className="rounded border border-white/10 px-2 py-1 text-xs opacity-40">Emergency exit</button>
-        </div>
-        <p className="mt-2 text-[10px] text-text-muted">Monitoring only. No automatic swaps, transfers, profit sweeps, order cancellation or emergency closes are active. Preferences do not authorize transactions.</p>
-      </section>
-
+      {/* ========================================================================= */}
+      {/* 2. BOT VIEWS */}
       {/* ========================================================================= */}
       {isBotExpanded && typeof document !== 'undefined' && document.getElementById('hudWidget')
         ? createPortal(botPanel, document.getElementById('hudWidget')!)
@@ -829,4 +669,3 @@ export const AiScreen: React.FC<AiScreenProps> = ({
     </div>
   );
 };
-

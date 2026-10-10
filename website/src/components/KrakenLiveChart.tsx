@@ -106,10 +106,12 @@ export const KrakenLiveChart: React.FC<KrakenLiveChartProps> = ({
     volumeRef.current = volume;
 
     return () => {
-      chart.remove();
+      // Other effects also have cleanups. Mark this chart disposed before removing
+      // it so price-line cleanup never reaches the released lightweight-charts API.
       chartRef.current = null;
       candleRef.current = null;
       volumeRef.current = null;
+      chart.remove();
     };
   }, []);
   useEffect(() => {
@@ -171,7 +173,10 @@ export const KrakenLiveChart: React.FC<KrakenLiveChartProps> = ({
         })
       );
     }
-    return () => lines.forEach((line) => candle.removePriceLine(line));
+    return () => {
+      if (candleRef.current !== candle) return;
+      lines.forEach((line) => candle.removePriceLine(line));
+    };
   }, [stop, target]);
 
   useEffect(() => {

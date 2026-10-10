@@ -27,6 +27,7 @@ import { CoinIcon } from './CoinIcon';
 import { QRCodeSVG } from 'qrcode.react';
 import { getNativeWalletAddresses, getWalletReceiveOptions, WalletAddressMap } from '../services/walletApi';
 import { sendWalletConnectAssetTransfer } from '../services/walletConnectService';
+import { openOneKeyAction } from './OneKeyActionRouter';
 
 
 function openOneKeyNativeReceive(): boolean {
@@ -250,18 +251,20 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
 
   const openSendModal = () => {
     if (soundEnabled) playHudSound('click');
-    if (isOneKeyHost) {
-      setSendError('OneKey send/signing is not wired into Aurelis yet. Use the OneKey wallet Send screen for real transfers until this is connected.');
+    openOneKeyAction('send', () => {
+      if (isOneKeyHost) {
+        setSendError('OneKey signing is not connected to AURELIS Send. Complete the transfer inside OneKey.');
+        setShowSendModal(true);
+        return;
+      }
+      const bridge = (window as any).AurelisNative;
+      if (bridge && typeof bridge.openNativeScreen === 'function') {
+        bridge.openNativeScreen('send');
+        return;
+      }
+      if (!sendAssetKey && sendAssetOptions[0]) setSendAssetKey(sendAssetOptions[0].key);
       setShowSendModal(true);
-      return;
-    }
-    const bridge = (window as any).AurelisNative;
-    if (bridge && typeof bridge.openNativeScreen === 'function') {
-      bridge.openNativeScreen('send');
-      return;
-    }
-    if (!sendAssetKey && sendAssetOptions[0]) setSendAssetKey(sendAssetOptions[0].key);
-    setShowSendModal(true);
+    });
   };
 
   const submitSendApproval = async () => {
@@ -384,17 +387,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
             type="button"
             onClick={() => {
               if (soundEnabled) playHudSound('click');
-              if (isOneKeyHost && openOneKeyNativeReceive()) {
-                return;
-              }
-              if (!isOneKeyHost) {
-                const bridge = (window as any).AurelisNative;
-                if (bridge && typeof bridge.openNativeScreen === 'function') {
-                  bridge.openNativeScreen('receive');
-                  return;
+              openOneKeyAction('receive', () => {
+                if (isOneKeyHost && openOneKeyNativeReceive()) return;
+                if (!isOneKeyHost) {
+                  const bridge = (window as any).AurelisNative;
+                  if (bridge && typeof bridge.openNativeScreen === 'function') {
+                    bridge.openNativeScreen('receive');
+                    return;
+                  }
                 }
-              }
-              setShowReceiveModal(true);
+                setShowReceiveModal(true);
+              });
             }}
             className="flex flex-col sm:flex-row items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-surface-container/70 hover:bg-surface-container border border-white/10 hover:border-primary-container/40 text-text-primary transition-all group cursor-pointer"
           >
@@ -436,7 +439,7 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({
               onNavigate('earn-borrow');
             }}
             className="flex flex-col sm:flex-row items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-surface-container/70 hover:bg-surface-container border border-white/10 hover:border-primary-container/40 text-text-primary transition-all group cursor-pointer"
-            title="Borrow against collateral with instant liquidity"
+            title="Compare collateral loan markets. Execution is not yet enabled."
           >
             <div className="w-6 h-6 rounded-lg bg-amber-500/15 flex items-center justify-center text-amber-400 group-hover:scale-110 transition-transform">
               <Landmark className="w-3.5 h-3.5" />

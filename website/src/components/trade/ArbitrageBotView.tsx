@@ -46,6 +46,7 @@ type DexScan = {
   targetNotionalPerLegUsd: number;
   venues: Record<string, VenueState>;
   opportunities: DexOpportunity[];
+  researchOpportunities?: DexOpportunity[];
   scanMs?: number;
   warning?: string;
 };
@@ -113,7 +114,8 @@ export const ArbitrageBotView: React.FC<ArbitrageBotViewProps> = ({ soundEnabled
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const top = scan?.opportunities?.[0] || null;
+  const paperRows = scan?.researchOpportunities || scan?.opportunities || [];
+  const top = paperRows[0] || null;
   const dataReady = useMemo(
     () => PRIMARY.filter((venue) => scan?.venues?.[venue]?.dataReady).length,
     [scan],
@@ -125,15 +127,15 @@ export const ArbitrageBotView: React.FC<ArbitrageBotViewProps> = ({ soundEnabled
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3.5 sm:p-4 rounded-xl bg-surface-panel/95 border border-white/10 shadow-lg">
         <div>
           <span className="text-[10px] text-primary-container font-bold uppercase tracking-wider block mb-0.5">
-            AURELIS DEX AGENT
+            AURELIS PAPER RESEARCH
           </span>
           <h1 className="text-xl sm:text-2xl font-headline font-bold text-text-primary">Arbitrage</h1>
           <p className="text-[11px] text-text-muted font-sans mt-0.5 max-w-2xl">
-            One treasury, many venues. The agent scans DEX liquidity and will route collateral and paired trades after the OneKey signer is connected.
+            Paper-only DEX order-book comparisons. No order execution, automated transfers, or U.S.-restricted venue routing.
           </p>
         </div>
         <span className="px-3 py-1 rounded-full bg-primary-container/10 border border-primary-container/30 text-primary-container text-[10px] font-bold self-start sm:self-auto">
-          DEX-FIRST · {(scan?.mode || 'paper').toUpperCase()}
+          PAPER ONLY · NO LIVE ORDERS
         </span>
       </div>
 
@@ -141,7 +143,7 @@ export const ArbitrageBotView: React.FC<ArbitrageBotViewProps> = ({ soundEnabled
         <div className="flex items-center gap-2.5">
           <WalletCards className="w-4 h-4 text-primary-container" />
           <div>
-            <div className="text-[9px] text-text-muted uppercase tracking-wider">AURELIS TREASURY SIGNER</div>
+            <div className="text-[9px] text-text-muted uppercase tracking-wider">WALLET RESEARCH STATUS</div>
             <div className="font-bold text-[12px]">OneKey Agent Wallet</div>
           </div>
         </div>
@@ -151,7 +153,7 @@ export const ArbitrageBotView: React.FC<ArbitrageBotViewProps> = ({ soundEnabled
               ? 'text-primary-container border-primary-container/30 bg-primary-container/10'
               : 'text-amber-300 border-amber-400/20 bg-amber-400/5'
           }`}>
-            {walletReady ? 'WALLET SESSION READY' : 'WALLET SESSION NOT CONNECTED'}
+            {walletReady ? 'RESEARCH WALLET LINKED' : 'NO SIGNER NEEDED FOR PAPER'}
           </span>
           <span className="px-2 py-1 rounded border border-white/10 text-text-muted">
             {scan?.treasury?.defaultCollateral || 'USDC'}
@@ -186,9 +188,9 @@ export const ArbitrageBotView: React.FC<ArbitrageBotViewProps> = ({ soundEnabled
       <div className="p-4 rounded-2xl bg-surface-panel/95 border border-white/10 shadow-xl space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
           <div>
-            <div className="text-[9px] text-primary-container uppercase font-bold tracking-wider">UNIFIED API WALLET</div>
-            <h2 className="text-sm font-bold mt-0.5">DEX Routing Network</h2>
-            <div className="text-[9px] text-text-muted mt-1">Primary data is live now. Additional adapters are staged behind the same AURELIS interface.</div>
+            <div className="text-[9px] text-primary-container uppercase font-bold tracking-wider">RESEARCH MODE ONLY</div>
+            <h2 className="text-sm font-bold mt-0.5">DEX Data Network</h2>
+            <div className="text-[9px] text-text-muted mt-1">Some venues restrict U.S. derivatives access. They provide research data only.</div>
           </div>
           <button
             type="button"
@@ -216,20 +218,20 @@ export const ArbitrageBotView: React.FC<ArbitrageBotViewProps> = ({ soundEnabled
             </div>
           </div>
           <Metric label="LIVE DATA" value={`${dataReady} / 4`} />
-          <Metric label="ROUTES" value={String(scan?.opportunities?.length || 0)} />
+          <Metric label="ROUTES" value={String(paperRows.length)} />
           <Metric label="SCAN" value={scan?.scanMs ? `${scan.scanMs} ms` : '--'} />
-          <Metric label="TRANSFERS" value={scan?.treasury?.liveTransfersEnabled ? 'LIVE' : 'LOCKED'} />
-          <Metric label="TRADING" value={scan?.treasury?.liveTradingEnabled ? 'LIVE' : 'LOCKED'} />
+          <Metric label="TRANSFERS" value={'DISABLED'} />
+          <Metric label="TRADING" value={'DISABLED'} />
         </div>
 
         <div className="flex flex-wrap gap-1.5 pt-1">
           {PLANNED.map((venue) => (
             <span key={venue} className="px-2 py-1 rounded-lg border border-white/10 bg-surface-base text-[9px] text-text-muted">
-              {LABEL[venue]} · NEXT
+              {LABEL[venue]} · DATA ONLY
             </span>
           ))}
           <span className="px-2 py-1 rounded-lg border border-white/10 bg-surface-base text-[9px] text-text-muted">
-            CEX adapters · FALLBACK
+            CEX price data only
           </span>
         </div>
       </div>
@@ -237,13 +239,13 @@ export const ArbitrageBotView: React.FC<ArbitrageBotViewProps> = ({ soundEnabled
       <div className="p-4 sm:p-5 rounded-2xl bg-surface-panel/95 border border-white/10 shadow-xl space-y-3">
         <div className="flex items-center justify-between border-b border-white/10 pb-2">
           <div>
-            <div className="text-[9px] text-primary-container uppercase font-bold tracking-wider">BEST DEX ROUTE</div>
+            <div className="text-[9px] text-primary-container uppercase font-bold tracking-wider">BEST PAPER SPREAD</div>
             <div className="text-base font-bold mt-0.5">
               {top ? `${top.asset} · ${LABEL[top.longVenue] || top.longVenue} → ${LABEL[top.shortVenue] || top.shortVenue}` : 'WAITING FOR BOOKS'}
             </div>
           </div>
           <span className="px-2 py-1 rounded border border-white/10 text-[9px] text-text-muted">
-            {walletReady ? 'SIGNER READY' : 'SIGNER LOCKED'}
+            {'RESEARCH ONLY'}
           </span>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
@@ -260,8 +262,8 @@ export const ArbitrageBotView: React.FC<ArbitrageBotViewProps> = ({ soundEnabled
 
       <div className="p-3.5 sm:p-4 rounded-2xl bg-surface-panel/95 border border-white/10 shadow-xl space-y-2">
         <div className="flex items-center justify-between pb-2 border-b border-white/10">
-          <strong className="text-xs">DEX Opportunity Monitor</strong>
-          <span className="text-[9px] text-primary-container font-bold">{scan?.opportunities?.length || 0} ROUTES</span>
+          <strong className="text-xs">Paper Opportunity Monitor</strong>
+          <span className="text-[9px] text-primary-container font-bold">{paperRows.length} PAPER ROUTES</span>
         </div>
         {error && <div className="p-2.5 rounded-lg border border-red-400/20 bg-red-400/5 text-red-300 text-[10px]">{error}</div>}
         <div className="overflow-x-auto">
@@ -280,7 +282,7 @@ export const ArbitrageBotView: React.FC<ArbitrageBotViewProps> = ({ soundEnabled
               </tr>
             </thead>
             <tbody>
-              {(scan?.opportunities || []).slice(0, 18).map((row, index) => (
+              {paperRows.slice(0, 18).map((row, index) => (
                 <tr key={`${row.asset}-${row.longVenue}-${row.shortVenue}-${index}`} className="border-b border-white/5 hover:bg-white/5">
                   <td className="py-2 px-2 font-bold">{row.asset}</td>
                   <td className="py-2 px-2">{LABEL[row.longVenue] || row.longVenue}</td>
@@ -293,7 +295,7 @@ export const ArbitrageBotView: React.FC<ArbitrageBotViewProps> = ({ soundEnabled
                     {pct(row.netSpreadBeforeFundingPct)}
                   </td>
                   <td className="py-2 px-2 text-right text-text-muted">
-                    {walletReady ? 'PAPER' : 'SIGNER LOCKED'}
+                    {'PAPER ONLY'}
                   </td>
                 </tr>
               ))}
