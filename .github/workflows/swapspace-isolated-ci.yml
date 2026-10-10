@@ -45,10 +45,25 @@ jobs:
       - name: Install website dependencies
         working-directory: website
         run: npm ci --legacy-peer-deps
-      - name: Test SwapSpace adapter with simulated responses
+      - name: Determine whether retired SwapSpace adapter is present
+        id: swapspace
+        run: |
+          if test -f website/server/swapspace_service.ts && test -f website/src/services/walletConnectAccountGuard.ts; then
+            echo "legacy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "legacy=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::SwapSpace adapter no longer exists in the live site. Mark legacy adapter tests not applicable."
+          fi
+      - name: Test legacy SwapSpace adapter only if its modules exist
+        if: steps.swapspace.outputs.legacy == 'true'
         working-directory: website
         run: |
           npx tsx scripts/test_swapspace_adapter.ts
           node scripts/test_swapspace_route_guard.mjs
           node scripts/test_trade_wallet_guard.mjs
           npx tsx scripts/test_wallet_account_selection.ts
+      - name: Validate current website order safeguards and typecheck
+        working-directory: website
+        run: |
+          node scripts/test_kraken_manual_cap.mjs
+          npx tsc --noEmit -p tsconfig.app-ci.json
