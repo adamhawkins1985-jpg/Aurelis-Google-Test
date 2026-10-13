@@ -14,7 +14,7 @@ assert(hunter.includes('!ticker && <div') && hunter.includes('No public Kraken p
   'Hunter should identify when it has no public futures quote rather than displaying another coin');
 assert(hunter.includes('{matchingSetup.symbol} {matchingSetup.direction}'),
   'Copied setup should only be shown for its own selected asset');
-assert(hunter.includes('onReturnToRadar') && hunter.includes('Back to Trade Radar · Hunt for a fresh setup'),
+assert(hunter.includes('onReturnToRadar') && hunter.includes('Find a new bet'),
   'Hunter must offer a fresh scan when the Kraken margin handoff fails');
 assert(screen.includes("setPendingTradeSetup(null);\n            setActiveBotTab('radar')"),
   'Leaving a stale Hunter setup must clear pending Live Bet state');
