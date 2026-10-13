@@ -74,7 +74,6 @@ export const TradeRadarView: React.FC<TradeRadarViewProps> = ({
   const [radarError, setRadarError] = useState<string | null>(null);
   const [radarMeta, setRadarMeta] = useState({ scanned: 0, deepAnalyzed: 0, source: 'AURELIS' });
   const [showWhyModal, setShowWhyModal] = useState<boolean>(false);
-  const [showOrderModal, setShowOrderModal] = useState<boolean>(false);
   const [copiedNote, setCopiedNote] = useState<boolean>(false);
   const [positionAmount, setPositionAmount] = useState('10');
   const [positionLeverage, setPositionLeverage] = useState('2');
@@ -400,7 +399,9 @@ Commentary: ${activeSetup.commentary}`;
                 onClick={() => {
                   if (!activeSetup.qualified) return;
                   if (soundEnabled) playHudSound('trade');
-                  setShowOrderModal(true);
+                  // Research-only handoff. Hunter performs its own live Kraken margin check.
+                  onPlaceTrade?.({ ...activeSetup, margin: 10,
+                    leverage: Math.min(2, Math.max(1, Number(positionLeverage)||2)) });
                 }}
                 disabled={!activeSetup.qualified}
                 className={`px-3.5 py-1.5 rounded-full font-bold text-[10.5px] transition-all ${
@@ -601,85 +602,6 @@ Commentary: ${activeSetup.commentary}`;
         </div>
       )}
 
-      {/* RESEARCH HANDOFF MODAL, NO ORDER SENT */}
-      {showOrderModal && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-3 select-none"
-          onClick={() => setShowOrderModal(false)}
-        >
-          <div
-            className="w-full max-w-md bg-surface-panel rounded-2xl border border-white/10 p-5 space-y-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-2 border-b border-white/10">
-              <h3 className="font-headline font-bold text-sm text-text-primary">
-                Review Trade Preflight
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowOrderModal(false)}
-                className="text-text-muted hover:text-text-primary cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="p-3 bg-surface-base rounded-xl border border-white/5 space-y-2 text-xs">
-              <div className="flex justify-between">
-                <span className="text-text-muted">Symbol:</span>
-                <strong>{activeSetup.symbol}/USD ({activeSetup.direction})</strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-muted">Entry:</span>
-                <strong>${activeSetup.entry}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-muted">Stop Loss:</span>
-                <strong className="text-status-error">${formatPrice(activeSetup.stop)}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-muted">Take Profit:</span>
-                <strong className="text-primary-container">${formatPrice(activeSetup.target)}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-muted">Position:</span>
-                <strong>{formatCurrency(Number(positionAmount) || 0)} @ {positionLeverage}x</strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-muted">Est. Margin:</span>
-                <strong>{sizing ? formatCurrency(sizing.margin) : '—'}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-muted">Lose at Stop:</span>
-                <strong className="text-status-error">{sizing ? '-' + formatCurrency(sizing.loss) : '—'}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-muted">Make at Target:</span>
-                <strong className="text-primary-container">{sizing ? '+' + formatCurrency(sizing.gain) : '—'}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-muted">Risk / Reward:</span>
-                <strong>{sizing ? '1 : ' + sizing.rr.toFixed(2) : '—'}</strong>
-              </div>
-            </div>
-
-            <p className="text-[10px] text-amber-400">This sends a research setup to Hunter for review. No exchange order is placed.</p>
-            <button
-              type="button"
-              onClick={() => {
-                if (soundEnabled) playHudSound('trade');
-                if (onPlaceTrade) onPlaceTrade({ ...activeSetup, margin: Number(positionAmount) || 10, leverage: Number(positionLeverage) || 2 });
-                setShowOrderModal(false);
-              }}
-              className="w-full py-2.5 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-black font-bold text-xs shadow-[0_0_12px_rgba(0,210,255,0.35)] cursor-pointer"
-            >
-              Send Setup to Hunter
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
