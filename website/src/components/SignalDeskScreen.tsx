@@ -62,6 +62,7 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
   const [refreshCountdown, setRefreshCountdown] = useState(5);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [krakenReview, setKrakenReview] = useState<any | null>(null);
+  const [krakenReviewError,setKrakenReviewError]=useState('');
   const [krakenToken, setKrakenToken] = useState('');
   const [krakenValidated,setKrakenValidated]=useState(false);
   const [krakenValidationMessage,setKrakenValidationMessage]=useState('');
@@ -263,6 +264,7 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
     }
     setOrderBusy(true);
     setKrakenReview(null);
+    setKrakenReviewError('');
     setKrakenToken('');
     setKrakenValidated(false);
     setKrakenValidationExpiresAt(null);
@@ -280,6 +282,7 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
           leverage: Number(positionLeverage),
           stopLoss: deskStop,
           takeProfit: deskTarget,
+          setupEntry: deskEntry,
           signal: { source: 'signal_desk_deep', timeframe, readiness: deepDecision?.readiness, scores: deepDecision?.scores },
         }),
       });
@@ -290,6 +293,7 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
       setToastMessage('Kraken review ready. Check the locked values before Execute.');
       if (soundEnabled) playHudSound('trade');
     } catch (error: any) {
+      setKrakenReviewError(error?.message || 'Kraken review failed.');
       setToastMessage(error?.message || 'Kraken review failed.');
     } finally {
       setOrderBusy(false);
@@ -756,6 +760,12 @@ export const SignalDeskScreen: React.FC<SignalDeskScreenProps> = ({
           <div><span className="text-[8px] text-text-muted block">STOP</span><strong className="text-rose-400">{levels.stop ? formatCurrency(levels.stop) : '—'}</strong></div>
           <div><span className="text-[8px] text-text-muted block">TARGET</span><strong className="text-primary-container">{levels.target ? formatCurrency(levels.target) : '—'}</strong></div>
         </div>
+        {krakenReviewError && (
+          <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-[11px] text-amber-300 leading-relaxed">
+            <strong className="block mb-1">KRAKEN REVIEW BLOCKED · NO ORDER PLACED</strong>
+            {krakenReviewError}
+          </div>
+        )}
         <button
           type="button"
           onClick={handleReviewSetup}
