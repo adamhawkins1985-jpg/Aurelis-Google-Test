@@ -1374,15 +1374,924 @@ async function prepareKrakenOrder(payload:any) {
   const asset=String(payload?.asset||payload?.symbol||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
   const direction=String(payload?.direction||'').toUpperCase();
   const amount=Number(payload?.amount), leverage=Number(payload?.leverage), stop=Number(payload?.stopLoss), target=Number(payload?.takeProfit);
+  // Hunter and screenshot setup entries are a RESEARCH snapshot, not an executable quote.
+  const proposedEntry=Number(payload?.setupEntry||payload?.entry||0);
   if(!asset) throw new Error('invalid_asset');
   if(!['LONG','SHORT'].includes(direction)) throw new Error('invalid_direction');
   if(![amount,leverage,stop,target].every(x=>Number.isFinite(x)&&x>0)) throw new Error('invalid_order_values');
   const {mark,pair}=await krakenTicker(asset);
+  if(!Number.isFinite(mark)||mark<=0) throw new Error('kraken_live_margin_quote_unavailable');
   const buys=(pair.leverage_buy||[]).map(Number), sells=(pair.leverage_sell||[]).map(Number);
   const allowed=direction==='LONG'?buys:sells;
   if(!allowed.includes(leverage)) throw new Error('kraken_leverage_not_supported');
-  if(direction==='LONG' && !(stop<mark && mark<target)) throw new Error('invalid_long_protection');
-  if(direction==='SHORT' && !(target<mark && mark<stop)) throw new Error('invalid_short_protection');
+
+  const priceForReview=(n:number)=>'
+  const maxNotional=Number(process.env.AURELIS_KRAKEN_MAX_NOTIONAL_USD||1000);
+  const maxLev=Number(process.env.AURELIS_KRAKEN_MAX_LEVERAGE||10);
+  // Manual test limits, independent of deployment flags.
+  // This is a NOTIONAL cap (not a margin/deposit cap).
+  if(amount>10 || amount<10)throw new Error('manual_test_notional_must_be_exactly_10_usd');
+  if(leverage>2)throw new Error('manual_test_maximum_leverage_2x');
+  if((direction==='LONG'?Math.abs(mark-stop)/mark:Math.abs(stop-mark)/mark)>0.05)
+    throw new Error('manual_test_stop_must_be_within_5_percent');
+  if(amount>maxNotional) throw new Error('kraken_notional_limit');
+  if(leverage>maxLev) throw new Error('kraken_leverage_limit');
+  const trade=await krakenPrivate('/0/private/TradeBalance',{asset:'ZUSD'});
+  const free=Number(trade?.mf||0), margin=amount/leverage;
+  if(free<margin) throw new Error(`kraken_insufficient_free_margin:requires_${margin.toFixed(2)}_USD:available_${free.toFixed(2)}_USD`);
+  const lotDecimals=Number(pair.lot_decimals||8), pairDecimals=Number(pair.pair_decimals||5);
+  // Rounding DOWN avoids exceeding $10 at the quoted price.
+  const scale=10**Math.min(12,Math.max(0,lotDecimals));
+  const quantity=(Math.floor((amount/mark)*scale)/scale).toFixed(lotDecimals);
+  if(Number(quantity)<=0 || (Number(pair.ordermin||0)>0&&Number(quantity)<Number(pair.ordermin)))
+    throw new Error('kraken_10_usd_test_below_minimum_coin_quantity_choose_different_pair');
+  const costMin=Number(pair.costmin||0);
+  const estimatedCost=Number(quantity)*mark;
+  if(Number.isFinite(costMin)&&costMin>0&&estimatedCost<costMin)
+    throw new Error('kraken_10_usd_test_below_exchange_cost_minimum_choose_different_pair');
+  if(pair.status && String(pair.status)!=='online')
+    throw new Error('kraken_margin_pair_not_currently_open_for_trading');
+  const preview={
+    symbol:pair.altname, pairId:pair.pairId, asset,direction,markPrice:String(mark),
+    positionValueUsd:String(amount),estimatedMarginUsd:String(margin),freeMarginUsd:String(free),
+    quantity,leverage:String(Math.trunc(leverage)),stopLoss:stop.toFixed(pairDecimals),
+    takeProfit:target.toFixed(pairDecimals),orderMinimum:pair.ordermin||null,
+    exchangeMinimumCost:pair.costmin||null,estimatedEntryNotionalUsd:estimatedCost.toFixed(2),
+    lotDecimals,pairDecimals,broker:'Kraken Spot Margin (NOT US Futures)',
+    conditionalClose:{orderType:'stop-loss',triggerPrice:stop.toFixed(pairDecimals),activation:'after_primary_fill'},
+    protectionType:'kraken_conditional_stop_only',
+    takeProfitIsEstimateOnly:true
+  };
+  const token=crypto.randomBytes(32).toString('base64url');
+  krakenConfirmations.set(token,{
+    preview,expiresAt:Date.now()+90000,used:false,
+    clientOrderId:'aur'+crypto.randomBytes(7).toString('hex').slice(0,14)
+  });
+  return {ok:true,provider:'KRAKEN_MARGIN',preview,signal:payload?.signal||{},confirmation:{token,expiresInSeconds:90},execution:{configured:true,readOnlyPreview:process.env.AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED!=='1',
+    conditionalStopRequestedOnSubmission:true,takeProfitOrderSubmitted:false,maxNotionalUsd:String(maxNotional),maxLeverage:String(maxLev)}};
+}
+
+// Kraken REST AddOrder with validate=true checks exchange order parameters
+// WITHOUT placing a trade. Use identical protected parameters at eventual submission.
+function krakenProtectedOrderPayload(item:KrakenConfirmation):Record<string,string>{
+  const p=item.preview;
+  const value=Number(p.positionValueUsd),lev=Number(p.leverage);
+  if(!Number.isFinite(value)||value!==10||!Number.isFinite(lev)||lev<1||lev>2)
+    throw new Error('manual_test_risk_limit_exceeded');
+  const stop=Number(p?.conditionalClose?.triggerPrice);
+  if(p?.conditionalClose?.orderType!=='stop-loss'||!Number.isFinite(stop)||stop<=0)
+    throw new Error('conditional_stop_missing');
+  if(!Number.isFinite(Number(p.quantity))||Number(p.quantity)<=0)
+    throw new Error('kraken_order_quantity_invalid');
+  if(!/^aur[a-f0-9]{14}$/.test(item.clientOrderId))
+    throw new Error('kraken_order_client_id_invalid');
+  return {
+    ordertype:'market',type:p.direction==='LONG'?'buy':'sell',
+    volume:String(p.quantity),pair:String(p.symbol),leverage:String(p.leverage),
+    'close[ordertype]':'stop-loss','close[price]':String(p.conditionalClose.triggerPrice),
+    cl_ord_id:item.clientOrderId
+  };
+}
+
+// The signed owner calls this only after reviewing a fresh Kraken preview.
+// 'validate=true' is sent to Kraken; neither AURELIS nor Kraken creates an order.
+async function validateKrakenPreparedOrder(payload:any){
+  const token=String(payload?.confirmationToken||'');
+  const item=krakenConfirmations.get(token);
+  if(!item||Date.now()>item.expiresAt)throw new Error('trade_confirmation_expired');
+  if(item.used)throw new Error('trade_confirmation_used');
+  if(item.validating)throw new Error('kraken_validation_already_in_progress');
+  item.validating=true;
+  item.validatedAt=undefined;
+  try{
+    const order=krakenProtectedOrderPayload(item);
+    const mark=Number((await krakenTicker(item.preview.asset)).mark);
+    const original=Number(item.preview.markPrice);
+    if(!Number.isFinite(mark)||!Number.isFinite(original)||original<=0 ||
+       Math.abs(mark/original-1)*100>1)
+      throw new Error('kraken_price_moved_repreview');
+    const stop=Number(item.preview.conditionalClose.triggerPrice);
+    if((item.preview.direction==='LONG'&&stop>=mark)||
+       (item.preview.direction==='SHORT'&&stop<=mark))
+      throw new Error('kraken_stop_not_protective_at_current_mark');
+    const result:any=await krakenPrivate('/0/private/AddOrder',{...order,validate:'true'});
+    // Kraken validation usually returns a description but no order ID.
+    if(result?.txid?.length)throw new Error('unexpected_order_id_from_validate_only');
+    // The signed preview might expire while Kraken's API is answering.
+    if(Date.now()>item.expiresAt)throw new Error('trade_confirmation_expired_during_validation');
+    item.validatedAt=Date.now();
+    return {
+      ok:true,validated:true,orderPlaced:false,krakenValidationOnly:true,
+      validatedAt:item.validatedAt,expiresAt:Math.min(item.expiresAt,item.validatedAt+30000),
+      exchangeDescription: {
+        entry:String(result?.descr?.order||'Kraken validated market entry parameters'),
+        conditionalStop:String(result?.descr?.close||'Conditional stop requested')
+      },
+      manualApprovalStillRequired:true,
+      takeProfitOrderPlaced:false,
+      warning:'Kraken validated parameters without placing any trade. This does not verify a fill or an activated protective stop.'
+    };
+  }finally{item.validating=false}
+}
+
+async function submitKrakenOrder(payload:any) {
+  // Broker entry orders do not automatically install protective stop/target orders.
+  // Keep submission disabled until a protected, owner-authorized order lifecycle is verified.
+  if(process.env.AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED!=='1'){
+    throw new Error('kraken_margin_execution_unverified_disabled');
+  }
+
+  if(payload?.acknowledgeLiveTest!==true)throw new Error('manual_live_test_approval_required');
+  const token=String(payload?.confirmationToken||'');
+  const item=krakenConfirmations.get(token);
+  if(!item || Date.now()>item.expiresAt) throw new Error('trade_confirmation_expired');
+  if(item.used) throw new Error('trade_confirmation_used');
+  if(!item.validatedAt||Date.now()-item.validatedAt>30000)
+    throw new Error('kraken_validation_required_or_expired');
+  item.used=true;
+  const p=item.preview;
+  if(Number(p.positionValueUsd)>10||Number(p.positionValueUsd)<10||Number(p.leverage)>2)
+    throw new Error('manual_test_risk_limit_exceeded');
+  const side=p.direction==='LONG'?'buy':'sell';
+  // Refuse to submit an entry unless a Kraken-side OTO stop was included at preparation.
+  if(p?.conditionalClose?.orderType!=='stop-loss' ||
+    !Number.isFinite(Number(p.conditionalClose.triggerPrice)) ||
+    Number(p.conditionalClose.triggerPrice)<=0) throw new Error('conditional_stop_missing');
+  // A fresh market price check prevents execution after a stale recommendation.
+  const current=await krakenTicker(p.asset);
+  const newMark=Number(current?.mark);
+  const oldMark=Number(p.markPrice);
+  const maxDrift=Number(process.env.AURELIS_KRAKEN_MAX_MARK_DRIFT_PCT||1.0);
+  if(!Number.isFinite(newMark)||!Number.isFinite(oldMark)||oldMark<=0 ||
+     Math.abs(newMark/oldMark-1)*100>maxDrift)throw new Error('kraken_price_moved_repreview');
+  const stopPrice=Number(p.conditionalClose.triggerPrice);
+  if((p.direction==='LONG' && stopPrice>=newMark)||
+     (p.direction==='SHORT' && stopPrice<=newMark))throw new Error('stop_price_invalid_at_execution');
+  const exactProtectedOrder=krakenProtectedOrderPayload(item);
+  // Revalidate the EXACT protected order at Kraken immediately before entry.
+  // Future activation stays blocked by AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED.
+  const checked:any=await krakenPrivate('/0/private/AddOrder',{...exactProtectedOrder,validate:'true'});
+  if(checked?.txid?.length)throw new Error('unexpected_order_id_from_validate_only');
+  const entry=await krakenPrivate('/0/private/AddOrder',exactProtectedOrder);
+  return {ok:true,provider:'KRAKEN_MARGIN',entry,preview:p,
+    protection:'Kraken conditional stop requested, activated after primary fill; monitor live order status.',
+    takeProfitOrderPlaced:false,submittedAt:Date.now()};
+}
+
+const AAVE_MCP_DEFAULT_ENDPOINT='https://mcp.aave.com';
+const AAVE_MCP_TIMEOUT_MS=12000;
+let aaveToolCache:{at:number,names:Set<string>,raw:any}|null=null;
+
+export function isAaveAgentEnabled():boolean {
+  return ['1','true','yes','on'].includes(String(process.env.AURELIS_AAVE_AGENT_ENABLED||'').trim().toLowerCase());
+}
+
+function aaveEndpoint():string {
+  const configured=String(process.env.AURELIS_AAVE_MCP_URL||AAVE_MCP_DEFAULT_ENDPOINT).trim();
+  return configured||AAVE_MCP_DEFAULT_ENDPOINT;
+}
+
+async function aaveFetch(endpoint:string,headers:Record<string,string>,payload:any,timeoutMs=AAVE_MCP_TIMEOUT_MS) {
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),timeoutMs);
+  try {
+    const response=await fetch(endpoint,{
+      method:'POST',
+      headers,
+      body:JSON.stringify(payload),
+      signal:controller.signal,
+    });
+    const text=await response.text();
+    const body=safeJson(text,{});
+    if(response.status===429) throw new Error('aave_mcp_rate_limited');
+    if(response.status===401) throw new Error('aave_mcp_unauthorized');
+    if(!response.ok) throw new Error(String(body?.error?.message||body?.error||'aave_mcp_http_'+response.status));
+    return {response,body};
+  } catch(e:any) {
+    if(e?.name==='AbortError') throw new Error('aave_mcp_timeout');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function aaveSession() {
+  const endpoint=aaveEndpoint();
+  const headers:Record<string,string>={
+    Accept:'application/json, text/event-stream',
+    'Content-Type':'application/json',
+    'User-Agent':'AURELIS-vNext/1.0'
+  };
+  const {response,body}=await aaveFetch(endpoint,headers,{
+    jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'AURELIS-vNext',version:'1.0'}}
+  });
+  const sid=response.headers.get('mcp-session-id');
+  if(!sid||!body?.result) throw new Error('aave_mcp_init_failed');
+  headers['mcp-session-id']=sid;
+  await aaveFetch(endpoint,headers,{jsonrpc:'2.0',method:'notifications/initialized',params:{}},5000).catch(()=>{});
+  return {endpoint,headers};
+}
+
+async function aaveTools(session:any,force=false) {
+  if(!force&&aaveToolCache&&Date.now()-aaveToolCache.at<300000)return aaveToolCache;
+  const {body}=await aaveFetch(session.endpoint,session.headers,{jsonrpc:'2.0',id:2,method:'tools/list',params:{}});
+  const tools=Array.isArray(body?.result?.tools)?body.result.tools:[];
+  const cache={at:Date.now(),names:new Set<string>(tools.map((t:any)=>String(t?.name||'')).filter(Boolean)),raw:tools};
+  aaveToolCache=cache;
+  return cache;
+}
+
+async function aaveTool(session:any,name:string,args:any,id:number) {
+  const capabilities=await aaveTools(session);
+  if(!capabilities.names.has(name))throw new Error('aave_mcp_tool_unavailable:'+name);
+  const {body:env}=await aaveFetch(session.endpoint,session.headers,{jsonrpc:'2.0',id,method:'tools/call',params:{name,arguments:args}});
+  if(env?.error) throw new Error(String(env.error?.message||env.error));
+  const result=env?.result||{};
+  if(result.isError) {
+    const text=(result.content||[]).map((x:any)=>x?.text).filter(Boolean).join(' ');
+    throw new Error(text||'aave_mcp_tool_error');
+  }
+  if(result.structuredContent && typeof result.structuredContent==='object') return result.structuredContent;
+  for(const item of result.content||[]) if(item?.type==='text') { const v=safeJson(item.text,null); if(v) return v; }
+  throw new Error('aave_mcp_no_data');
+}
+
+export async function getAaveAgentCapabilities() {
+  if(!isAaveAgentEnabled())return {enabled:false,endpoint:aaveEndpoint(),tools:[]};
+  const session=await aaveSession();
+  const tools=await aaveTools(session,true);
+  return {
+    enabled:true,
+    endpoint:aaveEndpoint(),
+    tools:Array.from(tools.names).sort(),
+    readOnlyByDefault:true,
+    signing:'external-wallet-required',
+    submissionEnabled:false,
+  };
+}
+
+function aaveRequestedSymbols(message:string):string[] {
+  const known=['USDC','USDT','DAI','GHO','ETH','WETH','WBTC','BTC','AAVE','LINK','UNI','LDO','CRV','USDE','PYUSD','EURC'];
+  const raw=String(message||'');
+  const upper=raw.toUpperCase();
+  return known.filter(sym=>{
+    if(!new RegExp('\b'+sym+'\b').test(upper))return false;
+    if(sym!=='AAVE')return true;
+    return /\$AAVE|AAVE\s+TOKEN|(?:SUPPLY|DEPOSIT|LEND|BORROW|WITHDRAW|REPAY)\s+(?:ANOTHER\s+)?(?:[0-9.,]+\s+)?AAVE/i.test(raw);
+  }).slice(0,4);
+}
+
+function aaveRequestedChainId(message:string):number|undefined {
+  const s=String(message||'').toLowerCase();
+  const pairs:[RegExp,number][]=[
+    [/\\bethereum\\b|\\bmainnet\\b/,1],
+    [/\\barbitrum\\b/,42161],
+    [/\\bbase\\b/,8453],
+    [/\\bavalanche\\b|\\bavax\\b/,43114],
+    [/\\boptimism\\b/,10],
+    [/\\bpolygon\\b/,137],
+    [/\\barc\\b/,5042],
+  ];
+  return pairs.find(([re])=>re.test(s))?.[1];
+}
+
+function aaveActionRequest(message:string):{action:'supply'|'borrow'|'withdraw'|'repay';amount?:string;symbol?:string;max?:boolean}|null {
+  const s=String(message||'').trim();
+  const m=s.match(/\\b(supply|deposit|lend|borrow|withdraw|repay)\\b/i);
+  if(!m)return null;
+  const raw=m[1].toLowerCase();
+  const action=raw==='deposit'||raw==='lend'?'supply':raw as 'supply'|'borrow'|'withdraw'|'repay';
+  const max=/\\b(all|max|maximum|entire)\\b/i.test(s);
+  const after=s.slice((m.index||0)+m[0].length);
+  const amountMatch=after.match(/(?:another\\s+)?([0-9][0-9,]*(?:\\.[0-9]+)?)/i);
+  const amount=amountMatch?amountMatch[1].replace(/,/g,''):undefined;
+  const symbols=aaveRequestedSymbols(s);
+  return {action,amount,symbol:symbols[0],max};
+}
+
+function flattenAaveMarkets(payload:any):any[] {
+  const data=payload?.data||payload||{};
+  const rows:any[]=[];
+  for(const version of ['v4','v3']) {
+    const section=data?.[version];
+    for(const market of section?.markets||[]) {
+      if(version==='v4') rows.push({...market,version});
+      else {
+        for(const reserve of market?.reserves||[]) rows.push({...reserve,version,market:market?.market,chainId:market?.chainId});
+      }
+    }
+  }
+  return rows;
+}
+
+function aaveCapacity(row:any,action:string):number {
+  if(action==='supply') return Number(row?.suppliable ?? row?.availableLiquidity ?? 0);
+  if(action==='borrow') return Number(row?.borrowable ?? row?.availableLiquidity ?? 0);
+  return Number.POSITIVE_INFINITY;
+}
+
+export async function runAaveAgentQuery(message:string,walletAddress?:string|null) {
+  const text=String(message||'').trim();
+  if(!text)return null;
+  const lower=text.toLowerCase();
+  const namesAave=/\baave\b/i.test(text);
+  const protocolIntent=/health factor|lending rate|borrow rate|supply rate|\bapy\b|\byield\b|\bliquidity\b|\bborrow\b|\bsupply\b|\bdeposit\b|\blend\b|\bwithdraw\b|\brepay\b|\bposition(?:s)?\b|\bdebt\b|\bcollateral\b/i.test(text);
+  const asksAave=(namesAave&&protocolIntent)||/health factor|aave position|aave debt|aave collateral/i.test(text);
+  const action=namesAave?aaveActionRequest(text):null;
+  if(!asksAave)return null;
+
+  const session=await aaveSession();
+  let id=2;
+  const chainId=aaveRequestedChainId(text);
+  const symbols=aaveRequestedSymbols(text);
+
+  if(/health factor|health|position|positions|debt|collateral|net worth/i.test(lower)) {
+    if(!walletAddress)return {ok:false,kind:'wallet_required',message:'Connect or authenticate the AURELIS wallet to inspect Aave positions.'};
+    const [summary,positions]=await Promise.all([
+      aaveTool(session,'get_user_summary',{user:walletAddress,version:'all',...(chainId?{chainId}:{})},id++),
+      aaveTool(session,'get_user_positions',{user:walletAddress,version:'all',...(chainId?{chainId}:{})},id++),
+    ]);
+    return {ok:true,kind:'position',source:'Aave MCP',wallet:walletAddress,summary,positions};
+  }
+
+  if(action) {
+    if(!walletAddress)return {ok:false,kind:'wallet_required',message:'Connect or authenticate the AURELIS wallet before simulating or preparing an Aave action.'};
+    if(!action.symbol)return {ok:false,kind:'needs_asset',message:`Specify the asset for the Aave ${action.action} action.`};
+    if(!action.amount && !action.max)return {ok:false,kind:'needs_amount',message:`Specify an amount for the Aave ${action.action} action.`};
+
+    if(action.action==='withdraw'||action.action==='repay') {
+      const positions=await aaveTool(session,'get_user_positions',{user:walletAddress,version:'all',...(chainId?{chainId}:{})},id++);
+      return {
+        ok:true,
+        kind:'position_selection_required',
+        source:'Aave MCP',
+        action:action.action,
+        requested:action,
+        positions,
+        message:'Aave requires the reserveId from the wallet position for withdraw/repay. The agent has loaded the positions but will not guess which spoke/reserve to exit.',
+      };
+    }
+
+    const markets=await aaveTool(session,'get_markets',{version:'all',symbols:[action.symbol],user:walletAddress,...(chainId?{chainId}:{})},id++);
+    let candidates=flattenAaveMarkets(markets).filter((row:any)=>{
+      const can=action.action==='supply'?row?.canSupply!==false:row?.canBorrow!==false;
+      const amount=Number(action.amount||0);
+      const symbolMatches=String(row?.symbol||'').toUpperCase()===String(action.symbol||'').toUpperCase();
+      return symbolMatches && can && (!chainId||Number(row?.chainId)===chainId) && (!amount||aaveCapacity(row,action.action)>=amount);
+    });
+
+    candidates=candidates.slice(0,20);
+    if(candidates.length!==1) {
+      return {
+        ok:true,
+        kind:'reserve_selection_required',
+        source:'Aave MCP',
+        action:action.action,
+        requested:action,
+        candidates,
+        message:candidates.length
+          ? 'Multiple valid Aave reserves match this request. Choose the chain/spoke before simulation or preparation.'
+          : 'No Aave reserve currently matches the requested asset, chain, amount, and action.',
+      };
+    }
+
+    const row=candidates[0];
+    const selector=row.version==='v4'
+      ? {version:'v4',reserveId:String(row.reserveId)}
+      : {version:'v3',market:String(row.market),token:String(row.underlyingToken||row.token||row.address),chainId:Number(row.chainId)};
+    const args:any={
+      action:action.action,
+      sender:walletAddress,
+      ...(action.max?{max:true}:{amount:String(action.amount)}),
+      ...selector,
+    };
+    const preview=await aaveTool(session,'preview_action',args,id++);
+    const wantsPrepare=/\\bprepare|build|ready to sign|unsigned transaction|transaction\\b/i.test(lower);
+    const prepared=wantsPrepare?await aaveTool(session,'prepare_action',args,id++):null;
+    return {ok:true,kind:prepared?'prepared_action':'preview_action',source:'Aave MCP',requested:action,reserve:row,preview,prepared};
+  }
+
+  const marketArgs:any={version:'all'};
+  if(symbols.length)marketArgs.symbols=symbols;
+  if(chainId)marketArgs.chainId=chainId;
+  if(walletAddress && /can i|my wallet|available to me|balance/i.test(lower))marketArgs.user=walletAddress;
+  const markets=await aaveTool(session,'get_markets',marketArgs,id++);
+  return {ok:true,kind:'markets',source:'Aave MCP',markets};
+}
+
+async function morphoMarkets(chains:number[]) {
+  const gql=`query BorrowMarkets($chains:[Int!]) {
+    markets(first: 1000, orderBy: SupplyAssetsUsd, orderDirection: Desc, where: {listed: true, chainId_in: $chains}) {
+      items { marketId chain { id network } lltv loanAsset { address symbol decimals price { usd timestamp } }
+      collateralAsset { address symbol decimals price { usd timestamp } }
+      state { borrowApy avgBorrowApy avgNetBorrowApy liquidityAssets liquidityAssetsUsd utilization } }
+    }
+  }`;
+  const payload=await fetchJson('https://api.morpho.org/graphql',{
+    method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},
+    body:JSON.stringify({query:gql,variables:{chains}})
+  },15000);
+  return payload?.data?.markets?.items||[];
+}
+
+const chainNames:Record<number,string>={1:'Ethereum',10:'Optimism',56:'BNB Chain',100:'Gnosis',130:'Unichain',137:'Polygon',143:'Monad',146:'Sonic',196:'X Layer',999:'HyperEVM',1088:'Metis',1868:'Soneium',42220:'Celo',42161:'Arbitrum',43114:'Avalanche',4663:'Robinhood Chain',5000:'Mantle',8453:'Base',324:'zkSync Era',4326:'MegaETH',5042:'Arc',9745:'Plasma',57073:'Ink',534352:'Scroll',59144:'Linea',747474:'Katana'};
+
+async function buildBorrowCatalog() {
+  const errors:any[]=[];
+  let morpho:any[]=[];
+  let aave:any[]=[];
+  try {
+    const rows=await morphoMarkets([1,10,130,137,143,999,4663,5042,8453,42161,747474]);
+    morpho=rows.map((item:any)=>({
+      provider:'Morpho',chainId:Number(item?.chain?.id||0),marketId:item.marketId,
+      collateral:item?.collateralAsset?.symbol,borrow:item?.loanAsset?.symbol,
+      borrowApy:item?.state?.borrowApy,liquidityUsd:item?.state?.liquidityAssetsUsd,
+      liquidityAssets:item?.state?.liquidityAssets,utilization:item?.state?.utilization,
+      lltv:item?.lltv,source:'morpho_api'
+    }));
+  } catch(e:any){errors.push({provider:'Morpho',error:String(e?.message||e).slice(0,180)})}
+  try {
+    const s=await aaveSession(); let id=2;
+    const chains=await aaveTool(s,'get_chains',{version:'v3'},id++);
+    const rows=chains?.data?.v3||chains?.v3||[];
+    for(const ch of rows.slice(0,25)) {
+      const chainId=Number(ch?.chainId); if(!chainId) continue;
+      const response=await aaveTool(s,'get_markets',{version:'v3',chainId},id++);
+      const root=response?.data||response; const section=root?.v3||{};
+      for(const market of section?.markets||[]) for(const reserve of market?.reserves||[]) {
+        aave.push({
+          provider:'Aave',version:'V3',chainId:Number(market?.chainId||chainId),
+          market:market?.market,collateral:reserve?.symbol,borrow:reserve?.symbol,
+          canUseAsCollateral:!!reserve?.canUseAsCollateral,canSupply:reserve?.canSupply!==false,
+          canBorrow:!!reserve?.canBorrow,isFrozen:!!reserve?.isFrozen,isPaused:!!reserve?.isPaused,
+          borrowCapReached:!!reserve?.borrowCapReached,source:'aave_mcp'
+        });
+      }
+    }
+  } catch(e:any){errors.push({provider:'Aave',error:String(e?.message||e).slice(0,180)})}
+  for(const row of [...morpho,...aave]) row.network=chainNames[Number(row.chainId)]||String(row.chainId||'Unknown');
+  const collateral=new Map<string,any>(), borrow=new Map<string,any>();
+  const add=(map:Map<string,any>,sym:string,provider:string,network:string)=>{
+    if(!sym)return; if(!map.has(sym))map.set(sym,{symbol:sym,providers:new Set<string>(),networks:new Set<string>()});
+    const e=map.get(sym); e.providers.add(provider); if(network)e.networks.add(network);
+  };
+  for(const row of morpho){add(collateral,row.collateral,'Morpho',row.network);add(borrow,row.borrow,'Morpho',row.network)}
+  for(const row of aave){
+    if(row.collateral && row.canSupply && !row.isFrozen && !row.isPaused)add(collateral,row.collateral,'Aave',row.network);
+    if(row.borrow && row.canBorrow && !row.isPaused && !row.borrowCapReached)add(borrow,row.borrow,'Aave',row.network);
+  }
+  const clean=(m:Map<string,any>)=>Array.from(m.values()).map((x:any)=>({symbol:x.symbol,providers:Array.from(x.providers).sort(),networks:Array.from(x.networks).sort()})).sort((a,b)=>a.symbol.localeCompare(b.symbol));
+  return {ok:!!(morpho.length||aave.length),generatedAt:Date.now(),providers:{Aave:{marketRows:aave.length,source:'Official Aave MCP'},Morpho:{marketRows:morpho.length,source:'Official Morpho API'}},collateralAssets:clean(collateral),borrowAssets:clean(borrow),aave,morpho,errors};
+}
+
+let borrowCache:{at:number,payload:any}|null=null;
+
+function registerMarketAndBotRoutes(app:Express) {
+  app.get('/api/crypto-news', async (_req,res)=>{
+    const feeds:[string,string][]=[
+      ['Cointelegraph','https://cointelegraph.com/rss'],
+      ['Decrypt','https://decrypt.co/feed'],
+      ['CryptoSlate','https://cryptoslate.com/feed/'],
+      ['NewsBTC','https://www.newsbtc.com/feed/'],
+      ['Bitcoin Magazine','https://bitcoinmagazine.com/.rss/full/'],
+      ['BeInCrypto','https://beincrypto.com/feed/'],
+      ['The Defiant','https://thedefiant.io/api/feed'],
+      ['Crypto Briefing','https://cryptobriefing.com/feed/'],
+      ['CoinDesk','https://www.coindesk.com/arc/outboundfeeds/rss/'],
+    ];
+    const articles:any[]=[];
+    const clean=(s:string)=>String(s||'').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g,'$1').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').trim();
+    for(const [source,url] of feeds){
+      try{
+        const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),10000);
+        const response=await fetch(url,{headers:{'User-Agent':'AURELIS-vNext/1.0'},signal:controller.signal}); clearTimeout(timer);
+        if(!response.ok)continue; const xml=await response.text();
+        const items=xml.match(/<item\b[\s\S]*?<\/item>/gi)||[];
+        for(const item of items.slice(0,8)){
+          const pick=(tag:string)=>{const m=item.match(new RegExp('<'+tag+'(?:\\s[^>]*)?>([\\s\\S]*?)<\\/'+tag+'>','i'));return clean(m?.[1]||'')};
+          const title=pick('title'),link=pick('link'),published=pick('pubDate');
+          const imageMatch=item.match(/<(?:media:content|media:thumbnail|enclosure)\b[^>]*\burl=["']([^"']+)["'][^>]*>/i);
+          if(title&&link)articles.push({title,url:link,source,published,image:imageMatch?.[1]||null});
+        }
+      }catch{}
+    }
+    if(articles.length){
+      articles.sort((a:any,b:any)=>Number(new Date(b.published||0))-Number(new Date(a.published||0)));
+      const seen=new Set<string>();
+      const deduped=articles.filter((a:any)=>{
+        const key=String(a.url||a.title||'').toLowerCase().replace(/[#?].*$/,'');
+        if(!key||seen.has(key))return false; seen.add(key); return true;
+      });
+      return res.json(deduped.slice(0,36));
+    }
+    return sendNoStore(res,{ok:false,error:'crypto_news_unavailable'},502);
+  });
+
+  app.get('/api/coin-ohlc', async (req,res)=>{
+    const symbol=String(req.query.symbol||'BTC').toUpperCase().trim();
+    const range=String(req.query.range||'1D').toUpperCase().trim();
+    if(!/^[A-Z0-9]{1,24}$/.test(symbol)||!['4H','12H','1D','7D'].includes(range))return sendNoStore(res,{ok:false,error:'invalid_request'},400);
+    try{return res.json(await coinOhlc(symbol,range))}catch(e:any){return sendNoStore(res,{ok:false,error:'ohlc_unavailable',detail:e?.message||String(e)},503)}
+  });
+
+
+  app.get('/api/bots/auth/status',(req,res)=>{
+    const session=getVerifiedSession(req,res);
+    const owner=String(process.env.AURELIS_BOTS_OWNER_WALLET_ADDRESS||'').trim().toLowerCase();
+    const isOwner=Boolean(owner&&session?.purpose==='bots'&&String(session?.address||'').toLowerCase()===owner);
+    return sendNoStore(res,{ok:true,ownerConfigured:Boolean(owner),verified:isOwner,
+      purpose:session?.purpose||null,reason:isOwner?'authorized':
+        !owner?'owner_not_configured':session?'different_wallet_or_purpose':'wallet_signature_required'});
+  });
+
+  app.get('/api/bots/exchange-accounts',async(req,res)=>{
+    if(!requireBotAccountOwner(req,res))return;
+    try{return sendNoStore(res,await readBrokerStatuses(req.query.refresh==='1'))}
+    catch{return sendNoStore(res,{ok:false,error:'broker_status_unavailable'},502)}
+  });
+  // Exchange-verified deposit destinations. Only existing addresses are read: never auto-create.
+  const oneKeyFundingNetworks:Record<string,{method:string;chainId:number;token:string}> = {
+    ethereum:{method:'USDC - Ethereum (Unified)',chainId:1,token:'0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'},
+    base:{method:'USDC - Base (Unified)',chainId:8453,token:'0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'}
+  };
+  app.get('/api/bots/kraken-deposit-destination',async(req,res)=>{
+    if(!requireBotAccountOwner(req,res))return;
+    const network=String(req.query.network||'').toLowerCase();
+    const item=oneKeyFundingNetworks[network];
+    if(!item)return sendNoStore(res,{ok:false,error:'unsupported_funding_network'},400);
+    try{
+      const methods:any[]=await krakenPrivate('/0/private/DepositMethods',{asset:'USDC'});
+      if(!Array.isArray(methods)||!methods.some(m=>m?.method===item.method))
+        return sendNoStore(res,{ok:false,error:'kraken_usdc_network_unavailable'},409);
+      // new=false prevents silently generating unreviewed exchange deposit addresses.
+      const addresses:any[]=await krakenPrivate('/0/private/DepositAddresses',
+        {asset:'USDC',method:item.method,new:'false'});
+      const candidate=Array.isArray(addresses)?addresses.find(r=>
+        /^0x[a-f0-9]{40}$/i.test(String(r?.address||'')) && !r?.expiretm):null;
+      const fallback=Array.isArray(addresses)?addresses.find(r=>
+        /^0x[a-f0-9]{40}$/i.test(String(r?.address||'')) &&
+        (!Number(r?.expiretm)||Number(r.expiretm)>Math.floor(Date.now()/1000)+3600)):null;
+      const address=candidate?.address||fallback?.address;
+      if(!address)return sendNoStore(res,{ok:false,error:'no_existing_kraken_deposit_address',
+        next:'Create a USDC deposit address for the selected network in Kraken, then refresh.'},409);
+      return sendNoStore(res,{ok:true,venue:'kraken',asset:'USDC',network,
+        method:item.method,chainId:item.chainId,tokenContract:item.token,decimals:6,
+        address,existingAddress:true,source:'Kraken authenticated deposit API',
+        requiresUserSignature:true,transferSubmitted:false,
+        warning:'Match network and token exactly. Send a small test amount first. Kraken may impose deposit minimums or hold periods.'});
+    }catch(error){return sendNoStore(res,{ok:false,error:'kraken_deposit_address_unavailable',
+        detail:cleanBrokerError(error)},502)}
+  });
+  // Both brokers' real open orders, account owner only. GET cannot change orders.
+  app.get('/api/bots/open-orders',async(req,res)=>{
+    if(!requireBotAccountOwner(req,res))return;
+    const makeUnverified=(error:string)=>({ok:false,error,orders:[] as any[]});
+    const [kraken,coinbase]=await Promise.all([
+      (async()=>{
+        try{
+          const raw:any=await krakenPrivate('/0/private/OpenOrders',{});
+          const rows=Object.entries(raw?.open||{}).slice(0,30).map(([id,row0])=>{
+            const r:any=row0, info=r.descr||{};
+            return {id,symbol:String(info.pair||''),side:String(info.type||''),
+              type:String(info.ordertype||''),status:String(r.status||'open'),
+              amount:Number(r.vol||0),filled:Number(r.vol_exec||0),
+              remaining:Math.max(0,Number(r.vol||0)-Number(r.vol_exec||0)),
+              price:Number(info.price||0),createdAt:Number(r.opentm||0)*1000};
+          });
+          return {ok:true,orders:rows};
+        }catch{return makeUnverified('kraken_orders_unavailable')}
+      })(),
+      (async()=>{
+        try{
+          const token=fs.readFileSync('/home/ubuntu/.config/aurelis/coinbase-bridge.token','utf8').trim();
+          if(!token)return makeUnverified('coinbase_bridge_unconfigured');
+          const upstream=await fetch('http://127.0.0.1:8894/private/coinbase/open-orders',{
+            headers:{Authorization:'Bearer '+token},signal:AbortSignal.timeout(15000)});
+          if(!upstream.ok)return makeUnverified('coinbase_orders_unavailable');
+          const response:any=await upstream.json();
+          if(!response?.ok || !Array.isArray(response?.orders))
+            return makeUnverified(String(response?.error||'coinbase_orders_unavailable').slice(0,60));
+          return {ok:true,orders:response.orders.slice(0,30)};
+        }catch{return makeUnverified('coinbase_orders_unavailable')}
+      })()
+    ]);
+    return sendNoStore(res,{ok:true,mode:'read_only',updatedAt:Date.now(),
+      venues:{kraken,coinbase},countByVenue:{kraken:kraken.orders.length,coinbase:coinbase.orders.length},
+      note:'Open orders only, not completed trade history. A canceled order may already be partially filled.'});
+  });
+
+  app.get('/api/bots/kraken-deposit-history',async(req,res)=>{
+    if(!requireBotAccountOwner(req,res))return;
+    try{
+      const raw:any[]=await krakenPrivate('/0/private/DepositStatus',{asset:'USDC'});
+      const rows=(Array.isArray(raw)?raw:[]).slice(0,15).map(r=>({
+        amount:Number(r.amount||0),status:String(r.status||'unknown'),
+        time:Number(r.time||0),method:String(r.method||'unknown')
+      }));
+      return sendNoStore(res,{ok:true,asset:'USDC',rows,updatedAt:Date.now()});
+    }catch(error){return sendNoStore(res,{ok:false,error:'deposit_status_unavailable',
+      detail:cleanBrokerError(error)},502)}
+  });
+
+  app.get('/api/bots/funding-plan',async(req,res)=>{
+    if(!requireBotAccountOwner(req,res))return;
+    const required=Number(req.query.requiredUsd||100);
+    if(!Number.isFinite(required)||required<5||required>10000)
+      return sendNoStore(res,{ok:false,error:'invalid_required_usd'},400);
+    const info=await readBrokerStatuses();
+    const rows=(['kraken','coinbase'] as const).map(venue=>{
+      const a:CexStatus=info.accounts[venue];
+      if(!a.connected)return {venue,state:'needs_connection',shortfallUsd:null};
+      // Total Kraken balances and available Coinbase balances cannot be directly equated
+      // to exchange buying power or transferable assets.
+      const observed=Number(a.balances?.USD||0)+Number(a.balances?.USDC||0);
+      return {venue,state:'balance_review',observedUsdPlusUsdc:observed.toFixed(2),
+        indicativeShortfallUsd:Math.max(0,required-observed).toFixed(2),shortfallUsd:null};
+    });
+    return sendNoStore(res,{ok:true,mode:'planning_only',requiredUsd:required,
+      transfersEnabled:false,recommendations:rows,
+      warning:'Indicative balances only. No guaranteed available trading collateral or verified deposit destination.'});
+  });
+  app.post('/api/bots/cex-order/preview',async(req,res)=>{
+    if(!requireBotAccountOwner(req,res))return;
+    const venue=String(req.body?.venue||'').toLowerCase();
+    const strategy=String(req.body?.strategy||'').toLowerCase();
+    const asset=String(req.body?.asset||'').toUpperCase();
+    const quoteUsd=Number(req.body?.quoteUsd);
+    if(!['kraken','coinbase'].includes(venue)||!['dca','grid'].includes(strategy)||
+      !/^[A-Z0-9]{2,12}$/.test(asset)||!Number.isFinite(quoteUsd)||
+      quoteUsd<5||quoteUsd>5000)
+      return sendNoStore(res,{ok:false,error:'invalid_preview_request'},400);
+    const info=await readBrokerStatuses();
+    return sendNoStore(res,{ok:true,venue,strategy,asset,quoteUsd,connected:info.accounts[venue].connected,
+      provider:info.accounts[venue].name,canSubmit:false,orderSubmitted:false,
+      reason:'order_execution_not_yet_verified',mode:'preview_only',
+      note:'No order sent. Grid requires live fill tracking, cancellation, and risk controls before enabling.'});
+  });
+
+  app.get('/api/trade-radar', async (req,res)=>{
+    try {
+      const q=new URLSearchParams({mode:String(req.query.mode||'all'),limit:String(req.query.limit||5),force:String(req.query.force||0)});
+      const data=await fetchJson('http://127.0.0.1:8792/api/radar?'+q.toString(),{headers:{Accept:'application/json'}},55000);
+      return sendNoStore(res,data);
+    } catch(e:any){return sendNoStore(res,{ok:false,error:'trade_radar_unavailable',detail:e?.message||String(e)},502)}
+  });
+
+  app.get('/api/kraken/live-status', async (req,res)=>{
+    if(!requireBotAccountOwner(req,res))return;
+    try {
+      const positionsRaw=await krakenPrivate('/0/private/OpenPositions',{docalcs:'true'});
+      const ordersRaw=await krakenPrivate('/0/private/OpenOrders',{});
+      const positions=Object.entries(positionsRaw||{}).map(([txid,row]:any)=>{
+        const vol=Number(row?.vol||0),closed=Number(row?.vol_closed||0);
+        return {
+          txid,pair:String(row?.pair||'').split(':')[0],rawPair:String(row?.pair||''),side:String(row?.type||'').toLowerCase(),
+          volume:vol,remaining:Math.max(0,vol-closed),cost:Number(row?.cost||0),
+          margin:Number(row?.margin||0),value:Number(row?.value||0),pnl:Number(row?.net||0),
+          openingPrice:Number(row?.cost||0)/(vol||1),rolloverTime:Number(row?.rollovertm||0),
+          posstatus:String(row?.posstatus||'open')
+        };
+      }).filter((x:any)=>x.remaining>0);
+      const open=ordersRaw?.open||{};
+      const orders=Object.entries(open).map(([txid,row]:any)=>({
+        txid,status:String(row?.status||'open'),pair:String(row?.descr?.pair||''),
+        side:String(row?.descr?.type||''),orderType:String(row?.descr?.ordertype||''),
+        price:Number(row?.descr?.price||0),volume:Number(row?.vol||0),
+        filled:Number(row?.vol_exec||0),openedAt:Number(row?.opentm||0)
+      }));
+      return sendNoStore(res,{ok:true,positions,orders,updatedAt:Date.now()});
+    } catch(e:any){return sendNoStore(res,{ok:false,error:e?.message||String(e)},502)}
+  });
+
+  app.post('/api/kraken/cancel-order', async (req,res)=>{
+    if(!requireBotAccountOwner(req,res))return;
+    const txid=String(req.body?.txid||'').trim();
+    if(!txid)return sendNoStore(res,{ok:false,error:'invalid_order_id'},400);
+    try {
+      const result=await krakenPrivate('/0/private/CancelOrder',{txid});
+      return sendNoStore(res,{ok:true,txid,result});
+    } catch(e:any){return sendNoStore(res,{ok:false,error:e?.message||String(e)},409)}
+  });
+
+  app.post('/api/kraken/close-position', async (req,res)=>{
+    if(!requireBotAccountOwner(req,res))return;
+    const txid=String(req.body?.txid||'').trim();
+    if(!txid)return sendNoStore(res,{ok:false,error:'invalid_position_id'},400);
+    try {
+      const positions:any=await krakenPrivate('/0/private/OpenPositions',{txid,docalcs:'true'});
+      const row=positions?.[txid];
+      if(!row)return sendNoStore(res,{ok:true,txid,alreadyClosed:true,message:'Position is no longer open.'});
+      const vol=Number(row?.vol||0),closed=Number(row?.vol_closed||0);
+      const remaining=Math.max(0,vol-closed);
+      if(!(remaining>0))return sendNoStore(res,{ok:true,txid,alreadyClosed:true,message:'Position is already closed.'});
+      const side=String(row?.type||'').toLowerCase()==='buy'?'sell':'buy';
+      const pair=String(row?.pair||'').trim();
+      if(!pair)return sendNoStore(res,{ok:false,error:'invalid_position_pair'},400);
+      try {
+        const result=await krakenPrivate('/0/private/AddOrder',{
+          ordertype:'market',type:side,volume:String(remaining),pair,
+          leverage:'2',reduce_only:'true',
+          cl_ord_id:('aurclose'+Date.now().toString().slice(-8)).slice(0,18)
+        });
+        return sendNoStore(res,{ok:true,txid,pair,side,volume:remaining,result,submittedAt:Date.now()});
+      } catch(orderError:any) {
+        const message=String(orderError?.message||orderError);
+        if(message.includes('Reduce only:Non-ECP') && !pair.includes(':BTNL')) {
+          const retailPair=pair+':BTNL';
+          const retry=await krakenPrivate('/0/private/AddOrder',{ordertype:'market',type:side,volume:String(remaining),pair:retailPair,leverage:'2',reduce_only:'true',cl_ord_id:('aurclose'+Date.now().toString().slice(-8)).slice(0,18)});
+          return sendNoStore(res,{ok:true,txid,pair:retailPair,side,volume:remaining,result:retry,submittedAt:Date.now(),route:'BTNL'});
+        }
+        if(message.includes('Invalid position')) {
+          const live:any=await krakenPrivate('/0/private/OpenPositions',{docalcs:'true'});
+          if(!live?.[txid]) {
+            return sendNoStore(res,{ok:true,txid,alreadyClosed:true,message:'Position closed before Kraken processed the follow-up request.'});
+          }
+        }
+        throw orderError;
+      }
+    } catch(e:any){return sendNoStore(res,{ok:false,error:e?.message||String(e)},409)}
+  });
+
+  // Account-level execution readiness. READ ONLY. No order creation or validation.
+  app.get('/api/bots/kraken-test-readiness',async(req,res)=>{
+    if(!requireBotAccountOwner(req,res))return;
+    try{
+      const checks=await Promise.allSettled([
+        krakenPrivate('/0/private/TradeBalance',{asset:'ZUSD'}),
+        krakenPrivate('/0/private/OpenPositions',{docalcs:'true'}),
+        krakenPrivate('/0/private/OpenOrders',{})
+      ]);
+      const names=['trade_balance','open_positions','open_orders'] as const;
+      const checked=Object.fromEntries(checks.map((x,i)=>[
+        names[i],{
+          ok:x.status==='fulfilled',
+          error:x.status==='rejected'
+            ?String(x.reason?.message||x.reason||'').includes('Invalid nonce')
+              ?'invalid_nonce':cleanBrokerError(x.reason):null
+        }
+      ]));
+      const balance=checks[0].status==='fulfilled'?checks[0].value:null;
+      const positions=checks[1].status==='fulfilled'?checks[1].value:null;
+      const orders=checks[2].status==='fulfilled'?checks[2].value:null;
+      const availableMargin=balance?Number(balance?.mf||0):NaN;
+      const positionCount=positions?Object.keys(positions||{}).length:null;
+      const openOrderCount=orders?Object.keys(orders?.open||{}).length:null;
+      const allSucceeded=checks.every(x=>x.status==='fulfilled');
+      return sendNoStore(res,{
+        ok:true,venue:'Kraken Spot/Margin',checked,
+        freeMarginAvailable:Number.isFinite(availableMargin)&&availableMargin>=0,
+        freeMarginUsd:Number.isFinite(availableMargin)?availableMargin:null,
+        openMarginPositions:positionCount,openOrders:openOrderCount,
+        testNotionalMaximumUsd:10,maxTestLeverage:2,
+        accountClearForFirstTest:allSucceeded&&positionCount===0&&openOrderCount===0,
+        liveOrdersEnabled:process.env.AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED==='1',
+        usPerpsAccountVerified:false
+      });
+    }catch(error){
+      return sendNoStore(res,{ok:false,error:'kraken_margin_readiness_unavailable',
+        reason:cleanBrokerError(error)},502);
+    }
+  });
+
+  app.get('/api/bots/kraken-execution-capability',async(req,res)=>{
+    if(!requireBotAccountOwner(req,res))return;
+    const enabled=process.env.AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED==='1';
+    return sendNoStore(res,{ok:true,provider:'Kraken Spot/Margin',enabled,
+      instrument:'spot_margin',usPerpetualsConnected:false,
+      marketEntryWithConditionalStop:true,takeProfitAutomaticallyPlaced:false,
+      manualApprovalRequired:true,ordersTriggered:false});
+  });
+
+  app.post('/api/signal-desk/order/prepare', async (req,res)=>{
+    if(!requireBotAccountOwner(req,res))return;
+    try{return sendNoStore(res,await prepareKrakenOrder({...req.body,provider:'KRAKEN'}))}
+    catch(e:any){const msg=e?.message||String(e);return sendNoStore(res,{ok:false,error:msg},msg.startsWith('invalid_')||msg.includes('leverage_not_supported')?400:409)}
+  });
+  app.post('/api/signal-desk/order/validate', async (req,res)=>{
+    if(!requireBotAccountOwner(req,res))return;
+    try{return sendNoStore(res,await validateKrakenPreparedOrder(req.body))}
+    catch(e:any){return sendNoStore(res,{
+      ok:false,validated:false,orderPlaced:false,error:String(e?.message||e)
+    },409)}
+  });
+  app.post('/api/signal-desk/order/submit', async (req,res)=>{
+    if(!requireBotAccountOwner(req,res))return;
+    try{return sendNoStore(res,await submitKrakenOrder(req.body))}
+    catch(e:any){return sendNoStore(res,{ok:false,error:e?.message||String(e)},409)}
+  });
+
+  app.get('/api/borrow/catalog', async (req,res)=>{
+    try {
+      const force=['1','true','yes'].includes(String(req.query.refresh||'').toLowerCase());
+      if(borrowCache&&!force&&Date.now()-borrowCache.at<60000)return sendNoStore(res,borrowCache.payload);
+      const payload=await buildBorrowCatalog(); if(payload.ok)borrowCache={at:Date.now(),payload};
+      return sendNoStore(res,payload,payload.ok?200:502);
+    }catch(e:any){return sendNoStore(res,{ok:false,error:'borrow_catalog_unavailable',detail:e?.message||String(e)},502)}
+  });
+
+  app.get('/api/borrow/positions', async (req,res)=>{
+    const address=String(req.query.address||'').trim();
+    if(!/^0x[a-fA-F0-9]{40}$/.test(address))return sendNoStore(res,{ok:false,error:'invalid_address'},400);
+    const chainIds=[1,10,130,137,143,999,4663,5042,8453,42161,747474];
+    const positions:any[]=[],errors:any[]=[];
+    const gql=`query UserBorrowPositions($address:String!,$chainId:Int!){ userByAddress(address:$address,chainId:$chainId){ marketPositions{ market{marketId loanAsset{address symbol decimals} collateralAsset{address symbol decimals}} state{borrowAssets borrowAssetsUsd collateral collateralUsd} } } }`;
+    for(const chainId of chainIds){
+      try{
+        const payload=await fetchJson('https://api.morpho.org/graphql',{method:'POST',headers:{Accept:'application/json','Content-Type':'application/json'},body:JSON.stringify({query:gql,variables:{address,chainId}})},12000);
+        for(const item of payload?.data?.userByAddress?.marketPositions||[]){
+          const state=item?.state||{}; if(Number(state.borrowAssets||0)<=0)continue;
+          positions.push({provider:'Morpho',chainId,network:chainNames[chainId]||String(chainId),marketId:item?.market?.marketId,collateralAsset:item?.market?.collateralAsset?.symbol,collateralAmount:state.collateral,collateralUsd:state.collateralUsd,debtAsset:item?.market?.loanAsset?.symbol,debtAmount:state.borrowAssets,debtUsd:state.borrowAssetsUsd,source:'morpho_api'});
+        }
+      }catch(e:any){errors.push({provider:'Morpho',chainId,error:String(e?.message||e).slice(0,160)})}
+    }
+    return sendNoStore(res,{ok:true,address,positions,errors,generatedAt:Date.now()});
+  });
+
+  app.get('/api/borrow/aave/details', async (req,res)=>{
+    const symbol=String(req.query.symbol||'').trim();
+    if(!symbol||symbol.length>48)return sendNoStore(res,{ok:false,error:'invalid_symbol'},400);
+    try{
+      const s=await aaveSession(); let id=2; const details:any[]=[];
+      const chains=await aaveTool(s,'get_chains',{version:'v3'},id++);
+      const rows=chains?.data?.v3||chains?.v3||[];
+      for(const ch of rows.slice(0,25)){
+        const chainId=Number(ch?.chainId); if(!chainId)continue;
+        const markets=await aaveTool(s,'get_markets',{version:'v3',chainId,symbols:[symbol]},id++);
+        const root=markets?.data||markets; const section=root?.v3||{};
+        for(const market of section?.markets||[]) for(const reserve of market?.reserves||[]){
+          if(String(reserve?.symbol||'').toUpperCase()!==symbol.toUpperCase())continue;
+          const detail=await aaveTool(s,'get_reserve_details',{version:'v3',market:market.market,token:reserve.underlyingToken,chainId:market.chainId||chainId},id++);
+          const d=detail?.data||detail; if(d&&typeof d==='object')details.push({...d,protocolVersion:'V3',marketKey:market.market});
+        }
+      }
+      return sendNoStore(res,{ok:true,symbol,details});
+    }catch(e:any){return sendNoStore(res,{ok:false,error:'aave_unavailable',detail:String(e?.message||e).slice(0,180)},502)}
+  });
+
+}
+
+function stableStringify(value:any):string {
+  if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']';
+  if (value && typeof value === 'object') {
+    return '{' + Object.keys(value).sort().map(k => JSON.stringify(k)+':'+stableStringify(value[k])).join(',') + '}';
+  }
+  return JSON.stringify(value);
+}
+
+function registerMobileCompatibilityRoutes(app:Express) {
+  app.get('/api/phone/fiat/quotes',(_req,res)=>sendNoStore(res,{ok:false,error:'direct_fiat_buy_disabled'},410));
+
+  app.post('/api/mobile/live-bet/execute',async(req,res)=>{
+    if(!mobileAiAuthorized(req))return sendNoStore(res,{ok:false,error:'ai_device_auth_required'},401);
+    const token=String(req.body?.token||'').trim();
+    if(!token||token.length>256)return sendNoStore(res,{ok:false,error:'invalid_confirmation_token'},400);
+    try{
+      const consumed=await fetchJson('http://127.0.0.1:8792/api/live-bet/toobit-consume',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})},8000);
+      if(!consumed?.ok)return sendNoStore(res,{ok:false,error:consumed?.error||'live_bet_confirmation_invalid',message:consumed?.message||'Live Bet confirmation is invalid or expired.'},409);
+      const preview=consumed?.preview||{},claimed=String(consumed?.fingerprint||'');
+      const fingerprint=crypto.createHash('sha256').update(stableStringify(preview)).digest('hex');
+      if(!claimed||fingerprint!==claimed)throw new Error('live_bet_integrity_failed');
+      const symbol=String(preview?.symbol||'').toUpperCase(),asset=symbol.replace(/-SWAP-USDT$/,'').replace(/USDT$/,'').replace(/USD$/,'');
+      const direction=String(preview?.direction||'').toUpperCase();
+      if(!/^[A-Z0-9._-]{2,24}$/.test(asset)||!['LONG','SHORT'].includes(direction))throw new Error('invalid_live_bet_preview');
+      const amount=Math.max(1,Number(preview?.requestedPositionValueUSDT||preview?.valueQuantity||10));
+      const side=direction==='LONG'?'YES':'NO';
+      const kalshiUrl='/kalshi.html?'+new URLSearchParams({source:'live-bet',asset,side,amount:String(amount),duration:'15m'}).toString();
+      return sendNoStore(res,{ok:true,venue:'KALSHI',asset,side,amount,kalshiUrl,message:'Live Bet imported. Opening the matching Kalshi crypto market for final review.',writePerformed:false});
+    }catch(e:any){return sendNoStore(res,{ok:false,error:e?.message||'live_bet_confirmation_consume_failed',message:'Could not verify the locked Live Bet confirmation. Nothing was submitted.'},409)}
+  });
+}
+
+export function registerMigratedBackend(app:Express) {
+  registerAuthRoutes(app);
+  registerWalletRoutes(app);
+  registerAlertRoutes(app);
+  registerMarketAndBotRoutes(app);
+  registerMobileCompatibilityRoutes(app);
+}
++n.toLocaleString('en-US',{maximumFractionDigits:8});
+  const long=direction==='LONG';
+  if(Number.isFinite(proposedEntry)&&proposedEntry>0){
+    const proposedLevelsValid=long ? stop<proposedEntry&&proposedEntry<target
+      : target<proposedEntry&&proposedEntry<stop;
+    if(!proposedLevelsValid)
+      throw new Error('Hunter '+direction+' setup levels are inconsistent: entry '+priceForReview(proposedEntry)+
+        ', stop '+priceForReview(stop)+', target '+priceForReview(target)+'. Re-scan the market and review the levels. No trade placed.');
+  }
+
+  // An internally valid Hunter setup can become invalid when the Kraken BTNL quote moves
+  // outside its stop/target bracket. Never silently shift either protective level.
+  const exchangeBracketValid=long ? stop<mark&&mark<target : target<mark&&mark<stop;
+  if(!exchangeBracketValid){
+    const boundary=long
+      ? (mark<=stop?'at/below its stop':'at/above its target')
+      : (mark>=stop?'at/above its stop':'at/below its target');
+    throw new Error('Kraken '+String(pair.altname||asset)+' live price '+priceForReview(mark)+
+      ' is '+boundary+' for this '+direction+' setup. Hunter '+(proposedEntry>0?
+      'entry '+priceForReview(proposedEntry)+', ':'')+'stop '+priceForReview(stop)+
+      ', target '+priceForReview(target)+'. The setup is stale for Kraken execution.'+
+      ' Return to Trade Radar, Hunt for a fresh setup, and send it through Hunter again. No trade placed.');
+  }
   const maxNotional=Number(process.env.AURELIS_KRAKEN_MAX_NOTIONAL_USD||1000);
   const maxLev=Number(process.env.AURELIS_KRAKEN_MAX_LEVERAGE||10);
   // Manual test limits, independent of deployment flags.
