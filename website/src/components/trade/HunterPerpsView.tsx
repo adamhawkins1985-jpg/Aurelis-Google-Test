@@ -38,7 +38,9 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
       const [f, r] = await Promise.all([fetchKrakenFutures(), fetchKrakenRadar()]);
       setFutures(f);
       setRadar(r.candidates);
-      if (!f.some((x) => x.asset === selectedAsset) && f[0]?.asset) setSelectedAsset(f[0].asset);
+      // Do not switch away from Trade Radar's asset just because the asset is
+      // absent from the first 50 public futures contracts. Live Bet is BTNL margin.
+      // The selector must always agree with the displayed setup.
     } catch (e: any) {
       setError(e?.message || 'Kraken data unavailable');
     } finally {
@@ -64,6 +66,8 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
     () => futures.find((x) => x.asset === selectedAsset) || null,
     [futures, selectedAsset]
   );
+  const listedFutures=futures.slice(0,50);
+  const assetListed=listedFutures.some((x)=>x.asset===selectedAsset);
   const candidate = useMemo(
     () => radar.find((x) => x.asset?.toUpperCase() === selectedAsset.toUpperCase()),
     [radar, selectedAsset]
@@ -187,12 +191,12 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
 
       {error && <div className="p-3 rounded-xl bg-status-error/10 border border-status-error/20 text-status-error">{error}</div>}
 
-      {initialSetup && (
+      {matchingSetup && (
         <div className="p-3 rounded-xl bg-primary-container/10 border border-primary-container/25 flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="text-[9px] text-primary-container font-bold uppercase">Trade Radar setup copied into Hunter</div>
             <div className="text-[11px] text-text-primary mt-1">
-              {initialSetup.symbol} {initialSetup.direction} · Entry {formatMicroPrice(entry)} · Stop {formatMicroPrice(stop)} · Target {formatMicroPrice(target)}
+              {matchingSetup.symbol} {matchingSetup.direction} · Entry {formatMicroPrice(entry)} · Stop {formatMicroPrice(stop)} · Target {formatMicroPrice(target)}
             </div>
           </div>
           <span className="text-[10px] font-bold text-primary-container">${betAmount} @ {leverage}x</span>
@@ -201,10 +205,16 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         <div className="lg:col-span-4 p-4 rounded-2xl bg-surface-panel/95 border border-white/10 space-y-3">
-          <div className="text-[10px] text-text-muted uppercase font-bold">Perpetual Market</div>
-          <select value={selectedAsset} onChange={(e) => setSelectedAsset(e.target.value)} className="w-full p-2.5 rounded-xl bg-surface-base border border-white/10 text-text-primary font-bold">
-            {futures.slice(0, 50).map((x) => <option key={x.symbol} value={x.asset}>{x.asset} · {x.symbol}</option>)}
+          <div className="text-[10px] text-text-muted uppercase font-bold">Selected asset · futures research</div>
+          <select value={selectedAsset} onChange={(e) => setSelectedAsset(e.target.value)}
+            className="w-full p-2.5 rounded-xl bg-surface-base border border-white/10 text-text-primary font-bold">
+            {!assetListed && <option value={selectedAsset}>{selectedAsset} · Selected Radar asset</option>}
+            {listedFutures.map((x) => <option key={x.symbol} value={x.asset}>{x.asset} · {x.symbol}</option>)}
           </select>
+          {!ticker && <div className="text-[10px] text-amber-400">
+            No public Kraken perpetual quote for {selectedAsset} in this feed.
+            The Kraken US Spot/Margin preflight below uses a separate BTNL market quote.
+          </div>}
           <div className="grid grid-cols-2 gap-2">
             <label className="text-[9px] text-text-muted">POSITION USD
               <input value={betAmount} readOnly title="First Kraken Spot/Margin test is fixed at $10 notional"
@@ -222,7 +232,7 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
           <div className="flex items-center justify-between">
             <div>
               <div className="text-[10px] text-text-muted">PUBLIC KRAKEN PERPETUAL QUOTE (RESEARCH ONLY)</div>
-              <div className="text-xl font-headline font-bold">{selectedAsset} · {formatMicroPrice(mark)}</div>
+              <div className="text-xl font-headline font-bold">{selectedAsset} · {ticker?formatMicroPrice(mark):'No futures quote'}</div>
             </div>
             <div className={`flex items-center gap-1 font-bold ${bias === 'LONG' ? 'text-emerald-400' : 'text-rose-400'}`}>
               {bias === 'LONG' ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
