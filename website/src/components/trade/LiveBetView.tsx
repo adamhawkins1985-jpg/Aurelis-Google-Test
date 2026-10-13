@@ -125,7 +125,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
       leverage: initialSetup.leverage || 1,
     });
     setAmount('10');
-    setLeverage(String(initialSetup.leverage || 1));
+    setLeverage(String(Math.min(2,Math.max(1,Number(initialSetup.leverage)||2))));
     setPreview(null);
     setToken('');
     setKrakenValidated(false);
@@ -193,7 +193,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
         if (!active || !response.ok || !data?.ok) return;
         const allowed = (direction === 'SHORT' ? data.sell : data.buy)
           .map(Number)
-          .filter((x: number) => Number.isFinite(x) && x > 0);
+          .filter((x: number) => Number.isFinite(x) && x >= 1 && x <= 2);
         setSupportedLeverage(allowed);
         if (allowed.length && !allowed.includes(Number(leverage))) {
           setLeverage(String(allowed[0]));
@@ -618,7 +618,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
                 onChange={(e) => { setLeverage(e.target.value); setPreview(null); setToken(''); setKrakenValidated(false); setValidationExpiresAt(null); }}
                 className="mt-1 w-full min-w-0 p-2 rounded-lg bg-surface-base border border-white/10 text-text-primary"
               >
-                {(supportedLeverage.filter((x:number)=>x>=1&&x<=2).length ? supportedLeverage.filter((x:number)=>x>=1&&x<=2) : [1,2]).map((x) => <option key={x} value={String(x)}>{x}x</option>)}
+                {(supportedLeverage.length ? supportedLeverage : [1,2]).map((x) => <option key={x} value={String(x)}>{x}x</option>)}
               </select>
             </label>
           </div>
