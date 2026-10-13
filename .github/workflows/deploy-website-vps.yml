@@ -1,0 +1,95 @@
+name: Deploy AURELIS website to VPS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aurelis-website-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    steps:
+      - name: Require configured deployment credentials
+        env:
+          DEPLOY_HOST: ${{ secrets.AURELIS_DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.AURELIS_DEPLOY_USER }}
+          DEPLOY_KEY: ${{ secrets.AURELIS_DEPLOY_KEY }}
+          DEPLOY_HOST_KEY: ${{ secrets.AURELIS_DEPLOY_HOST_KEY }}
+        run: |
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_KEY DEPLOY_HOST_KEY; do
+            if [ -z "${!name}" ]; then echo "::error::Missing $name"; exit 1; fi
+          done
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Build website
+        working-directory: website
+        run: |
+          npm ci --legacy-peer-deps
+          node scripts/test_llamaswap_primary.mjs
+          npm run build
+      - name: Prepare pinned SSH host identity
+        env:
+          DEPLOY_HOST_KEY: ${{ secrets.AURELIS_DEPLOY_HOST_KEY }}
+          DEPLOY_KEY: ${{ secrets.AURELIS_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_HOST_KEY" > ~/.ssh/known_hosts
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/aurelis_deploy
+          chmod 600 ~/.ssh/known_hosts ~/.ssh/aurelis_deploy
+      - name: Upload staged static build
+        env:
+          HOST: ${{ secrets.AURELIS_DEPLOY_HOST }}
+          USER: ${{ secrets.AURELIS_DEPLOY_USER }}
+        run: |
+          SSH="ssh -i $HOME/.ssh/aurelis_deploy -o StrictHostKeyChecking=yes -o BatchMode=yes"
+          $SSH "$USER@$HOST" 'mkdir -p /home/ubuntu/aurelis-vnext/.website-staging'
+          rsync -az --delete -e "$SSH" website/dist/ "$USER@$HOST:/home/ubuntu/aurelis-vnext/.website-staging/"
+      - name: Atomically promote static build with rollback
+        env:
+          HOST: ${{ secrets.AURELIS_DEPLOY_HOST }}
+          USER: ${{ secrets.AURELIS_DEPLOY_USER }}
+        run: |
+          ssh -i ~/.ssh/aurelis_deploy -o StrictHostKeyChecking=yes -o BatchMode=yes "$USER@$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /home/ubuntu/aurelis-vnext
+          test -f .website-staging/index.html
+          test -f dist/index.html
+          if [ -e .website-rollback ]; then echo 'Previous rollback pending; aborting'; exit 1; fi
+          mv dist .website-rollback
+          if mv .website-staging dist; then
+            echo 'New website activated; previous build retained in .website-rollback'
+          else
+            mv .website-rollback dist
+            exit 1
+          fi
+          REMOTE
+      - name: Verify public website and rollback on failure
+        env:
+          HOST: ${{ secrets.AURELIS_DEPLOY_HOST }}
+          USER: ${{ secrets.AURELIS_DEPLOY_USER }}
+        run: |
+          for i in 1 2 3; do
+            if curl -fsS --max-time 12 https://wallet.ahconceptsai.com/ >/dev/null; then exit 0; fi
+            sleep 5
+          done
+          echo '::error::Public health check failed; restoring previous website'
+          ssh -i ~/.ssh/aurelis_deploy -o StrictHostKeyChecking=yes -o BatchMode=yes "$USER@$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /home/ubuntu/aurelis-vnext
+          test -f .website-rollback/index.html
+          mv dist .website-failed-$(date +%s)
+          mv .website-rollback dist
+          REMOTE
+          exit 1
