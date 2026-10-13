@@ -1,4 +1,5 @@
 name: AURELIS production read-only smoke
+# Retest public health after Hunter selected-asset and stale-setup navigation fix.
 # Verify live read-only endpoints after Kraken/Hunter protection review fix.
 on:
   workflow_dispatch:
