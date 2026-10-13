@@ -656,7 +656,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
                 <p className="mt-2 break-words leading-relaxed">{krakenReviewError}</p>
               </details>
             </div>
-          )
+          )}
           <button type="button" onClick={reviewKraken} disabled={busy}
             className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold disabled:opacity-40">
             Review $10 Kraken bet
