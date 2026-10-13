@@ -59,12 +59,23 @@ assert(live.includes("key={normalized?'loaded-setup':'no-setup'} open={!normaliz
 assert(live.includes('liveStatus.positions.length||liveStatus.orders.length'),
   'Open-position management must remain visible whenever live orders or positions exist');
 assert(live.includes('Review $10 Kraken bet'),'Kraken review button must stay available');
-assert(live.includes('One bet · One review'), 'Live Bet must show one unified setup/review card');
+assert(live.includes('Kraken Spot/Margin · $10 test'), 'Live Bet must show a single compact review card');
 assert(live.includes('className="border-t border-white/15 pt-3 space-y-3"'), 'Kraken preview must render inside the existing setup card');
 assert(!live.includes("['Bet', preview.symbol+' '+preview.direction]"), 'Do not render a second copy of the bet, position, stop, and target');
 assert(live.includes('{!preview && (') && live.includes('{preview && ('), 'Only the relevant next action should show at each review stage');
 assert(live.includes('Stop requested only after the entry fills'), 'The conditional stop timing must remain visible even before validation');
 assert(live.includes('Refresh quote'), 'Users must be able to refresh a stale preview without navigating away');
+assert(live.includes('{!normalized && screenshotPicker}'), 'Screenshot should not take priority over a loaded bet');
+assert(live.includes('{Boolean(liveStatus.positions.length||liveStatus.orders.length) && krakenStatusPanel}'),
+  'Actual live positions/orders must stay above the bet for safe management');
+assert(live.includes('Other options · Screenshot, account status, research'),
+  'Unused utilities should be tucked away below a pending trade review');
+assert(live.includes('{executionEnabled ? ('), 'Live submit CTA must not appear while execution is locked');
+assert(live.includes('Live trading locked · Validation only, no order placed'),
+  'Locked capability must still be plainly disclosed');
+assert(!live.includes('Kraken preview · $10 test'), 'Do not repeat the setup header in a second preview title');
+assert(screen.includes("{activeBotTab !== 'live' && ("), 'Do not show the extra safety banner above the live bet card');
+
 
 assert(live.includes('Validate with Kraken · No trade'),'Kraken no-order validation remains explicit');
 assert(live.includes('Target NOT placed as an order'),'Unplaced take-profit disclosure must be visible');

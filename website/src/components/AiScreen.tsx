@@ -306,9 +306,10 @@ export const AiScreen: React.FC<AiScreenProps> = ({
 
   const activeBotView = (
     <>
+      {activeBotTab !== 'live' && (
       <div className="rounded-lg border border-white/10 bg-surface-panel px-3 py-2 text-[11px]">
         <span className="font-bold text-text-primary">
-          {activeBotTab === 'live' || activeBotTab === 'signals' ? 'Kraken Spot/Margin · Live orders locked' :
+          {activeBotTab === 'signals' ? 'Kraken Spot/Margin · Live orders locked' :
            activeBotTab === 'hunter' ? 'Futures research → Kraken margin preflight' :
            activeBotTab === 'arbitrage' ? 'Arbitrage · Paper only' :
            activeBotTab === 'radar' ? 'Automatic scan and venue check · No order submitted' :
@@ -320,6 +321,7 @@ export const AiScreen: React.FC<AiScreenProps> = ({
           <p className="mt-2 leading-relaxed">{brokerRouteMessage[activeBotTab]}</p>
         </details>
       </div>
+      )}
       {activeBotTab === 'radar' && (
         <BotAutoScanView
           enabled={autoScanEnabled}

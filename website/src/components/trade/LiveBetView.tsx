@@ -476,15 +476,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
     if (file) readImage(file);
   };
 
-  return (
-    <div className="space-y-3 font-mono text-xs text-text-primary">
-      <div className="px-3 py-2.5 rounded-xl bg-surface-panel/95 border border-white/10 flex flex-wrap gap-2 items-center justify-between">
-        <strong className="text-sm text-text-primary">
-          {normalized ? normalized.asset+' '+normalized.direction+' · Kraken review' : 'Live Bet · Kraken Spot/Margin'}
-        </strong>
-        <span className="text-[10px] text-text-muted">{normalized ? 'Review → Validate (no trade)' : 'Load a bet to review'}</span>
-      </div>
-
+  const screenshotPicker = (
       <details key={normalized?'loaded-setup':'no-setup'} open={!normalized}
         className="rounded-xl border border-white/10 bg-surface-panel/75 p-2 text-[10px]">
         <summary className="cursor-pointer text-text-secondary font-bold">
@@ -523,7 +515,8 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
         </div>
       </div>
       </details>
-
+  );
+  const krakenStatusPanel = (
       <details open={Boolean(liveStatus.positions.length||liveStatus.orders.length)}
         className="p-3 rounded-xl bg-surface-panel/95 border border-white/10 space-y-2">
         <summary className="cursor-pointer text-[10px] font-bold text-text-secondary">
@@ -587,15 +580,28 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
           </>
         )}
       </details>
+  );
+
+  return (
+    <div className="space-y-3 font-mono text-xs text-text-primary">
+      {!normalized && (
+        <div className="px-3 py-2.5 rounded-xl bg-surface-panel/95 border border-white/10 flex flex-wrap gap-2 items-center justify-between">
+          <strong className="text-sm text-text-primary">Live Bet · Kraken Spot/Margin</strong>
+          <span className="text-[10px] text-text-muted">Load a bet to review</span>
+        </div>
+      )}
+
+      {!normalized && screenshotPicker}
+      {Boolean(liveStatus.positions.length||liveStatus.orders.length) && krakenStatusPanel}
 
       {normalized && (
         <div className="p-3 sm:p-4 rounded-2xl bg-surface-panel/95 border border-white/10 space-y-3 overflow-hidden">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <div className="text-[9px] font-bold uppercase tracking-wider text-text-muted">One bet · One review</div>
+              <div className="text-[9px] font-bold uppercase tracking-wider text-text-muted">Kraken Spot/Margin · $10 test</div>
               <strong className="text-base text-text-primary">{normalized.asset} · {normalized.direction}</strong>
             </div>
-            <span className="text-[10px] text-text-muted">{preview ? 'Kraken preview ready' : 'Awaiting Kraken preview'} · No trade placed</span>
+            <span className="text-[10px] text-text-muted">{preview ? 'Quote ready' : 'Preparing review'} · No trade placed</span>
           </div>
           <div className="grid grid-cols-3 gap-2 min-w-0">
             {[
@@ -675,27 +681,14 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
               Review $10 Kraken bet
             </button>
           )}
-          <details className="text-[10px] text-text-muted">
-            <summary className="cursor-pointer">Other research options</summary>
-            <button type="button" onClick={reviewDex} disabled={busy}
-              className="w-full mt-2 py-2 rounded-xl border border-white/10 text-text-secondary font-bold disabled:opacity-40">
-              DEX paper route (no trade)
-            </button>
-          </details>
           {preview && (
           <div id="livebet-locked-review" className="border-t border-white/15 pt-3 space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-primary-container" />
-                <strong>Kraken preview · $10 test</strong>
-              </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface-base px-2 py-1.5 text-[10px] text-text-secondary">
+              <span>Kraken {preview.symbol} executable quote: ${preview.markPrice}</span>
               <button type="button" onClick={reviewKraken} disabled={busy}
-                className="rounded-lg px-2 py-1 border border-white/15 text-[10px] text-text-secondary disabled:opacity-40">
+                className="rounded-lg px-2 py-1 border border-white/15 text-text-secondary disabled:opacity-40">
                 Refresh quote
               </button>
-            </div>
-            <div className="rounded-lg border border-white/10 bg-surface-base p-2 text-[10px] text-text-secondary">
-              {preview.symbol} · Kraken entry quote ${preview.markPrice} · {preview.positionValueUsd} USD · Est. margin ${preview.estimatedMarginUsd}
             </div>
           <details className="text-[10px] text-text-muted">
             <summary className="cursor-pointer">Full order details & risks</summary>
@@ -719,14 +712,20 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
             Validate with Kraken · No trade
           </button>
           {validationStatus && <div role="status" className={krakenValidated?'text-primary-container text-[10px]':'text-amber-300 text-[10px]'}>{validationStatus}</div>}
-          <button type="button" disabled={!executionEnabled||!krakenValidated||busy||!token}
-            onClick={()=>{
-              if(!window.confirm('REAL LIVE TEST: Submit a Kraken Spot/Margin market entry capped at $10 notional and 2x leverage? The stop is requested after fill, take-profit is NOT placed. The trade can lose money. Approve this specific order?'))return;
-              void submitKraken();
-            }}
-            className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold disabled:opacity-40">
-            {executionEnabled?'Approve real $10 order':'Live trading locked'}
-          </button>
+          {executionEnabled ? (
+            <button type="button" disabled={!executionEnabled||!krakenValidated||busy||!token}
+              onClick={()=>{
+                if(!window.confirm('REAL LIVE TEST: Submit a Kraken Spot/Margin market entry capped at $10 notional and 2x leverage? The stop is requested after fill, take-profit is NOT placed. The trade can lose money. Approve this specific order?'))return;
+                void submitKraken();
+              }}
+              className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold disabled:opacity-40">
+              Approve real $10 order
+            </button>
+          ) : (
+            <div role="status" className="rounded-lg bg-surface-base px-3 py-2 text-[10px] text-text-muted">
+              Live trading locked · Validation only, no order placed
+            </div>
+          )}
           <details className="text-[10px] text-text-muted">
             <summary className="cursor-pointer">Execution status</summary>
             <p className="mt-1">{executionCapabilityMessage}</p>
@@ -740,6 +739,20 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
           </div>
           )}
         </div>
+      )}
+
+      {normalized && (
+        <details className="rounded-xl border border-white/10 bg-surface-panel/70 p-3 text-[10px] text-text-secondary">
+          <summary className="cursor-pointer font-bold">Other options · Screenshot, account status, research</summary>
+          <div className="mt-2 space-y-2">
+            {screenshotPicker}
+            {!Boolean(liveStatus.positions.length||liveStatus.orders.length) && krakenStatusPanel}
+            <button type="button" onClick={reviewDex} disabled={busy}
+              className="w-full rounded-lg border border-white/10 bg-surface-base p-2 font-bold disabled:opacity-40">
+              DEX paper route · No trade
+            </button>
+          </div>
+        </details>
       )}
 
       {submitResult?.ok && (
