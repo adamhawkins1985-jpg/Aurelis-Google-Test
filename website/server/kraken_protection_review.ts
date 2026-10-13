@@ -56,3 +56,47 @@ export function krakenExecutablePrice(
   const top=Number(direction==='LONG'?info.ticker?.a?.[0]:info.ticker?.b?.[0]);
   return Number.isFinite(top)&&top>0?top:Number(info.mark);
 }
+
+/**
+ * Only a Kraken U.S. BTNL spot/margin quote can clear a Hunter handoff.
+ * Kraken futures quotes and ordinary spot fallback pairs are research-only.
+ * This is PUBLIC MARKET-DATA validation, never permission to trade.
+ */
+export function assessKrakenMarginHandoff(p:{
+  asset:string;
+  pair:string;
+  direction:KrakenProtectionDirection;
+  setupEntry:number;
+  stop:number;
+  target:number;
+  bid:number;
+  ask:number;
+  leverage:number;
+  allowedLeverages:number[];
+  marketStatus?:string;
+}):KrakenProtectionAssessment{
+  if(!/:BTNL$/i.test(p.pair))
+    return {ok:false,code:'market_outside_bracket',
+      message:p.asset+' does not have a verified Kraken U.S. BTNL Spot/Margin market. The Hunter futures signal is research-only; it cannot be sent to Live Bet.'};
+  if(p.marketStatus && p.marketStatus!=='online')
+    return {ok:false,code:'market_outside_bracket',
+      message:'Kraken '+p.pair+' is not currently open for Spot/Margin trading. No order placed.'};
+  if(!Number.isFinite(p.leverage)||p.leverage<1||p.leverage>2||
+     !p.allowedLeverages.includes(p.leverage))
+    return {ok:false,code:'market_outside_bracket',
+      message:'Kraken '+p.pair+' does not support the selected '+p.leverage+'× '+p.direction+
+        ' margin position within the 2× test limit. Select a supported market; do not increase leverage.'};
+  const executable=p.direction==='LONG'?p.ask:p.bid;
+  if(!Number.isFinite(executable)||executable<=0)
+    return {ok:false,code:'quote_unavailable',
+      message:'Kraken '+p.pair+' '+(p.direction==='LONG'?'buy ask':'sell bid')+
+        ' is unavailable. Hunter cannot verify this setup for a real execution market.'};
+  return assessKrakenProtection({
+    direction:p.direction,
+    proposedEntry:p.setupEntry,
+    liveQuote:executable,
+    stop:p.stop,
+    target:p.target,
+    pair:p.pair
+  });
+}
