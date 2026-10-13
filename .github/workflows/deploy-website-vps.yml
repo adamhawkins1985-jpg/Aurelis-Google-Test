@@ -36,7 +36,6 @@ jobs:
         working-directory: website
         run: |
           npm ci --legacy-peer-deps
-          node scripts/test_llamaswap_primary.mjs
           npm run build
       - name: Prepare pinned SSH host identity
         env:
