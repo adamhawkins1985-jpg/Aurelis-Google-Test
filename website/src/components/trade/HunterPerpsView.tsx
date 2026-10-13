@@ -180,7 +180,7 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
         <div>
           <div className="text-[10px] text-primary-container font-bold uppercase tracking-wider">AURELIS HUNTER PERPS</div>
           <h1 className="text-xl sm:text-2xl font-headline font-bold">Kraken Futures Market Hunter</h1>
-          <p className="text-[11px] text-text-muted font-sans mt-1">Public Kraken perpetuals market data + Kraken Trade Radar research. Futures order API NOT connected.</p>
+          <p className="text-[11px] text-text-muted font-sans mt-1">Choose a bet → Check Kraken → Continue to Live Bet</p>
         </div>
         <div className="flex items-center gap-2">
           <span className="px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold">LIVE MARKET DATA</span>
@@ -230,6 +230,17 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
         </div>
 
         <div className="lg:col-span-8 p-4 rounded-2xl bg-surface-panel/95 border border-white/10 space-y-3">
+          {matchingSetup && sizing && (
+            <div className="p-3 rounded-xl border border-white/10 bg-surface-base flex flex-wrap gap-x-5 gap-y-2 items-center text-[10px]">
+              <strong>{selectedAsset} {bias} · $10 at {leverage}×</strong>
+              <span className="text-red-400">Est. loss at stop: -{formatCurrency(sizing.loss)}</span>
+              <span className="text-primary-container">Est. gain at target: +{formatCurrency(sizing.gain)}</span>
+              <span>R:R 1:{sizing.rr.toFixed(2)}</span>
+            </div>
+          )}
+          <details className="rounded-xl border border-white/10 bg-surface-base/60 p-2 text-[10px]" open={!matchingSetup}>
+            <summary className="cursor-pointer font-bold text-text-secondary">Futures research & market statistics (optional)</summary>
+            <div className="mt-2 space-y-3">
           <div className="flex items-center justify-between">
             <div>
               <div className="text-[10px] text-text-muted">PUBLIC KRAKEN PERPETUAL QUOTE (RESEARCH ONLY)</div>
@@ -267,13 +278,15 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
           </div>
           <div className="p-3 rounded-xl bg-surface-base border border-white/5 text-[10.5px] text-text-secondary">
             <ShieldCheck className="inline w-3.5 h-3.5 text-primary-container mr-1.5" />
-            Research only: public Kraken futures quotes plus Kraken Trade Radar signals. The connected account shown above is Kraken SPOT, not a funded or authorized futures account. Live Bet is a separate Spot/Margin review.
+            Research only. Public futures prices are not executable Kraken Spot/Margin quotes.
           </div>
+            </div>
+          </details>
           {matchingSetup && onSendToLiveBet && (
             <div className="space-y-2">
               <div className="p-3 rounded-xl bg-surface-base border border-white/10 space-y-1.5 text-[10px]">
                 <div className="flex items-center justify-between gap-2">
-                  <strong>Kraken US Spot/Margin preflight (not futures)</strong>
+                  <strong>Kraken margin check</strong>
                   <button type="button" onClick={()=>void checkMarginHandoff().then(d=>{setMarginHandoff(d);setMarginHandoffError('')}).catch(e=>{setMarginHandoff(null);setMarginHandoffError(e?.message||'Quote unavailable')})}
                     className="rounded border border-white/10 px-2 py-1" title="Recheck Kraken margin market">
                     <RefreshCw className="w-3.5 h-3.5"/>
@@ -283,21 +296,34 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
                   <div className="text-text-muted">{marginHandoff.pair} · {marginHandoff.quoteType} {formatMicroPrice(marginHandoff.executableQuote)} · checked {new Date(marginHandoff.checkedAt).toLocaleTimeString()}</div>}
                 {marginHandoffBusy && <div className="text-text-muted">Checking Kraken's execution market…</div>}
                 {!marginHandoffBusy && marginHandoff?.compatible &&
-                  <div className="text-primary-container">In-range setup. Kraken margin market and selected leverage checked. Final order review and owner validation still required.</div>}
-                {!marginHandoffBusy && marginHandoff&&!marginHandoff.compatible &&
-                  <div role="alert" className="text-amber-400">{marginHandoff.reason}</div>}
-                {marginHandoffError&&<div role="alert" className="text-amber-400">{marginHandoffError}</div>}
+                  <div className="text-primary-container font-bold">Kraken quote fits this setup · Ready for Live Bet review</div>}
+                {!marginHandoffBusy && marginHandoff&&!marginHandoff.compatible && (
+                  <div role="alert" className="text-amber-400 font-bold">
+                    {marginHandoff.reason.includes('at/below its stop') ? 'Price below stop · Get a new bet' :
+                     marginHandoff.reason.includes('at/above its target') ? 'Price past target · Get a new bet' :
+                     marginHandoff.reason.includes('at/above its stop') ? 'Price above stop · Get a new bet' :
+                     marginHandoff.reason.includes('at/below its target') ? 'Price past target · Get a new bet' :
+                     'Setup not available on Kraken margin'}
+                  </div>
+                )}
+                {marginHandoffError&&<div role="alert" className="text-amber-400 font-bold">Kraken check unavailable · Retry or get a new bet</div>}
+                {(marginHandoff&&!marginHandoff.compatible||marginHandoffError) && (
+                  <details className="text-text-muted">
+                    <summary className="cursor-pointer">Why was this bet blocked?</summary>
+                    <p className="mt-2 break-words">{marginHandoffError||marginHandoff?.reason}</p>
+                  </details>
+                )}
                 {onReturnToRadar && ((marginHandoff&&!marginHandoff.compatible)||marginHandoffError) && (
                   <button type="button" onClick={onReturnToRadar}
                     className="mt-2 w-full rounded-lg border border-white/15 bg-surface-panel px-3 py-2 text-text-primary font-bold">
-                    Back to Trade Radar · Hunt for a fresh setup
+                    Find a new bet
                   </button>
                 )}
               </div>
               <button type="button" onClick={()=>void sendToLiveBet()}
                 disabled={!marginHandoff?.compatible||marginHandoffBusy||sendingToLiveBet}
                 className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold text-[11px] flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
-                <span>{sendingToLiveBet?'Rechecking Kraken margin quote…':marginHandoff?.compatible?'Send to Live Bet':'Kraken margin setup blocked'}</span>
+                <span>{sendingToLiveBet?'Checking price…':marginHandoff?.compatible?'Continue to Live Bet':'Waiting for Kraken check'}</span>
                 <ArrowRight className="w-4 h-4"/>
               </button>
             </div>
@@ -305,8 +331,9 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
         </div>
       </div>
 
-      <div className="p-3.5 rounded-2xl bg-surface-panel/95 border border-white/10">
-        <div className="flex items-center gap-2 mb-2"><Activity className="w-4 h-4 text-cyan-400" /><strong>Top Kraken Perpetuals</strong></div>
+      <details className="p-3.5 rounded-2xl bg-surface-panel/95 border border-white/10">
+        <summary className="cursor-pointer text-[10px] font-bold text-text-secondary">Explore more futures markets (optional)</summary>
+        <div className="flex items-center gap-2 mb-2 mt-3"><Activity className="w-4 h-4 text-cyan-400" /><strong>Top Kraken Perpetuals</strong></div>
         <div className="overflow-x-auto">
           <table className="w-full text-[10.5px]">
             <thead><tr className="text-text-muted border-b border-white/10"><th className="py-2 text-left">Asset</th><th className="text-right">Mark</th><th className="text-right">Funding</th><th className="text-right">24h</th><th className="text-right">Volume</th></tr></thead>
@@ -323,7 +350,7 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
             </tbody>
           </table>
         </div>
-      </div>
+      </details>
     </div>
   );
 };

@@ -59,7 +59,7 @@ const formatPrice = (value: number) => {
   const n = Number(value || 0);
   if (Math.abs(n) >= 1) return n.toFixed(2);
   if (Math.abs(n) >= 0.01) return n.toFixed(4);
-  return n.toFixed(6);
+  return n.toLocaleString('en-US',{maximumFractionDigits:12});
 };
 
 export const TradeRadarView: React.FC<TradeRadarViewProps> = ({
@@ -74,7 +74,6 @@ export const TradeRadarView: React.FC<TradeRadarViewProps> = ({
   const [radarError, setRadarError] = useState<string | null>(null);
   const [radarMeta, setRadarMeta] = useState({ scanned: 0, deepAnalyzed: 0, source: 'AURELIS' });
   const [showWhyModal, setShowWhyModal] = useState<boolean>(false);
-  const [showOrderModal, setShowOrderModal] = useState<boolean>(false);
   const [copiedNote, setCopiedNote] = useState<boolean>(false);
   const [positionAmount, setPositionAmount] = useState('10');
   const [positionLeverage, setPositionLeverage] = useState('2');
@@ -186,7 +185,7 @@ export const TradeRadarView: React.FC<TradeRadarViewProps> = ({
         if (!active || !response.ok || !data?.ok) return;
         const allowed = (activeSetup.direction === 'SHORT' ? data.sell : data.buy)
           .map(Number)
-          .filter((x: number) => Number.isFinite(x) && x > 0);
+          .filter((x: number) => Number.isFinite(x) && x >= 1 && x <= 2);
         setSupportedLeverage(allowed);
         if (allowed.length && !allowed.includes(Number(positionLeverage))) setPositionLeverage(String(allowed[0]));
       } catch {}
@@ -340,9 +339,10 @@ Commentary: ${activeSetup.commentary}`;
               CURRENT SETUP
             </div>
 
-            <p className="text-[11.5px] text-text-secondary font-sans leading-relaxed max-w-xl">
-              {activeSetup.commentary}
-            </p>
+            <details className="text-[11px] text-text-muted">
+              <summary className="cursor-pointer">Why this setup?</summary>
+              <p className="mt-2 max-w-xl leading-relaxed text-text-secondary">{activeSetup.commentary}</p>
+            </details>
           </div>
 
           {/* Right: Score / 100 & Radar bars */}
@@ -354,8 +354,10 @@ Commentary: ${activeSetup.commentary}`;
               <span className="text-text-muted text-xs">/100</span>
             </div>
 
-            {/* Micro radar progress bars */}
-            <div className="w-full space-y-1.5 text-[10px]">
+            {/* Research indicators are optional, not part of the bet review. */}
+            <details className="w-full text-[10px]">
+              <summary className="cursor-pointer text-text-muted text-right">5 signal scores</summary>
+            <div className="w-full space-y-1.5 text-[10px] mt-2">
               {[
                 { label: 'Forge / Trend', val: activeSetup.forge },
                 { label: 'Pulse / Liquidity', val: activeSetup.pulse },
@@ -379,6 +381,7 @@ Commentary: ${activeSetup.commentary}`;
                 </div>
               ))}
             </div>
+            </details>
 
             <div className="flex items-center gap-2 mt-2">
               <button
@@ -396,7 +399,9 @@ Commentary: ${activeSetup.commentary}`;
                 onClick={() => {
                   if (!activeSetup.qualified) return;
                   if (soundEnabled) playHudSound('trade');
-                  setShowOrderModal(true);
+                  // Research-only handoff. Hunter performs its own live Kraken margin check.
+                  onPlaceTrade?.({ ...activeSetup, margin: 10,
+                    leverage: Math.min(2, Math.max(1, Number(positionLeverage)||2)) });
                 }}
                 disabled={!activeSetup.qualified}
                 className={`px-3.5 py-1.5 rounded-full font-bold text-[10.5px] transition-all ${
@@ -405,7 +410,7 @@ Commentary: ${activeSetup.commentary}`;
                     : 'bg-white/5 text-text-muted border border-white/10 cursor-not-allowed'
                 }`}
               >
-                {activeSetup.qualified ? 'Review in Hunter' : 'No trade'}
+                {activeSetup.qualified ? 'Continue to Hunter' : 'No trade'}
               </button>
             </div>
           </div>
@@ -431,8 +436,9 @@ Commentary: ${activeSetup.commentary}`;
           </div>
         </div>
 
-        {/* Step-by-Step Decision Notes Table */}
-        <div className="space-y-1.5">
+        {/* Deep research stays available but collapsed. */}
+        <details className="space-y-1.5 text-[10px]">
+          <summary className="cursor-pointer font-bold text-text-secondary">Full analysis & decision notes</summary>
           <div className="flex items-center justify-between text-[9px] text-text-muted font-bold uppercase tracking-wider pb-1">
             <span>AURELIS DECISION NOTES</span>
             <span>STEP-BY-STEP</span>
@@ -447,17 +453,17 @@ Commentary: ${activeSetup.commentary}`;
               </div>
             ))}
           </div>
-        </div>
+        </details>
 
         {/* Sizing Footer Bar */}
         <div className="p-3 rounded-xl bg-surface-base border border-white/5 space-y-3">
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             <label className="text-[9px] text-text-muted">POSITION USD
-              <input value={positionAmount} onChange={(e) => setPositionAmount(e.target.value)} inputMode="decimal" className="mt-1 w-full p-2 rounded-lg bg-surface-panel border border-white/10 text-text-primary" />
+              <input value={positionAmount} readOnly title="First Kraken test is fixed at $10 total notional" className="mt-1 w-full p-2 rounded-lg bg-surface-panel border border-white/10 text-text-primary" />
             </label>
             <label className="text-[9px] text-text-muted">LEVERAGE
               <select value={positionLeverage} onChange={(e) => setPositionLeverage(e.target.value)} className="mt-1 w-full p-2 rounded-lg bg-surface-panel border border-white/10 text-text-primary">
-                {(supportedLeverage.length ? supportedLeverage : [2,3,4,5]).map((x) => <option key={x} value={String(x)}>{x}x</option>)}
+                {(supportedLeverage.length ? supportedLeverage : [1,2]).map((x) => <option key={x} value={String(x)}>{x}x</option>)}
               </select>
             </label>
             <div className="p-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20"><div className="text-[8px] text-text-muted uppercase">Est. Margin</div><div className="text-[11px] font-bold text-cyan-300 mt-1">{sizing ? formatCurrency(sizing.margin) : '—'}</div></div>
@@ -596,85 +602,6 @@ Commentary: ${activeSetup.commentary}`;
         </div>
       )}
 
-      {/* RESEARCH HANDOFF MODAL, NO ORDER SENT */}
-      {showOrderModal && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-3 select-none"
-          onClick={() => setShowOrderModal(false)}
-        >
-          <div
-            className="w-full max-w-md bg-surface-panel rounded-2xl border border-white/10 p-5 space-y-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between pb-2 border-b border-white/10">
-              <h3 className="font-headline font-bold text-sm text-text-primary">
-                Review Trade Preflight
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowOrderModal(false)}
-                className="text-text-muted hover:text-text-primary cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="p-3 bg-surface-base rounded-xl border border-white/5 space-y-2 text-xs">
-              <div className="flex justify-between">
-                <span className="text-text-muted">Symbol:</span>
-                <strong>{activeSetup.symbol}/USD ({activeSetup.direction})</strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-muted">Entry:</span>
-                <strong>${activeSetup.entry}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-muted">Stop Loss:</span>
-                <strong className="text-status-error">${formatPrice(activeSetup.stop)}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-muted">Take Profit:</span>
-                <strong className="text-primary-container">${formatPrice(activeSetup.target)}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-muted">Position:</span>
-                <strong>{formatCurrency(Number(positionAmount) || 0)} @ {positionLeverage}x</strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-muted">Est. Margin:</span>
-                <strong>{sizing ? formatCurrency(sizing.margin) : '—'}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-muted">Lose at Stop:</span>
-                <strong className="text-status-error">{sizing ? '-' + formatCurrency(sizing.loss) : '—'}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-muted">Make at Target:</span>
-                <strong className="text-primary-container">{sizing ? '+' + formatCurrency(sizing.gain) : '—'}</strong>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-text-muted">Risk / Reward:</span>
-                <strong>{sizing ? '1 : ' + sizing.rr.toFixed(2) : '—'}</strong>
-              </div>
-            </div>
-
-            <p className="text-[10px] text-amber-400">This sends a research setup to Hunter for review. No exchange order is placed.</p>
-            <button
-              type="button"
-              onClick={() => {
-                if (soundEnabled) playHudSound('trade');
-                if (onPlaceTrade) onPlaceTrade({ ...activeSetup, margin: Number(positionAmount) || 10, leverage: Number(positionLeverage) || 2 });
-                setShowOrderModal(false);
-              }}
-              className="w-full py-2.5 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-black font-bold text-xs shadow-[0_0_12px_rgba(0,210,255,0.35)] cursor-pointer"
-            >
-              Send Setup to Hunter
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
