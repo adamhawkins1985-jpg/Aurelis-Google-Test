@@ -2061,7 +2061,10 @@ function registerMarketAndBotRoutes(app:Express) {
         asset,pair:pairName,direction:direction as 'LONG'|'SHORT',
         setupEntry:entry,stop,target,bid,ask,leverage,
         allowedLeverages:permitted,
-        marketStatus:String(pair.status||'')
+        marketStatus:String(pair.status||''),
+        minimumBase:Number(pair.ordermin||0),
+        minimumCost:Number(pair.costmin||0),
+        lotDecimals:Number(pair.lot_decimals??8)
       });
       return sendNoStore(res,{
         ok:true,compatible:result.ok,code:result.code,reason:result.message,
