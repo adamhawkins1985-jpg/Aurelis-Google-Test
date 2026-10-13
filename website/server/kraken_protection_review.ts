@@ -74,6 +74,9 @@ export function assessKrakenMarginHandoff(p:{
   leverage:number;
   allowedLeverages:number[];
   marketStatus?:string;
+  minimumBase?:number;
+  minimumCost?:number;
+  lotDecimals?:number;
 }):KrakenProtectionAssessment{
   if(!/:BTNL$/i.test(p.pair))
     return {ok:false,code:'market_outside_bracket',
@@ -91,6 +94,15 @@ export function assessKrakenMarginHandoff(p:{
     return {ok:false,code:'quote_unavailable',
       message:'Kraken '+p.pair+' '+(p.direction==='LONG'?'buy ask':'sell bid')+
         ' is unavailable. Hunter cannot verify this setup for a real execution market.'};
+  // Public exchange minimums: $10 is a hard ceiling, never resize upward.
+  const scale=10**Math.min(12,Math.max(0,Math.trunc(p.lotDecimals??8)));
+  const baseSize=Math.floor((10/executable)*scale)/scale;
+  const estimatedNotional=baseSize*executable;
+  if(!Number.isFinite(baseSize)||baseSize<=0||
+     (Number.isFinite(p.minimumBase)&&Number(p.minimumBase)>0&&baseSize<Number(p.minimumBase))||
+     (Number.isFinite(p.minimumCost)&&Number(p.minimumCost)>0&&estimatedNotional<Number(p.minimumCost)))
+    return {ok:false,code:'market_outside_bracket',
+      message:'Kraken '+p.pair+' does not meet its minimum order quantity or value at the $10 test limit. Select a different market; do not increase the order size.'};
   return assessKrakenProtection({
     direction:p.direction,
     proposedEntry:p.setupEntry,
