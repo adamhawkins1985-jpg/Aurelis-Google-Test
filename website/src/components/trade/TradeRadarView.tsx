@@ -76,7 +76,7 @@ export const TradeRadarView: React.FC<TradeRadarViewProps> = ({
   const [showWhyModal, setShowWhyModal] = useState<boolean>(false);
   const [showOrderModal, setShowOrderModal] = useState<boolean>(false);
   const [copiedNote, setCopiedNote] = useState<boolean>(false);
-  const [positionAmount, setPositionAmount] = useState('25');
+  const [positionAmount, setPositionAmount] = useState('10');
   const [positionLeverage, setPositionLeverage] = useState('2');
   const [supportedLeverage, setSupportedLeverage] = useState<number[]>([]);
 
@@ -665,7 +665,7 @@ Commentary: ${activeSetup.commentary}`;
               type="button"
               onClick={() => {
                 if (soundEnabled) playHudSound('trade');
-                if (onPlaceTrade) onPlaceTrade({ ...activeSetup, margin: Number(positionAmount) || 25, leverage: Number(positionLeverage) || 2 });
+                if (onPlaceTrade) onPlaceTrade({ ...activeSetup, margin: Number(positionAmount) || 10, leverage: Number(positionLeverage) || 2 });
                 setShowOrderModal(false);
               }}
               className="w-full py-2.5 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-black font-bold text-xs shadow-[0_0_12px_rgba(0,210,255,0.35)] cursor-pointer"
