@@ -4,6 +4,13 @@ import { playHudSound, formatCurrency } from '../../services/marketData';
 import { fetchKrakenFutures, fetchKrakenRadar, KrakenFutureTicker, KrakenRadarCandidate } from '../../services/krakenBots';
 import type { SetupCandidate } from './TradeRadarView';
 
+interface KrakenMarginHandoff {
+  ok:boolean;compatible:boolean;code:string;reason:string;
+  pair:string;executableQuote:number|null;quoteType:string;checkedAt:number;
+  eligibleExecutionVenue:boolean;supportsSelectedLeverage:boolean;
+}
+const formatMicroPrice=(v:number)=>'$'+v.toLocaleString('en-US',{maximumFractionDigits:12});
+
 interface HunterPerpsViewProps {
   soundEnabled: boolean;
   initialSetup?: SetupCandidate | null;
@@ -14,11 +21,15 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
   const [futures, setFutures] = useState<KrakenFutureTicker[]>([]);
   const [radar, setRadar] = useState<KrakenRadarCandidate[]>([]);
   const [selectedAsset, setSelectedAsset] = useState('BTC');
-  const [betAmount, setBetAmount] = useState('25');
+  const [betAmount, setBetAmount] = useState('10');
   const [leverage, setLeverage] = useState('2');
   const [supportedLeverage, setSupportedLeverage] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [marginHandoff,setMarginHandoff]=useState<KrakenMarginHandoff|null>(null);
+  const [marginHandoffBusy,setMarginHandoffBusy]=useState(false);
+  const [marginHandoffError,setMarginHandoffError]=useState('');
+  const [sendingToLiveBet,setSendingToLiveBet]=useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -44,12 +55,13 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
   useEffect(() => {
     if (!initialSetup) return;
     setSelectedAsset(initialSetup.symbol.toUpperCase());
-    setBetAmount(String(initialSetup.margin || 25));
-    setLeverage(String(initialSetup.leverage || 2));
+    // Test execution is capped to $10 notional and 2x. Hunter is not a futures order ticket.
+    setBetAmount('10');
+    setLeverage(String(Math.min(2,Math.max(1,Number(initialSetup.leverage)||2))));
   }, [initialSetup]);
 
   const ticker = useMemo(
-    () => futures.find((x) => x.asset === selectedAsset) || futures[0],
+    () => futures.find((x) => x.asset === selectedAsset) || null,
     [futures, selectedAsset]
   );
   const candidate = useMemo(
@@ -72,10 +84,9 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
         const data = await response.json();
         if (!active || !response.ok || !data?.ok) return;
         const allowed = (bias === 'SHORT' ? data.sell : data.buy)
-          .map(Number)
-          .filter((x: number) => Number.isFinite(x) && x > 0);
+          .map(Number).filter((x: number) => Number.isFinite(x) && x>=1 && x<=2);
         setSupportedLeverage(allowed);
-        if (allowed.length && !allowed.includes(Number(leverage))) setLeverage(String(allowed[0]));
+        if(allowed.length && !allowed.includes(Number(leverage)))setLeverage(String(allowed[0]));
       } catch {}
     };
     loadMarginInfo();
@@ -86,6 +97,43 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
   const target = Number(matchingSetup?.target || candidate?.target || (bias === 'LONG' ? mark * 1.03 : mark * 0.97));
   const stop = Number(matchingSetup?.stop || candidate?.invalidation || (bias === 'LONG' ? mark * 0.985 : mark * 1.015));
   const entry = Number(matchingSetup?.entry || candidate?.entry || mark);
+  // The public futures feed above is research; Live Bet executes on Kraken US BTNL margin.
+  // Never send a setup solely because futures price data is available.
+  const handoffQuery=matchingSetup ? new URLSearchParams({
+    direction:bias,entry:String(entry),stop:String(stop),target:String(target),
+    leverage:String(leverage)
+  }).toString() : '';
+  const handoffUrl=handoffQuery
+    ? '/api/bots/kraken-margin-handoff/'+encodeURIComponent(selectedAsset)+'?'+handoffQuery
+    : '';
+  const checkMarginHandoff=async():Promise<KrakenMarginHandoff|null>=>{
+    if(!handoffUrl)return null;
+    const response=await fetch(handoffUrl,{credentials:'same-origin',cache:'no-store'});
+    const data=await response.json();
+    if(!response.ok||data?.ok!==true)
+      throw new Error(data?.message||data?.error||'Kraken US Spot/Margin quote unavailable');
+    return data as KrakenMarginHandoff;
+  };
+  useEffect(()=>{
+    let active=true;
+    if(!handoffUrl){
+      setMarginHandoff(null);setMarginHandoffError('');setMarginHandoffBusy(false);
+      return;
+    }
+    const refresh=async()=>{
+      setMarginHandoffBusy(true);
+      try{
+        const next=await checkMarginHandoff();
+        if(active){setMarginHandoff(next);setMarginHandoffError('')}
+      }catch(e:any){
+        if(active){setMarginHandoff(null);setMarginHandoffError(e?.message||'Margin quote unavailable')}
+      }finally{if(active)setMarginHandoffBusy(false)}
+    };
+    setMarginHandoff(null);
+    void refresh();
+    const id=window.setInterval(refresh,25000);
+    return ()=>{active=false;window.clearInterval(id)};
+  },[handoffUrl]);
   const sizing = useMemo(() => {
     const position = Number(betAmount);
     const lev = Number(leverage);
@@ -97,22 +145,28 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
     return { position, margin: position / lev, loss, gain, stopPct: stopPct * 100, targetPct: targetPct * 100, rr: loss > 0 ? gain / loss : 0 };
   }, [betAmount, leverage, entry, stop, target]);
 
-  const sendToLiveBet = () => {
-    if (!matchingSetup || !onSendToLiveBet) return;
-    if (soundEnabled) playHudSound('trade');
-    const amount = Number(betAmount);
-    const lev = Number(leverage);
-    onSendToLiveBet({
-      ...matchingSetup,
-      symbol: selectedAsset.toUpperCase(),
-      name: selectedAsset.toUpperCase(),
-      direction: bias,
-      entry,
-      stop,
-      target,
-      margin: Number.isFinite(amount) && amount > 0 ? amount : matchingSetup.margin,
-      leverage: Number.isFinite(lev) && lev > 0 ? lev : 1,
-    });
+  const sendToLiveBet = async () => {
+    if(!matchingSetup||!onSendToLiveBet||sendingToLiveBet)return;
+    setSendingToLiveBet(true);
+    try{
+      // A fresh, side-specific Kraken margin quote is REQUIRED on every click.
+      const checked=await checkMarginHandoff();
+      setMarginHandoff(checked);
+      if(!checked?.compatible){
+        setMarginHandoffError(checked?.reason||'Kraken margin setup cannot be verified');
+        return;
+      }
+      setMarginHandoffError('');
+      if(soundEnabled)playHudSound('trade');
+      onSendToLiveBet({
+        ...matchingSetup,
+        symbol:selectedAsset.toUpperCase(),name:selectedAsset.toUpperCase(),
+        direction:bias,entry,stop,target,margin:10,leverage:Number(leverage)
+      });
+    }catch(error:any){
+      setMarginHandoff(null);
+      setMarginHandoffError(error?.message||'Kraken margin preflight failed');
+    }finally{setSendingToLiveBet(false)}
   };
 
   return (
@@ -153,11 +207,12 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
           </select>
           <div className="grid grid-cols-2 gap-2">
             <label className="text-[9px] text-text-muted">POSITION USD
-              <input value={betAmount} onChange={(e) => setBetAmount(e.target.value)} className="mt-1 w-full p-2 rounded-lg bg-surface-base border border-white/10 text-text-primary" />
+              <input value={betAmount} readOnly title="First Kraken Spot/Margin test is fixed at $10 notional"
+                className="mt-1 w-full p-2 rounded-lg bg-surface-base border border-white/10 text-text-primary" />
             </label>
             <label className="text-[9px] text-text-muted">LEVERAGE
               <select value={leverage} onChange={(e) => setLeverage(e.target.value)} className="mt-1 w-full p-2 rounded-lg bg-surface-base border border-white/10 text-text-primary">
-                {(supportedLeverage.length ? supportedLeverage.map(String) : ['2','3','4','5']).map((x) => <option key={x} value={x}>{x}x</option>)}
+                {(supportedLeverage.length ? supportedLeverage.map(String) : ['1','2']).map((x) => <option key={x} value={x}>{x}x</option>)}
               </select>
             </label>
           </div>
@@ -166,7 +221,7 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
         <div className="lg:col-span-8 p-4 rounded-2xl bg-surface-panel/95 border border-white/10 space-y-3">
           <div className="flex items-center justify-between">
             <div>
-              <div className="text-[10px] text-text-muted">PUBLIC KRAKEN PERPETUAL QUOTE</div>
+              <div className="text-[10px] text-text-muted">PUBLIC KRAKEN PERPETUAL QUOTE (RESEARCH ONLY)</div>
               <div className="text-xl font-headline font-bold">{selectedAsset} · {formatCurrency(mark)}</div>
             </div>
             <div className={`flex items-center gap-1 font-bold ${bias === 'LONG' ? 'text-emerald-400' : 'text-rose-400'}`}>
@@ -204,14 +259,31 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
             Research only: public Kraken futures quotes plus Kraken Trade Radar signals. The connected account shown above is Kraken SPOT, not a funded or authorized futures account. Live Bet is a separate Spot/Margin review.
           </div>
           {matchingSetup && onSendToLiveBet && (
-            <button
-              type="button"
-              onClick={sendToLiveBet}
-              className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold text-[11px] flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer"
-            >
-              <span>Send to Live Bet</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
+            <div className="space-y-2">
+              <div className="p-3 rounded-xl bg-surface-base border border-white/10 space-y-1.5 text-[10px]">
+                <div className="flex items-center justify-between gap-2">
+                  <strong>Kraken US Spot/Margin preflight (not futures)</strong>
+                  <button type="button" onClick={()=>void checkMarginHandoff().then(d=>{setMarginHandoff(d);setMarginHandoffError('')}).catch(e=>{setMarginHandoff(null);setMarginHandoffError(e?.message||'Quote unavailable')})}
+                    className="rounded border border-white/10 px-2 py-1" title="Recheck Kraken margin market">
+                    <RefreshCw className="w-3.5 h-3.5"/>
+                  </button>
+                </div>
+                {marginHandoff?.executableQuote!=null&&
+                  <div className="text-text-muted">{marginHandoff.pair} · {marginHandoff.quoteType} {formatMicroPrice(marginHandoff.executableQuote)} · checked {new Date(marginHandoff.checkedAt).toLocaleTimeString()}</div>}
+                {marginHandoffBusy && <div className="text-text-muted">Checking Kraken's execution market…</div>}
+                {!marginHandoffBusy && marginHandoff?.compatible &&
+                  <div className="text-primary-container">In-range setup. Kraken margin market and selected leverage checked. Final order review and owner validation still required.</div>}
+                {!marginHandoffBusy && marginHandoff&&!marginHandoff.compatible &&
+                  <div role="alert" className="text-amber-400">{marginHandoff.reason}</div>}
+                {marginHandoffError&&<div role="alert" className="text-amber-400">{marginHandoffError}</div>}
+              </div>
+              <button type="button" onClick={()=>void sendToLiveBet()}
+                disabled={!marginHandoff?.compatible||marginHandoffBusy||sendingToLiveBet}
+                className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold text-[11px] flex items-center justify-center gap-2 hover:brightness-110 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed">
+                <span>{sendingToLiveBet?'Rechecking Kraken margin quote…':marginHandoff?.compatible?'Send to Live Bet':'Kraken margin setup blocked'}</span>
+                <ArrowRight className="w-4 h-4"/>
+              </button>
+            </div>
           )}
         </div>
       </div>
