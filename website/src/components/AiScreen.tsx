@@ -296,8 +296,18 @@ export const AiScreen: React.FC<AiScreenProps> = ({
 
   const activeBotView = (
     <>
-      <div className="px-3 py-2.5 text-[10px] text-amber-300 bg-amber-400/5 border border-amber-400/15 rounded-lg">
-        {brokerRouteMessage[activeBotTab]}
+      <div className="rounded-lg border border-white/10 bg-surface-panel px-3 py-2 text-[11px]">
+        <span className="font-bold text-text-primary">
+          {activeBotTab === 'live' || activeBotTab === 'signals' ? 'Kraken Spot/Margin · Live orders locked' :
+           activeBotTab === 'hunter' ? 'Futures research → Kraken margin preflight' :
+           activeBotTab === 'arbitrage' ? 'Arbitrage · Paper only' :
+           activeBotTab === 'radar' || activeBotTab === 'scope' ? 'Signals only · No order submitted' :
+           'Broker preview · No automatic orders'}
+        </span>
+        <details className="mt-1 text-text-muted">
+          <summary className="cursor-pointer text-[10px]">Safety & venue details</summary>
+          <p className="mt-2 leading-relaxed">{brokerRouteMessage[activeBotTab]}</p>
+        </details>
       </div>
       {activeBotTab === 'radar' && (
         <TradeRadarView
@@ -396,13 +406,16 @@ export const AiScreen: React.FC<AiScreenProps> = ({
       </div>
 
       {(['radar','hunter','scope','live','signals','arbitrage'] as AiBotTab[]).includes(activeBotTab) && (
-        <BotExchangeBalances futuresResearch={activeBotTab==='hunter'}/>
-      )}
-      {(['radar','hunter','scope','live','signals'] as AiBotTab[]).includes(activeBotTab) && (
-        <BrokerOpenOrders/>
-      )}
-      {(['radar','hunter','scope','live','signals'] as AiBotTab[]).includes(activeBotTab) && (
-        <BotTestReadiness short/>
+        <details className="rounded-xl border border-white/10 bg-surface-panel/70 text-text-secondary text-[11px]">
+          <summary className="cursor-pointer px-3 py-2 font-bold">
+            Exchange status · balances, orders & test readiness
+          </summary>
+          <div className="space-y-2 p-2 pt-0">
+            <BotExchangeBalances futuresResearch={activeBotTab==='hunter'}/>
+            {activeBotTab !== 'arbitrage' && <BrokerOpenOrders/>}
+            {activeBotTab !== 'arbitrage' && <BotTestReadiness short/>}
+          </div>
+        </details>
       )}
 
       {/* ========================================================================= */}
