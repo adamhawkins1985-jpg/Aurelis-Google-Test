@@ -674,16 +674,12 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
         <div id="livebet-locked-review" className="p-4 rounded-2xl bg-surface-panel/95 border border-primary-container/30 space-y-3 overflow-hidden">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="w-4 h-4 text-primary-container" />
-            <strong>Locked Kraken Review</strong>
+            <strong>Kraken review · $10 test</strong>
           </div>
           <div className="grid grid-cols-2 gap-2 min-w-0">
             {[
-              ['Pair', preview.symbol],
-              ['Direction', preview.direction],
+              ['Bet', preview.symbol+' '+preview.direction],
               ['Position', '$' + preview.positionValueUsd],
-              ['Est. margin', '$' + preview.estimatedMarginUsd],
-              ['Kraken mark', '$' + preview.markPrice],
-              ['Quantity', preview.quantity],
               ['Stop', '$' + preview.stopLoss],
               ['Target', '$' + preview.takeProfit],
             ].map(([label, value]) => (
@@ -693,17 +689,29 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
               </div>
             ))}
           </div>
-          <div className="p-2.5 border border-amber-400/30 bg-amber-400/5 rounded-lg text-[10px] text-amber-300">
-            Kraken Spot/Margin entry preview, not Kraken U.S. perpetual futures.
-            Stop and target values are research estimates; no protective orders have been placed.
+          <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-2.5 text-[10px] font-semibold text-amber-300">
+            Kraken Spot/Margin · Stop requested after fill · Target NOT placed as an order.
           </div>
-          <div className="p-2.5 rounded-lg bg-amber-400/10 border border-amber-400/25 text-amber-300 text-[10px]">
-            This is a Kraken Spot/Margin market entry with a requested conditional stop-loss after fill.
-            The take-profit shown above is a planned level, not a live Kraken order.
-          </div>
+          <details className="text-[10px] text-text-muted">
+            <summary className="cursor-pointer">Full order details & risks</summary>
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              {[
+                ['Kraken quote', '$'+preview.markPrice],
+                ['Quantity', preview.quantity],
+                ['Est. margin', '$'+preview.estimatedMarginUsd],
+                ['Venue', 'Kraken Spot/Margin (not futures)'],
+              ].map(([label,value])=>(
+                <div key={label} className="rounded-lg bg-surface-base p-2">
+                  <div className="uppercase text-[9px]">{label}</div>
+                  <strong className="break-all text-text-primary">{String(value??'—')}</strong>
+                </div>
+              ))}
+            </div>
+            <p className="mt-2">No protective orders are active before entry. Validation does not verify a fill or stop activation. A separate manual position close can leave a conditional stop active.</p>
+          </details>
           <button type="button" onClick={validateKraken} disabled={busy||!token}
             className="w-full py-2.5 rounded-xl border border-primary-container/40 bg-primary-container/10 text-primary-container font-bold disabled:opacity-40">
-            VALIDATE WITH KRAKEN (NO TRADE)
+            Validate with Kraken · No trade
           </button>
           {validationStatus && <div role="status" className={krakenValidated?'text-primary-container text-[10px]':'text-amber-300 text-[10px]'}>{validationStatus}</div>}
           <button type="button" disabled={!executionEnabled||!krakenValidated||busy||!token}
@@ -712,17 +720,18 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
               void submitKraken();
             }}
             className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold disabled:opacity-40">
-            {executionEnabled?'APPROVE & EXECUTE ON KRAKEN':'KRAKEN EXECUTION TEMPORARILY LOCKED'}
+            {executionEnabled?'Approve real $10 order':'Live trading locked'}
           </button>
-          <div className="text-[10px] text-text-muted">{executionCapabilityMessage}</div>
+          <details className="text-[10px] text-text-muted">
+            <summary className="cursor-pointer">Execution status</summary>
+            <p className="mt-1">{executionCapabilityMessage}</p>
+          </details>
           {submitError && (
             <div className="p-2.5 rounded-lg bg-red-500/10 border border-red-500/25 text-red-300 text-[10px] break-words">
               Submission stopped: {submitError}
             </div>
           )}
-          <div className="text-[9px] text-text-muted text-center">
-            Submission sends a real Kraken margin order. Review must succeed before this button is enabled.
-          </div>
+          <p className="text-[9px] text-text-muted text-center">A real order requires fresh validation and your separate approval.</p>
         </div>
       )}
 
