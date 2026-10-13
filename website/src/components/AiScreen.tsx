@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Sparkles,
@@ -23,7 +23,7 @@ import { CoinData, Timeframe, NavigationTab } from '../types';
 import { playHudSound, formatCurrency } from '../services/marketData';
 
 // Bot Views
-import { TradeRadarView } from './trade/TradeRadarView';
+import { BotAutoScanView } from './trade/BotAutoScanView';
 import type { SetupCandidate } from './trade/TradeRadarView';
 import { HunterPerpsView } from './trade/HunterPerpsView';
 import { ScopeTradeHunterView } from './trade/ScopeTradeHunterView';
@@ -100,6 +100,7 @@ export const AiScreen: React.FC<AiScreenProps> = ({
   const [activeBotTab, setActiveBotTab] = useState<AiBotTab>('radar');
   const [isBotExpanded, setIsBotExpanded] = useState<boolean>(false);
   const [pendingTradeSetup, setPendingTradeSetup] = useState<SetupCandidate | null>(null);
+  const [autoScanEnabled, setAutoScanEnabled] = useState(true);
   useEffect(() => {
     if (!initialTradeAlert) return;
     setPendingTradeSetup(initialTradeAlert);
@@ -123,13 +124,20 @@ export const AiScreen: React.FC<AiScreenProps> = ({
   // 2. AI Chat Box Pop-up State
   const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
   const [isChatMaximized, setIsChatMaximized] = useState<boolean>(false);
+  const handleAutoBetReady = useCallback((setup: SetupCandidate) => {
+    // Stop this scan after one verified handoff. Never reopen the same bet automatically.
+    setAutoScanEnabled(false);
+    setPendingTradeSetup(setup);
+    setActiveBotTab('live');
+    setIsChatOpen(false);
+  }, []);
 
 
   // Friendly label of the currently displayed bot view
   const currentBotLabel = useMemo(() => {
     switch (activeBotTab) {
       case 'radar':
-        return 'Trade Radar';
+        return 'Auto Scan';
       case 'hunter':
         return 'Hunter Perps';
       case 'scope':
@@ -273,18 +281,20 @@ export const AiScreen: React.FC<AiScreenProps> = ({
   };
 
   const botTabs: { id: AiBotTab; label: string }[] = [
-    { id: 'radar', label: 'TRADE RADAR' },
-    { id: 'hunter', label: 'HUNTER PERPS' },
+    { id: 'radar', label: 'AUTO SCAN' },
+    { id: 'live', label: 'LIVE BET' },
+  ];
+  const advancedBotTabs: { id: AiBotTab; label: string }[] = [
+    { id: 'hunter', label: 'HUNTER RESEARCH' },
     { id: 'scope', label: 'SCOPE TRADE' },
     { id: 'dca', label: 'DCA' },
     { id: 'grid', label: 'GRID' },
     { id: 'arbitrage', label: 'ARBITRAGE' },
-    { id: 'live', label: 'LIVE BET' },
     { id: 'signals', label: 'SIGNAL DESK' },
   ];
 
   const brokerRouteMessage: Record<AiBotTab,string> = {
-    radar:'Kraken-backed trading signals with read-only account balances. Trade Radar → Hunter → Live Bet for review. No futures API order execution verified.',
+    radar:'Automated Kraken-backed scanning → Hunter market preflight → Live Bet manual review. Scanning and validation NEVER submit orders.',
     hunter:'Kraken public futures prices plus Trade Radar research. Kraken Spot balances are NOT perpetual-futures collateral. Only a reviewed proposal can advance to Live Bet.',
     scope:'Kraken market-data research and shortlist only. Balances are read-only. Scope Trade does not submit brokerage orders.',
     dca:'Target accounts: Kraken Spot and Coinbase Advanced. Account status and funding plan shown below.',
@@ -301,7 +311,8 @@ export const AiScreen: React.FC<AiScreenProps> = ({
           {activeBotTab === 'live' || activeBotTab === 'signals' ? 'Kraken Spot/Margin · Live orders locked' :
            activeBotTab === 'hunter' ? 'Futures research → Kraken margin preflight' :
            activeBotTab === 'arbitrage' ? 'Arbitrage · Paper only' :
-           activeBotTab === 'radar' || activeBotTab === 'scope' ? 'Signals only · No order submitted' :
+           activeBotTab === 'radar' ? 'Automatic scan and venue check · No order submitted' :
+            activeBotTab === 'scope' ? 'Signals only · No order submitted' :
            'Broker preview · No automatic orders'}
         </span>
         <details className="mt-1 text-text-muted">
@@ -310,14 +321,10 @@ export const AiScreen: React.FC<AiScreenProps> = ({
         </details>
       </div>
       {activeBotTab === 'radar' && (
-        <TradeRadarView
-          coins={coins}
-          soundEnabled={soundEnabled}
-          onPlaceTrade={(setup) => {
-            if (soundEnabled) playHudSound('switch');
-            setPendingTradeSetup(setup);
-            setActiveBotTab('hunter');
-          }}
+        <BotAutoScanView
+          enabled={autoScanEnabled}
+          onEnabledChange={setAutoScanEnabled}
+          onBetReady={handleAutoBetReady}
         />
       )}
       {activeBotTab === 'hunter' && (
@@ -402,7 +409,17 @@ export const AiScreen: React.FC<AiScreenProps> = ({
             );
           })}
         </div>
-
+        <details className="relative shrink-0 text-[10px] text-text-secondary">
+          <summary className="cursor-pointer rounded-lg border border-white/10 bg-surface-panel/80 px-2.5 py-1.5 font-bold">Other tools</summary>
+          <div className="absolute right-0 top-full z-30 mt-1 min-w-[170px] rounded-xl border border-white/10 bg-surface-panel p-1 shadow-xl">
+            {advancedBotTabs.map((tab) => (
+              <button type="button" key={tab.id} onClick={() => setActiveBotTab(tab.id)}
+                className="block w-full rounded-md px-3 py-2 text-left font-bold hover:bg-white/10">
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </details>
       </div>
 
       {(['radar','hunter','scope','live','signals','arbitrage'] as AiBotTab[]).includes(activeBotTab) && (

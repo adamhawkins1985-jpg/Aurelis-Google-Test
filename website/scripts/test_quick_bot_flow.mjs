@@ -5,6 +5,25 @@ const screen=readFileSync('src/components/AiScreen.tsx','utf8');
 const radar=readFileSync('src/components/trade/TradeRadarView.tsx','utf8');
 const hunter=readFileSync('src/components/trade/HunterPerpsView.tsx','utf8');
 const live=readFileSync('src/components/trade/LiveBetView.tsx','utf8');
+const auto=readFileSync('src/components/trade/BotAutoScanView.tsx','utf8');
+
+assert(screen.includes("{ id: 'radar', label: 'AUTO SCAN' }"), 'Auto Scan must be the primary bot entry');
+assert(screen.includes("{ id: 'live', label: 'LIVE BET' }"), 'Live Bet must remain one click away');
+assert(screen.includes('Other tools'), 'Other specialist bots must remain accessible in collapsed tools');
+assert(screen.includes('<BotAutoScanView'), 'Radar must use automated pipeline instead of manual Hunter navigation');
+assert(screen.includes('setAutoScanEnabled(false)'), 'Handoff pauses scanning so the user is not spammed with repeated bets');
+assert(screen.includes('setPendingTradeSetup(setup)') && screen.includes("setActiveBotTab('live')"),
+  'Auto-detected vetted setups must go directly to Live Bet');
+assert(auto.includes('/api/trade-radar?mode=all&limit=5&force=1'), 'Automatic search must use fresh ranked scanner candidates');
+assert(auto.includes('/api/bots/kraken-margin-handoff/'), 'Hunter executable quote and risk check must still run before Live Bet');
+assert(auto.includes('verdict?.compatible !== true'), 'Unverified venue compatibility must block the pipeline');
+assert(auto.includes('controller.abort()'), 'Pausing scanner must abort outstanding preflight requests');
+assert(auto.includes('riskPct > 0 && riskPct <= 5'), 'Maximum manual test stop-distance control must remain');
+assert(auto.includes('leverage = supported.includes(2) ? 2 : supported.includes(1) ? 1 : 0'),
+  'Auto scanner must respect exchange-supported leverage and the 2× test cap');
+assert(auto.includes('onBetReady(setup)'), 'Qualified bets automatically advance to human Live Bet review');
+assert(!auto.includes('/api/signal-desk/order/submit'), 'Auto scanner must never submit a real Kraken order');
+
 
 assert(screen.includes('<details className="rounded-xl border border-white/10 bg-surface-panel/70'), 'Exchange info should be collapsible');
 assert(screen.includes('Exchange status · balances, orders & test readiness'), 'Exchange status summary should remain available');

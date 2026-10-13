@@ -132,7 +132,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
     setValidationExpiresAt(null);
     setValidationStatus('');
     setKrakenReviewError('');
-    setStatus('Reviewed setup loaded from Hunter. Build the final order review before submission.');
+    setStatus('Verified setup loaded. Check the final Kraken order review before any submission.');
   }, [initialSetup]);
   const normalized = useMemo(() => {
     if (!trade) return null;
