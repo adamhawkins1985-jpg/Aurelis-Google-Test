@@ -192,7 +192,7 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
           <div>
             <div className="text-[9px] text-primary-container font-bold uppercase">Trade Radar setup copied into Hunter</div>
             <div className="text-[11px] text-text-primary mt-1">
-              {initialSetup.symbol} {initialSetup.direction} · Entry {formatCurrency(entry)} · Stop {formatCurrency(stop)} · Target {formatCurrency(target)}
+              {initialSetup.symbol} {initialSetup.direction} · Entry {formatMicroPrice(entry)} · Stop {formatMicroPrice(stop)} · Target {formatMicroPrice(target)}
             </div>
           </div>
           <span className="text-[10px] font-bold text-primary-container">${betAmount} @ {leverage}x</span>
@@ -222,7 +222,7 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
           <div className="flex items-center justify-between">
             <div>
               <div className="text-[10px] text-text-muted">PUBLIC KRAKEN PERPETUAL QUOTE (RESEARCH ONLY)</div>
-              <div className="text-xl font-headline font-bold">{selectedAsset} · {formatCurrency(mark)}</div>
+              <div className="text-xl font-headline font-bold">{selectedAsset} · {formatMicroPrice(mark)}</div>
             </div>
             <div className={`flex items-center gap-1 font-bold ${bias === 'LONG' ? 'text-emerald-400' : 'text-rose-400'}`}>
               {bias === 'LONG' ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
@@ -243,15 +243,15 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {[
-              ['Bid', ticker?.bid ? formatCurrency(ticker.bid) : '—'],
-              ['Ask', ticker?.ask ? formatCurrency(ticker.ask) : '—'],
+              ['Bid', ticker?.bid ? formatMicroPrice(ticker.bid) : '—'],
+              ['Ask', ticker?.ask ? formatMicroPrice(ticker.ask) : '—'],
               ['Funding', ticker ? ticker.fundingRate.toFixed(6) : '—'],
               ['Open Interest', ticker ? Number(ticker.openInterest).toLocaleString() : '—'],
               ['24h Change', ticker ? ticker.change24h.toFixed(2) + '%' : '—'],
               ['24h Volume', ticker ? '$' + Number(ticker.volumeQuote).toLocaleString(undefined,{notation:'compact',maximumFractionDigits:1}) : '—'],
-              ['Entry', entry ? formatCurrency(entry) : '—'],
-              ['Target', target ? formatCurrency(target) : '—'],
-              ['Stop', stop ? formatCurrency(stop) : '—'],
+              ['Entry', entry ? formatMicroPrice(entry) : '—'],
+              ['Target', target ? formatMicroPrice(target) : '—'],
+              ['Stop', stop ? formatMicroPrice(stop) : '—'],
             ].map(([k,v]) => <div key={k} className="p-2.5 rounded-lg bg-surface-base border border-white/5"><div className="text-[8.5px] text-text-muted uppercase">{k}</div><div className="font-bold mt-1">{v}</div></div>)}
           </div>
           <div className="p-3 rounded-xl bg-surface-base border border-white/5 text-[10.5px] text-text-secondary">
@@ -297,7 +297,7 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
               {futures.slice(0, 12).map((x) => (
                 <tr key={x.symbol} onClick={() => setSelectedAsset(x.asset)} className="border-b border-white/5 hover:bg-white/5 cursor-pointer">
                   <td className="py-2 font-bold">{x.asset}</td>
-                  <td className="text-right">{formatCurrency(x.markPrice)}</td>
+                  <td className="text-right">{formatMicroPrice(x.markPrice)}</td>
                   <td className="text-right">{x.fundingRate.toFixed(6)}</td>
                   <td className={`text-right ${x.change24h >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{x.change24h >= 0 ? '+' : ''}{x.change24h.toFixed(2)}%</td>
                   <td className="text-right">${Number(x.volumeQuote).toLocaleString(undefined,{notation:'compact',maximumFractionDigits:1})}</td>
