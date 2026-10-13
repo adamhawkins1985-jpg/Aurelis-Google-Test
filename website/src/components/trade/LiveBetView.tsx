@@ -99,7 +99,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
         const body=await response.json();
         if(active){
           setExecutionEnabled(Boolean(response.ok&&body?.enabled));
-          setExecutionCapabilityMessage(response.ok?(body?.enabled?'Kraken Spot/Margin manual approval available':'Kraken order submission locked until exchange validation'):(body?.error||'Auth required'));
+          setExecutionCapabilityMessage(response.ok?(body?.enabled?'Kraken Spot/Margin manual approval available':'Live order submission disabled by the server'):(body?.error||'Auth required'));
         }
       }catch{if(active){setExecutionEnabled(false);setExecutionCapabilityMessage('Execution capability cannot be verified')}}
     };
@@ -278,6 +278,9 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
     setBusy(true);
     setPreview(null);
     setToken('');
+    setKrakenValidated(false);
+    setValidationExpiresAt(null);
+    setValidationStatus('');
     setSubmitResult(null);
     setSubmitError('');
     try {
@@ -420,7 +423,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
         throw new Error('Exchange validation expired before the result was received');
       setKrakenValidated(true);
       setValidationExpiresAt(expiresAt);
-      setValidationStatus('KRAKEN VALIDATED. No order placed. Approval window expires shortly; real trading remains locked.');
+      setValidationStatus('Kraken validated this order without placing it. Approval expires shortly; live submission also requires server permission.');
     }catch(error:any){
       setKrakenValidated(false);
       setValidationStatus('Validation failed: '+(error?.message||'Unknown error')+'. No order requested.');
@@ -586,16 +589,21 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
       </details>
 
       {normalized && (
-        <div className="p-4 rounded-2xl bg-surface-panel/95 border border-white/10 space-y-3 overflow-hidden">
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 min-w-0">
+        <div className="p-3 sm:p-4 rounded-2xl bg-surface-panel/95 border border-white/10 space-y-3 overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-[9px] font-bold uppercase tracking-wider text-text-muted">One bet · One review</div>
+              <strong className="text-base text-text-primary">{normalized.asset} · {normalized.direction}</strong>
+            </div>
+            <span className="text-[10px] text-text-muted">{preview ? 'Kraken preview ready' : 'Awaiting Kraken preview'} · No trade placed</span>
+          </div>
+          <div className="grid grid-cols-3 gap-2 min-w-0">
             {[
-              ['Asset', normalized.asset || '—'],
-              ['Direction', normalized.direction || '—'],
               ['Entry', normalized.entry ? formatCurrency(normalized.entry) : 'Market'],
               ['Stop', normalized.stop ? formatCurrency(normalized.stop) : '—'],
-              ['Target', normalized.target ? formatCurrency(normalized.target) : '—'],
+              ['Target¹', normalized.target ? formatCurrency(normalized.target) : '—'],
             ].map(([label, value]) => (
-              <div key={label} className="min-w-0 p-2.5 rounded-lg bg-surface-base border border-white/5">
+              <div key={label} className="min-w-0 p-2 rounded-lg bg-surface-base border border-white/5">
                 <div className="text-[8.5px] text-text-muted uppercase">{label}</div>
                 <div className="font-bold mt-1 break-words">{value}</div>
               </div>
@@ -644,6 +652,10 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
             </div>
           )}
 
+          <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 p-2 text-[10px] text-text-secondary">
+            Stop requested only after the entry fills. ¹ Target NOT placed as an order.
+            Profit/loss figures are estimates, not guaranteed exits.
+          </div>
           {krakenReviewError && (
             <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-[11px] text-amber-300">
               <strong className="block mb-1">
@@ -657,10 +669,12 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
               </details>
             </div>
           )}
-          <button type="button" onClick={reviewKraken} disabled={busy}
-            className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold disabled:opacity-40">
-            Review $10 Kraken bet
-          </button>
+          {!preview && (
+            <button type="button" onClick={reviewKraken} disabled={busy}
+              className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold disabled:opacity-40">
+              Review $10 Kraken bet
+            </button>
+          )}
           <details className="text-[10px] text-text-muted">
             <summary className="cursor-pointer">Other research options</summary>
             <button type="button" onClick={reviewDex} disabled={busy}
@@ -668,30 +682,21 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
               DEX paper route (no trade)
             </button>
           </details>
-        </div>
-      )}
-      {preview && (
-        <div id="livebet-locked-review" className="p-4 rounded-2xl bg-surface-panel/95 border border-primary-container/30 space-y-3 overflow-hidden">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-primary-container" />
-            <strong>Kraken review · $10 test</strong>
-          </div>
-          <div className="grid grid-cols-2 gap-2 min-w-0">
-            {[
-              ['Bet', preview.symbol+' '+preview.direction],
-              ['Position', '$' + preview.positionValueUsd],
-              ['Stop', '$' + preview.stopLoss],
-              ['Target', '$' + preview.takeProfit],
-            ].map(([label, value]) => (
-              <div key={label} className="min-w-0 p-2 rounded-lg bg-surface-base border border-white/5">
-                <div className="text-[8.5px] text-text-muted uppercase">{label}</div>
-                <div className="font-bold mt-1 break-all">{String(value ?? '—')}</div>
+          {preview && (
+          <div id="livebet-locked-review" className="border-t border-white/15 pt-3 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-primary-container" />
+                <strong>Kraken preview · $10 test</strong>
               </div>
-            ))}
-          </div>
-          <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 p-2.5 text-[10px] font-semibold text-amber-300">
-            Kraken Spot/Margin · Stop requested after fill · Target NOT placed as an order.
-          </div>
+              <button type="button" onClick={reviewKraken} disabled={busy}
+                className="rounded-lg px-2 py-1 border border-white/15 text-[10px] text-text-secondary disabled:opacity-40">
+                Refresh quote
+              </button>
+            </div>
+            <div className="rounded-lg border border-white/10 bg-surface-base p-2 text-[10px] text-text-secondary">
+              {preview.symbol} · Kraken entry quote ${preview.markPrice} · {preview.positionValueUsd} USD · Est. margin ${preview.estimatedMarginUsd}
+            </div>
           <details className="text-[10px] text-text-muted">
             <summary className="cursor-pointer">Full order details & risks</summary>
             <div className="grid grid-cols-2 gap-2 mt-2">
@@ -731,7 +736,9 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
               Submission stopped: {submitError}
             </div>
           )}
-          <p className="text-[9px] text-text-muted text-center">A real order requires fresh validation and your separate approval.</p>
+          <p className="text-[9px] text-text-muted text-center">A real order requires a fresh validation, server permission and your separate approval.</p>
+          </div>
+          )}
         </div>
       )}
 

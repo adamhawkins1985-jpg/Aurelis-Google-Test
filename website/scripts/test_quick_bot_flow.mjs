@@ -59,6 +59,13 @@ assert(live.includes("key={normalized?'loaded-setup':'no-setup'} open={!normaliz
 assert(live.includes('liveStatus.positions.length||liveStatus.orders.length'),
   'Open-position management must remain visible whenever live orders or positions exist');
 assert(live.includes('Review $10 Kraken bet'),'Kraken review button must stay available');
+assert(live.includes('One bet · One review'), 'Live Bet must show one unified setup/review card');
+assert(live.includes('className="border-t border-white/15 pt-3 space-y-3"'), 'Kraken preview must render inside the existing setup card');
+assert(!live.includes("['Bet', preview.symbol+' '+preview.direction]"), 'Do not render a second copy of the bet, position, stop, and target');
+assert(live.includes('{!preview && (') && live.includes('{preview && ('), 'Only the relevant next action should show at each review stage');
+assert(live.includes('Stop requested only after the entry fills'), 'The conditional stop timing must remain visible even before validation');
+assert(live.includes('Refresh quote'), 'Users must be able to refresh a stale preview without navigating away');
+
 assert(live.includes('Validate with Kraken · No trade'),'Kraken no-order validation remains explicit');
 assert(live.includes('Target NOT placed as an order'),'Unplaced take-profit disclosure must be visible');
 assert(live.includes("!executionEnabled||!krakenValidated||busy||!token"),
