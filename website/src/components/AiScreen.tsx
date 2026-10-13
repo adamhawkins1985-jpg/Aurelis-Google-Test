@@ -318,6 +318,10 @@ export const AiScreen: React.FC<AiScreenProps> = ({
             setPendingTradeSetup(setup);
             setActiveBotTab('live');
           }}
+          onReturnToRadar={() => {
+            setPendingTradeSetup(null);
+            setActiveBotTab('radar');
+          }}
         />
       )}
       {activeBotTab === 'scope' && <ScopeTradeHunterView soundEnabled={soundEnabled}
