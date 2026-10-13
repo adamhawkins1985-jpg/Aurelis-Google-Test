@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { getAddress, verifyMessage } from 'ethers';
+import { assessKrakenProtection, krakenExecutablePrice } from './kraken_protection_review';
 
 const APP_ROOT = path.resolve(process.cwd());
 const DATA_DIR = path.join(APP_ROOT, 'data');
@@ -1374,15 +1375,24 @@ async function prepareKrakenOrder(payload:any) {
   const asset=String(payload?.asset||payload?.symbol||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
   const direction=String(payload?.direction||'').toUpperCase();
   const amount=Number(payload?.amount), leverage=Number(payload?.leverage), stop=Number(payload?.stopLoss), target=Number(payload?.takeProfit);
+  // A Hunter entry is a research quote. Compare against the appropriate Kraken ask/bid.
+  const proposedEntry=Number(payload?.setupEntry||payload?.entry||0);
   if(!asset) throw new Error('invalid_asset');
   if(!['LONG','SHORT'].includes(direction)) throw new Error('invalid_direction');
   if(![amount,leverage,stop,target].every(x=>Number.isFinite(x)&&x>0)) throw new Error('invalid_order_values');
-  const {mark,pair}=await krakenTicker(asset);
+  const market=await krakenTicker(asset);
+  const {pair}=market;
+  const mark=krakenExecutablePrice(market,direction as 'LONG'|'SHORT');
+  if(!Number.isFinite(mark)||mark<=0) throw new Error('kraken_live_margin_quote_unavailable');
   const buys=(pair.leverage_buy||[]).map(Number), sells=(pair.leverage_sell||[]).map(Number);
   const allowed=direction==='LONG'?buys:sells;
   if(!allowed.includes(leverage)) throw new Error('kraken_leverage_not_supported');
-  if(direction==='LONG' && !(stop<mark && mark<target)) throw new Error('invalid_long_protection');
-  if(direction==='SHORT' && !(target<mark && mark<stop)) throw new Error('invalid_short_protection');
+  // Reject stale setups; never silently move stop-loss or take-profit levels.
+  const protection=assessKrakenProtection({
+    direction:direction as 'LONG'|'SHORT',proposedEntry,liveQuote:mark,
+    stop,target,pair:String(pair.altname||asset)
+  });
+  if(!protection.ok)throw new Error(protection.message);
   const maxNotional=Number(process.env.AURELIS_KRAKEN_MAX_NOTIONAL_USD||1000);
   const maxLev=Number(process.env.AURELIS_KRAKEN_MAX_LEVERAGE||10);
   // Manual test limits, independent of deployment flags.
@@ -1411,6 +1421,7 @@ async function prepareKrakenOrder(payload:any) {
   const preview={
     symbol:pair.altname, pairId:pair.pairId, asset,direction,markPrice:String(mark),
     positionValueUsd:String(amount),estimatedMarginUsd:String(margin),freeMarginUsd:String(free),
+    quoteSource:direction==='LONG'?'Kraken BTNL buy ask':'Kraken BTNL sell bid',
     quantity,leverage:String(Math.trunc(leverage)),stopLoss:stop.toFixed(pairDecimals),
     takeProfit:target.toFixed(pairDecimals),orderMinimum:pair.ordermin||null,
     exchangeMinimumCost:pair.costmin||null,estimatedEntryNotionalUsd:estimatedCost.toFixed(2),
@@ -1462,7 +1473,7 @@ async function validateKrakenPreparedOrder(payload:any){
   item.validatedAt=undefined;
   try{
     const order=krakenProtectedOrderPayload(item);
-    const mark=Number((await krakenTicker(item.preview.asset)).mark);
+    const mark=krakenExecutablePrice(await krakenTicker(item.preview.asset),item.preview.direction);
     const original=Number(item.preview.markPrice);
     if(!Number.isFinite(mark)||!Number.isFinite(original)||original<=0 ||
        Math.abs(mark/original-1)*100>1)
@@ -1516,7 +1527,7 @@ async function submitKrakenOrder(payload:any) {
     Number(p.conditionalClose.triggerPrice)<=0) throw new Error('conditional_stop_missing');
   // A fresh market price check prevents execution after a stale recommendation.
   const current=await krakenTicker(p.asset);
-  const newMark=Number(current?.mark);
+  const newMark=krakenExecutablePrice(current,p.direction);
   const oldMark=Number(p.markPrice);
   const maxDrift=Number(process.env.AURELIS_KRAKEN_MAX_MARK_DRIFT_PCT||1.0);
   if(!Number.isFinite(newMark)||!Number.isFinite(oldMark)||oldMark<=0 ||

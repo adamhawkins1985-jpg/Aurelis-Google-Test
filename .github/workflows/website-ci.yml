@@ -48,6 +48,7 @@ jobs:
           # modules removed from the currently deployed website.
           # Validate the CURRENT app and manual-execution safety controls.
           node scripts/test_kraken_manual_cap.mjs
+          npx tsx scripts/test_kraken_protection_review.ts
           npx tsc --noEmit -p tsconfig.app-ci.json
           npm run build
       - name: Store verified build artifact

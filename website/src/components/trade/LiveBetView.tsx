@@ -88,6 +88,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
   },[validationExpiresAt]);
   const [submitResult, setSubmitResult] = useState<any | null>(null);
   const [submitError, setSubmitError] = useState('');
+  const [krakenReviewError,setKrakenReviewError]=useState('');
   const [executionEnabled,setExecutionEnabled]=useState(false);
   const [executionCapabilityMessage,setExecutionCapabilityMessage]=useState('Checking execution safeguards…');
   useEffect(()=>{
@@ -130,6 +131,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
     setKrakenValidated(false);
     setValidationExpiresAt(null);
     setValidationStatus('');
+    setKrakenReviewError('');
     setStatus('Reviewed setup loaded from Hunter. Build the final order review before submission.');
   }, [initialSetup]);
   const normalized = useMemo(() => {
@@ -360,6 +362,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
     setValidationStatus('');
     setSubmitResult(null);
     setSubmitError('');
+    setKrakenReviewError('');
     try {
       const response = await fetch('/api/signal-desk/order/prepare', {
         method: 'POST',
@@ -373,6 +376,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
           leverage: Number(leverage),
           stopLoss: normalized.stop,
           takeProfit: normalized.target,
+          setupEntry: normalized.entry,
           signal: { source: 'live_bet_import' },
         }),
       });
@@ -386,6 +390,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
       if (soundEnabled) playHudSound('trade');
     } catch (error: any) {
       setPreview(null);
+      setKrakenReviewError(error?.message || 'Kraken review failed.');
       setStatus(error?.message || 'Kraken review failed.');
     } finally {
       setBusy(false);
@@ -630,6 +635,12 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
             </div>
           )}
 
+          {krakenReviewError && (
+            <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-[11px] text-amber-300 leading-relaxed">
+              <strong className="block mb-1">KRAKEN REVIEW BLOCKED · NO ORDER PLACED</strong>
+              {krakenReviewError}
+            </div>
+          )}
           <button type="button" onClick={reviewKraken} disabled={busy}
             className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold disabled:opacity-40">
             REVIEW KRAKEN $10 SPOT/MARGIN TEST
