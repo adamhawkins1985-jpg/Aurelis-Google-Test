@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { getAddress, verifyMessage } from 'ethers';
-import { assessKrakenProtection, krakenExecutablePrice } from './kraken_protection_review';
+import { assessKrakenProtection, assessKrakenMarginHandoff, krakenExecutablePrice } from './kraken_protection_review';
 
 const APP_ROOT = path.resolve(process.cwd());
 const DATA_DIR = path.join(APP_ROOT, 'data');
@@ -2035,6 +2035,53 @@ function registerMarketAndBotRoutes(app:Express) {
       provider:info.accounts[venue].name,canSubmit:false,orderSubmitted:false,
       reason:'order_execution_not_yet_verified',mode:'preview_only',
       note:'No order sent. Grid requires live fill tracking, cancellation, and risk controls before enabling.'});
+  });
+
+  // Public, read-only market compatibility gate for Hunter -> Live Bet.
+  // Does NOT query private balances, create a review token or place an order.
+  app.get('/api/bots/kraken-margin-handoff/:asset', async(req,res)=>{
+    const asset=String(req.params.asset||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+    const direction=String(req.query.direction||'').toUpperCase();
+    const entry=Number(req.query.entry),stop=Number(req.query.stop),
+      target=Number(req.query.target),leverage=Number(req.query.leverage);
+    if(!/^[A-Z0-9]{2,15}$/.test(asset)||!['LONG','SHORT'].includes(direction)||
+       ![entry,stop,target,leverage].every(v=>Number.isFinite(v)&&v>0)||
+       leverage>2||leverage<1)
+      return sendNoStore(res,{ok:false,compatible:false,
+        error:'invalid_hunter_margin_handoff_values'},400);
+    try{
+      const market=await krakenTicker(asset);
+      const pair=market.pair||{};
+      const pairName=String(pair.altname||pair.pairId||'');
+      const allowed=(direction==='LONG'?pair.leverage_buy:pair.leverage_sell)||[];
+      const permitted=allowed.map(Number).filter((x:number)=>Number.isFinite(x)&&x>0);
+      // No ticker last-trade fallback. Real market entries require a live side quote.
+      const bid=Number(market.ticker?.b?.[0]),ask=Number(market.ticker?.a?.[0]);
+      const result=assessKrakenMarginHandoff({
+        asset,pair:pairName,direction:direction as 'LONG'|'SHORT',
+        setupEntry:entry,stop,target,bid,ask,leverage,
+        allowedLeverages:permitted,
+        marketStatus:String(pair.status||'')
+      });
+      return sendNoStore(res,{
+        ok:true,compatible:result.ok,code:result.code,reason:result.message,
+        asset,pair:pairName,direction,venue:'Kraken US Spot/Margin BTNL',
+        bid:Number.isFinite(bid)&&bid>0?bid:null,
+        ask:Number.isFinite(ask)&&ask>0?ask:null,
+        executableQuote:direction==='LONG'?(ask>0?ask:null):(bid>0?bid:null),
+        quoteType:direction==='LONG'?'buy ask':'sell bid',
+        proposedEntry:entry,stop,target,leverage,
+        marketStatus:String(pair.status||'unknown'),checkedAt:Date.now(),
+        eligibleExecutionVenue:/:BTNL$/i.test(pairName),
+        supportsSelectedLeverage:permitted.includes(leverage),
+        source:'kraken_public_market_data_only',
+        orderPlaced:false
+      });
+    }catch(_error){
+      return sendNoStore(res,{ok:false,compatible:false,
+        error:'kraken_us_margin_handoff_quote_unavailable',
+        message:'Kraken U.S. Spot/Margin quote could not be checked. No trade was sent.'},502);
+    }
   });
 
   app.get('/api/trade-radar', async (req,res)=>{
