@@ -475,14 +475,18 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
 
   return (
     <div className="space-y-3 font-mono text-xs text-text-primary">
-      <div className="p-4 rounded-2xl bg-surface-panel/95 border border-white/10">
-        <div className="text-[10px] text-primary-container font-bold tracking-widest">AURELIS LIVE BET</div>
-        <div className="text-lg font-headline font-bold mt-1">Screenshot → Kraken Trade</div>
-        <div className="text-[10.5px] text-text-muted mt-1">
-          Drop a bet screenshot, let AURELIS reconstruct it, then review the real Kraken order before submission.
-        </div>
+      <div className="px-3 py-2.5 rounded-xl bg-surface-panel/95 border border-white/10 flex flex-wrap gap-2 items-center justify-between">
+        <strong className="text-sm text-text-primary">
+          {normalized ? normalized.asset+' '+normalized.direction+' · Kraken review' : 'Live Bet · Kraken Spot/Margin'}
+        </strong>
+        <span className="text-[10px] text-text-muted">{normalized ? 'Review → Validate (no trade)' : 'Load a bet to review'}</span>
       </div>
 
+      <details key={normalized?'loaded-setup':'no-setup'} open={!normalized}
+        className="rounded-xl border border-white/10 bg-surface-panel/75 p-2 text-[10px]">
+        <summary className="cursor-pointer text-text-secondary font-bold">
+          {normalized?'Use a screenshot instead':'Upload a bet screenshot'}
+        </summary>
       <div
         onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
         onDragLeave={() => setDragging(false)}
@@ -502,21 +506,26 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
         {imageUrl ? (
           <img src={imageUrl} alt="Bet screenshot" className="mx-auto max-h-52 max-w-full rounded-xl object-contain" />
         ) : (
-          <div className="py-8">
+          <div className="py-4">
             <ImagePlus className="w-8 h-8 mx-auto text-primary-container mb-2" />
             <div className="font-bold">Drop bet screenshot here</div>
             <div className="text-[10px] text-text-muted mt-1">or tap to choose an image</div>
           </div>
         )}
       </div>
-      <div className="p-3 rounded-xl bg-surface-panel/95 border border-white/10">
+      <div className="p-2 rounded-lg bg-surface-base/60 mt-2">
         <div className="flex items-center gap-2 text-[10px]">
           {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin text-primary-container" /> : <ShieldCheck className="w-3.5 h-3.5 text-primary-container" />}
           <span className="break-words min-w-0">{status}</span>
         </div>
       </div>
+      </details>
 
-      <div className="p-3 rounded-2xl bg-surface-panel/95 border border-white/10 space-y-2">
+      <details open={Boolean(liveStatus.positions.length||liveStatus.orders.length)}
+        className="p-3 rounded-xl bg-surface-panel/95 border border-white/10 space-y-2">
+        <summary className="cursor-pointer text-[10px] font-bold text-text-secondary">
+          Kraken status · {liveStatusError?'Unavailable':liveStatus.positions.length+' positions · '+liveStatus.orders.length+' orders'}
+        </summary>
         <div className="flex items-center justify-between gap-2">
           <div>
             <div className="text-[9px] text-primary-container font-bold uppercase tracking-wider">Kraken Live Status</div>
@@ -574,7 +583,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
             </div>
           </>
         )}
-      </div>
+      </details>
 
       {normalized && (
         <div className="p-4 rounded-2xl bg-surface-panel/95 border border-white/10 space-y-3 overflow-hidden">
@@ -597,8 +606,8 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
               POSITION USD
               <input
                 value={amount}
-                onChange={(e) => { setAmount(e.target.value); setPreview(null); setToken(''); setKrakenValidated(false); setValidationExpiresAt(null); }}
-                inputMode="decimal"
+                readOnly
+                title="First Kraken test is capped at $10 total notional"
                 className="mt-1 w-full min-w-0 p-2 rounded-lg bg-surface-base border border-white/10 text-text-primary"
               />
             </label>
@@ -609,7 +618,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
                 onChange={(e) => { setLeverage(e.target.value); setPreview(null); setToken(''); setKrakenValidated(false); setValidationExpiresAt(null); }}
                 className="mt-1 w-full min-w-0 p-2 rounded-lg bg-surface-base border border-white/10 text-text-primary"
               >
-                {(supportedLeverage.length ? supportedLeverage : [2,3,4,5]).map((x) => <option key={x} value={String(x)}>{x}x</option>)}
+                {(supportedLeverage.filter((x:number)=>x>=1&&x<=2).length ? supportedLeverage.filter((x:number)=>x>=1&&x<=2) : [1,2]).map((x) => <option key={x} value={String(x)}>{x}x</option>)}
               </select>
             </label>
           </div>
@@ -636,19 +645,29 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
           )}
 
           {krakenReviewError && (
-            <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-[11px] text-amber-300 leading-relaxed">
-              <strong className="block mb-1">KRAKEN REVIEW BLOCKED · NO ORDER PLACED</strong>
-              {krakenReviewError}
+            <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-[11px] text-amber-300">
+              <strong className="block mb-1">
+                {krakenReviewError.includes('at/below its stop')?'Price below stop · New bet needed' :
+                 krakenReviewError.includes('at/above its target')?'Price beyond target · New bet needed' :
+                 'Kraken review blocked · No order placed'}
+              </strong>
+              <details>
+                <summary className="cursor-pointer text-[10px]">Why was it blocked?</summary>
+                <p className="mt-2 break-words leading-relaxed">{krakenReviewError}</p>
+              </details>
             </div>
-          )}
+          )
           <button type="button" onClick={reviewKraken} disabled={busy}
             className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold disabled:opacity-40">
-            REVIEW KRAKEN $10 SPOT/MARGIN TEST
+            Review $10 Kraken bet
           </button>
-          <button type="button" onClick={reviewDex} disabled={busy}
-            className="w-full py-2 rounded-xl border border-white/10 text-text-secondary font-bold disabled:opacity-40">
-            DEX PAPER ROUTE (RESEARCH ONLY)
-          </button>
+          <details className="text-[10px] text-text-muted">
+            <summary className="cursor-pointer">Other research options</summary>
+            <button type="button" onClick={reviewDex} disabled={busy}
+              className="w-full mt-2 py-2 rounded-xl border border-white/10 text-text-secondary font-bold disabled:opacity-40">
+              DEX paper route (no trade)
+            </button>
+          </details>
         </div>
       )}
       {preview && (
