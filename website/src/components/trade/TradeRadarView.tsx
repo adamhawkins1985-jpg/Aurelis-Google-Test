@@ -49,6 +49,17 @@ export interface SetupCandidate {
   qualified?: boolean;
 }
 
+interface RadarKrakenMarketCheck {
+  ok: boolean;
+  compatible: boolean;
+  code: string;
+  reason: string;
+  pair: string;
+  quoteType: string;
+  executableQuote: number | null;
+  checkedAt: number;
+}
+
 interface TradeRadarViewProps {
   coins: CoinData[];
   soundEnabled: boolean;
@@ -78,6 +89,10 @@ export const TradeRadarView: React.FC<TradeRadarViewProps> = ({
   const [positionAmount, setPositionAmount] = useState('10');
   const [positionLeverage, setPositionLeverage] = useState('2');
   const [supportedLeverage, setSupportedLeverage] = useState<number[]>([]);
+  const [marketCheck, setMarketCheck] = useState<{ url: string; data: RadarKrakenMarketCheck } | null>(null);
+  const [marketCheckError, setMarketCheckError] = useState('');
+  const [marketChecking, setMarketChecking] = useState(false);
+  const [continueBusy, setContinueBusy] = useState(false);
 
   const mapCandidate = useCallback((candidate: any, index: number): SetupCandidate => {
     const econ = candidate?.economics || {};
@@ -193,6 +208,76 @@ export const TradeRadarView: React.FC<TradeRadarViewProps> = ({
     load();
     return () => { active = false; };
   }, [activeSetup?.symbol, activeSetup?.direction]);
+
+
+  // Trade Radar's signal feed is not necessarily the Kraken US execution market.
+  // Check the actual side-specific BTNL ask/bid before labeling a market bet ready.
+  // The original entry, stop and target remain untouched.
+  const venueUrl = useMemo(() => {
+    if (!activeSetup?.qualified) return '';
+    if (![activeSetup.entry, activeSetup.stop, activeSetup.target].every((n) => Number.isFinite(n) && n > 0)) return '';
+    const leverage = Math.min(2, Math.max(1, Number(positionLeverage) || 2));
+    const query = new URLSearchParams({
+      direction: activeSetup.direction,
+      entry: String(activeSetup.entry),
+      stop: String(activeSetup.stop),
+      target: String(activeSetup.target),
+      leverage: String(leverage),
+    });
+    return '/api/bots/kraken-margin-handoff/' + encodeURIComponent(activeSetup.symbol) + '?' + query;
+  }, [activeSetup?.qualified, activeSetup?.symbol, activeSetup?.direction, activeSetup?.entry, activeSetup?.stop, activeSetup?.target, positionLeverage]);
+
+  const readKrakenMarketCheck = useCallback(async (): Promise<RadarKrakenMarketCheck> => {
+    if (!venueUrl) throw new Error('No qualified setup to check');
+    const response = await fetch(venueUrl, { credentials: 'same-origin', cache: 'no-store' });
+    const body = await response.json();
+    if (!response.ok || body?.ok !== true) throw new Error(body?.message || body?.error || 'Kraken market quote unavailable');
+    return body as RadarKrakenMarketCheck;
+  }, [venueUrl]);
+
+  useEffect(() => {
+    let active = true;
+    setMarketCheck(null);
+    setMarketCheckError('');
+    if (!venueUrl) { setMarketChecking(false); return; }
+    const refresh = async () => {
+      if (!active) return;
+      setMarketChecking(true);
+      try {
+        const data = await readKrakenMarketCheck();
+        if (active) { setMarketCheck({ url: venueUrl, data }); setMarketCheckError(''); }
+      } catch (e: any) {
+        if (active) { setMarketCheck(null); setMarketCheckError(e?.message || 'Kraken quote unavailable'); }
+      } finally {
+        if (active) setMarketChecking(false);
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 25000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [venueUrl, readKrakenMarketCheck]);
+
+  const currentKrakenCheck = marketCheck?.url === venueUrl ? marketCheck.data : null;
+  const krakenReady = Boolean(activeSetup?.qualified && currentKrakenCheck?.compatible && !marketChecking && !marketCheckError && !continueBusy);
+
+  const handleContinueToHunter = async () => {
+    if (!activeSetup?.qualified || !krakenReady || !onPlaceTrade) return;
+    setContinueBusy(true);
+    try {
+      // Recheck at the moment of the handoff. Hunter repeats the check too.
+      const data = await readKrakenMarketCheck();
+      setMarketCheck({ url: venueUrl, data });
+      if (!data.compatible) return;
+      if (soundEnabled) playHudSound('trade');
+      onPlaceTrade?.({ ...activeSetup, margin: 10,
+        leverage: Math.min(2, Math.max(1, Number(positionLeverage) || 2)) });
+    } catch (e: any) {
+      setMarketCheck(null);
+      setMarketCheckError(e?.message || 'Kraken quote unavailable');
+    } finally {
+      setContinueBusy(false);
+    }
+  };
 
   const sizing = useMemo(() => {
     if (!activeSetup) return null;
@@ -396,23 +481,43 @@ Commentary: ${activeSetup.commentary}`;
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  if (!activeSetup.qualified) return;
-                  if (soundEnabled) playHudSound('trade');
-                  // Research-only handoff. Hunter performs its own live Kraken margin check.
-                  onPlaceTrade?.({ ...activeSetup, margin: 10,
-                    leverage: Math.min(2, Math.max(1, Number(positionLeverage)||2)) });
-                }}
-                disabled={!activeSetup.qualified}
+                onClick={() => void handleContinueToHunter()}
+                disabled={!krakenReady}
                 className={`px-3.5 py-1.5 rounded-full font-bold text-[10.5px] transition-all ${
-                  activeSetup.qualified
+                  krakenReady
                     ? 'bg-cyan-400 hover:bg-cyan-300 text-black shadow-[0_0_10px_rgba(0,210,255,0.3)] cursor-pointer'
                     : 'bg-white/5 text-text-muted border border-white/10 cursor-not-allowed'
                 }`}
               >
-                {activeSetup.qualified ? 'Continue to Hunter' : 'No trade'}
+                {!activeSetup.qualified ? 'No trade' : continueBusy ? 'Rechecking Kraken…' : marketChecking || !currentKrakenCheck && !marketCheckError ? 'Checking Kraken…' : krakenReady ? 'Continue to Hunter' : 'Not a Kraken market entry'}
               </button>
             </div>
+            {activeSetup.qualified && (
+              <div className="mt-2 rounded-lg border border-white/10 bg-surface-base/80 px-3 py-2 text-[10px] text-text-secondary space-y-1">
+                <div className="font-bold text-text-primary">Kraken Spot/Margin price check</div>
+                {currentKrakenCheck?.executableQuote != null && (
+                  <div>
+                    Kraken {currentKrakenCheck.quoteType}: ${formatPrice(currentKrakenCheck.executableQuote)} · Radar entry: ${formatPrice(activeSetup.entry)}
+                    {' · '}
+                    {Math.abs((activeSetup.entry - currentKrakenCheck.executableQuote) / currentKrakenCheck.executableQuote * 100).toFixed(2)}% apart
+                  </div>
+                )}
+                {krakenReady && <div className="text-emerald-400 font-bold">Current Kraken market price fits the bet</div>}
+                {marketChecking && <div>Checking the executable Kraken price…</div>}
+                {!marketChecking && currentKrakenCheck && !currentKrakenCheck.compatible && (
+                  <div role="status" className="text-amber-400">
+                    {currentKrakenCheck.code === 'market_outside_bracket' && /at\/(?:below|above) its (?:stop|target)/.test(currentKrakenCheck.reason)
+                      ? 'Radar price levels do not fit Kraken spot right now. Rescan for a fresh market entry.'
+                      : 'This signal is not eligible for a Kraken Spot/Margin market order.'}
+                    <details className="mt-1 text-text-muted">
+                      <summary className="cursor-pointer">Price and venue details</summary>
+                      <p className="mt-1 break-words">{currentKrakenCheck.reason}</p>
+                    </details>
+                  </div>
+                )}
+                {marketCheckError && !marketChecking && <div role="alert" className="text-amber-400">Kraken quote unavailable · {marketCheckError}</div>}
+              </div>
+            )}
           </div>
         </div>
 

@@ -12,6 +12,13 @@ assert(screen.includes('Kraken Spot/Margin · Live orders locked'),'Live trading
 assert(screen.includes('<BotWalletAuth />'),'Wallet authorization must remain available');
 
 assert(radar.includes('Continue to Hunter'),'Radar next action should be clear');
+assert(radar.includes('/api/bots/kraken-margin-handoff/'), 'Radar must use the actual Kraken BTNL execution quote before forwarding');
+assert(radar.includes('disabled={!krakenReady}'), 'Radar must not forward a market-incompatible signal as a live bet');
+assert(radar.includes('if (!data.compatible) return;'), 'Radar must fail closed if Kraken price changes at handoff');
+assert(radar.includes('const data = await readKrakenMarketCheck();'), 'Radar must revalidate the live quote before handoff');
+assert(radar.includes('Kraken Spot/Margin price check'), 'Radar must show scanner-vs-exchange price context');
+assert(radar.includes('Radar entry:'), 'Radar must show the unmodified signal entry beside Kraken executable quote');
+
 assert(!radar.includes('setShowOrderModal'), 'Research-only handoff should not require a redundant modal');
 assert(radar.includes('onPlaceTrade?.({ ...activeSetup, margin: 10'),'Radar must hand off to Hunter at $10');
 assert(radar.includes("['Entry'") || radar.includes('>ENTRY</span>'),'Radar must show entry price');
@@ -24,6 +31,8 @@ assert(hunter.includes('Continue to Live Bet'),'Hunter should give a clear next 
 assert(hunter.includes('disabled={!marginHandoff?.compatible||marginHandoffBusy||sendingToLiveBet}'),
   'A blocked Kraken setup must not move to Live Bet');
 assert(hunter.includes('Find a new bet'),'Blocked setups need a one-step escape');
+assert(hunter.includes('Radar entry {formatMicroPrice(entry)}'), 'Hunter must expose the actual Kraken-to-signal price difference');
+assert(hunter.includes('Kraken spot price is outside this Radar setup'), 'Hunter must explain mismatched source prices rather than a generic below-stop label');
 assert(hunter.includes('Why was this bet blocked?'),'Technical error should remain accessible');
 
 assert(live.includes("key={normalized?'loaded-setup':'no-setup'} open={!normalized}"),

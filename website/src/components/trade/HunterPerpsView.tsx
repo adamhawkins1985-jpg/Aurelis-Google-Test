@@ -293,17 +293,19 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
                   </button>
                 </div>
                 {marginHandoff?.executableQuote!=null&&
-                  <div className="text-text-muted">{marginHandoff.pair} · {marginHandoff.quoteType} {formatMicroPrice(marginHandoff.executableQuote)} · checked {new Date(marginHandoff.checkedAt).toLocaleTimeString()}</div>}
+                  <div className="text-text-muted">
+                    {marginHandoff.pair} · Kraken {marginHandoff.quoteType} {formatMicroPrice(marginHandoff.executableQuote)} · Radar entry {formatMicroPrice(entry)} · {Math.abs((entry-marginHandoff.executableQuote)/marginHandoff.executableQuote*100).toFixed(2)}% difference
+                    <span> · checked {new Date(marginHandoff.checkedAt).toLocaleTimeString()}</span>
+                  </div>}
                 {marginHandoffBusy && <div className="text-text-muted">Checking Kraken's execution market…</div>}
                 {!marginHandoffBusy && marginHandoff?.compatible &&
                   <div className="text-primary-container font-bold">Kraken quote fits this setup · Ready for Live Bet review</div>}
                 {!marginHandoffBusy && marginHandoff&&!marginHandoff.compatible && (
                   <div role="alert" className="text-amber-400 font-bold">
-                    {marginHandoff.reason.includes('at/below its stop') ? 'Price below stop · Get a new bet' :
-                     marginHandoff.reason.includes('at/above its target') ? 'Price past target · Get a new bet' :
-                     marginHandoff.reason.includes('at/above its stop') ? 'Price above stop · Get a new bet' :
-                     marginHandoff.reason.includes('at/below its target') ? 'Price past target · Get a new bet' :
-                     'Setup not available on Kraken margin'}
+                    {marginHandoff.code === 'market_outside_bracket' &&
+                     (marginHandoff.reason.includes('its stop') || marginHandoff.reason.includes('its target'))
+                      ? 'Kraken spot price is outside this Radar setup · Find a new bet'
+                      : 'Not eligible for Kraken margin · See details'}
                   </div>
                 )}
                 {marginHandoffError&&<div role="alert" className="text-amber-400 font-bold">Kraken check unavailable · Retry or get a new bet</div>}
