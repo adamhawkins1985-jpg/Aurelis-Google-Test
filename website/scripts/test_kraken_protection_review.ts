@@ -22,7 +22,7 @@ const below=assessKrakenProtection({...xlm,liveQuote:0.1998});
 assert.equal(below.code,'market_outside_bracket');
 assert.match(below.message,/at\/below its stop/);
 
-const badOriginal=assessKrakenProtection({...xlm,proposedEntry:0.198});
+const badOriginal=assessKrakenProtection({...xlm,proposedEntry:0.198,liveQuote:0.2024});
 assert.equal(badOriginal.code,'invalid_setup_levels');
 
 const short={
