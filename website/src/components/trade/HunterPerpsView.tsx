@@ -15,9 +15,10 @@ interface HunterPerpsViewProps {
   soundEnabled: boolean;
   initialSetup?: SetupCandidate | null;
   onSendToLiveBet?: (setup: SetupCandidate) => void;
+  onReturnToRadar?: () => void;
 }
 
-export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, initialSetup = null, onSendToLiveBet }) => {
+export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, initialSetup = null, onSendToLiveBet, onReturnToRadar }) => {
   const [futures, setFutures] = useState<KrakenFutureTicker[]>([]);
   const [radar, setRadar] = useState<KrakenRadarCandidate[]>([]);
   const [selectedAsset, setSelectedAsset] = useState('BTC');
@@ -286,6 +287,12 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
                 {!marginHandoffBusy && marginHandoff&&!marginHandoff.compatible &&
                   <div role="alert" className="text-amber-400">{marginHandoff.reason}</div>}
                 {marginHandoffError&&<div role="alert" className="text-amber-400">{marginHandoffError}</div>}
+                {onReturnToRadar && ((marginHandoff&&!marginHandoff.compatible)||marginHandoffError) && (
+                  <button type="button" onClick={onReturnToRadar}
+                    className="mt-2 w-full rounded-lg border border-white/15 bg-surface-panel px-3 py-2 text-text-primary font-bold">
+                    Back to Trade Radar · Hunt for a fresh setup
+                  </button>
+                )}
               </div>
               <button type="button" onClick={()=>void sendToLiveBet()}
                 disabled={!marginHandoff?.compatible||marginHandoffBusy||sendingToLiveBet}
