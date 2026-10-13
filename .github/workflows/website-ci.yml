@@ -50,6 +50,7 @@ jobs:
           node scripts/test_kraken_manual_cap.mjs
           npx tsx scripts/test_kraken_protection_review.ts
           npx tsx scripts/test_hunter_margin_handoff.ts
+          node scripts/test_hunter_asset_selection.mjs
           npx tsc --noEmit -p tsconfig.app-ci.json
           npm run build
       - name: Store verified build artifact
