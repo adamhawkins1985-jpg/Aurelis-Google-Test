@@ -99,7 +99,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
         const body=await response.json();
         if(active){
           setExecutionEnabled(Boolean(response.ok&&body?.enabled));
-          setExecutionCapabilityMessage(response.ok?(body?.enabled?'Kraken Spot/Margin manual approval available':'Live order submission disabled by the server'):(body?.error||'Auth required'));
+          setExecutionCapabilityMessage(response.ok?(body?.enabled?'Kraken Spot/Margin manual approval available':'Live orders locked: linked stop and target lifecycle is not yet verified'):(body?.error||'Auth required'));
         }
       }catch{if(active){setExecutionEnabled(false);setExecutionCapabilityMessage('Execution capability cannot be verified')}}
     };
@@ -109,7 +109,11 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
   },[]);
 
   const [supportedLeverage, setSupportedLeverage] = useState<number[]>([]);
-  const [liveStatus, setLiveStatus] = useState<{positions:any[];orders:any[]}>({positions:[],orders:[]});
+  const [liveStatus, setLiveStatus] = useState<{
+    positions:any[];orders:any[];
+    protection?:{positionsRequiringReview:number;positionsWithoutObservedStop:number;linkedOcoVerified:boolean;
+      warning:string;positions:Array<{positionId:string;status:string;stopCandidates:string[]}>};
+  }>({positions:[],orders:[]});
   const [liveStatusError, setLiveStatusError] = useState('');
   const [liveStatusLoading, setLiveStatusLoading] = useState(false);
   const [actionBusy, setActionBusy] = useState('');
@@ -213,7 +217,11 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
       const response = await fetch('/api/kraken/live-status', { cache: 'no-store', credentials: 'include' });
       const data = await response.json();
       if (!response.ok || !data?.ok) throw new Error(data?.error || 'Kraken live status unavailable');
-      setLiveStatus({ positions: Array.isArray(data.positions) ? data.positions : [], orders: Array.isArray(data.orders) ? data.orders : [] });
+      setLiveStatus({
+        positions: Array.isArray(data.positions) ? data.positions : [],
+        orders: Array.isArray(data.orders) ? data.orders : [],
+        protection: data.protection && Array.isArray(data.protection.positions) ? data.protection : undefined,
+      });
       setLiveStatusError('');
     } catch (error:any) {
       setLiveStatusError(error?.message || 'Kraken live status unavailable');
@@ -550,6 +558,11 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
                     <div className="mt-1 text-[9px] text-text-muted">
                       {Number(p.remaining||0).toLocaleString('en-US',{maximumFractionDigits:8})} open · margin {formatCurrency(Number(p.margin||0))} · value {formatCurrency(Number(p.value||0))}
                     </div>
+                    <div className="mt-1 text-[9px] text-amber-400">
+                      {liveStatus.protection?.positions.find((item) => item.positionId === p.txid)?.stopCandidates.length
+                        ? 'Possible stop observed · linkage unverified'
+                        : 'No stop observed · review Kraken protection'}
+                    </div>
                   </div>
                   <button type="button" onClick={()=>closeKrakenPosition(p.txid)} disabled={!!actionBusy}
                     className="px-3 py-1.5 rounded-lg bg-red-500/15 border border-red-500/30 text-red-400 text-[9px] font-bold hover:bg-red-500/25 disabled:opacity-40">
@@ -592,6 +605,18 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
       )}
 
       {!normalized && screenshotPicker}
+      {Boolean(liveStatus.positions.length||liveStatus.orders.length) && !liveStatusError && (
+        <div role="alert" className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-[10px] text-amber-300">
+          <strong>Open Kraken exposure · protection not verified</strong>
+          <p className="mt-1">
+            {liveStatus.protection
+              ? liveStatus.protection.positionsWithoutObservedStop + ' positions without an observed open stop; ' +
+                liveStatus.protection.positionsRequiringReview + ' positions require manual protection review.'
+              : 'Protection status unavailable. Verify exits directly in Kraken.'}
+            {' '}Open orders do not prove that an exit is attached or linked.
+          </p>
+        </div>
+      )}
       {Boolean(liveStatus.positions.length||liveStatus.orders.length) && krakenStatusPanel}
 
       {normalized && (

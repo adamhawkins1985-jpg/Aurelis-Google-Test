@@ -5,6 +5,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { getAddress, verifyMessage } from 'ethers';
 import { assessKrakenProtection, assessKrakenMarginHandoff, krakenExecutablePrice } from './kraken_protection_review';
+import { auditKrakenMarginProtection, krakenLiveExecutionPermitted, KRAKEN_LINKED_OCO_LIFECYCLE_VERIFIED } from './kraken_position_protection';
 
 const APP_ROOT = path.resolve(process.cwd());
 const DATA_DIR = path.join(APP_ROOT, 'data');
@@ -1435,7 +1436,7 @@ async function prepareKrakenOrder(payload:any) {
     preview,expiresAt:Date.now()+90000,used:false,
     clientOrderId:'aur'+crypto.randomBytes(7).toString('hex').slice(0,14)
   });
-  return {ok:true,provider:'KRAKEN_MARGIN',preview,signal:payload?.signal||{},confirmation:{token,expiresInSeconds:90},execution:{configured:true,readOnlyPreview:process.env.AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED!=='1',
+  return {ok:true,provider:'KRAKEN_MARGIN',preview,signal:payload?.signal||{},confirmation:{token,expiresInSeconds:90},execution:{configured:true,readOnlyPreview:!krakenLiveExecutionPermitted(process.env.AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED),
     conditionalStopRequestedOnSubmission:true,takeProfitOrderSubmitted:false,maxNotionalUsd:String(maxNotional),maxLeverage:String(maxLev)}};
 }
 
@@ -1505,6 +1506,10 @@ async function validateKrakenPreparedOrder(payload:any){
 async function submitKrakenOrder(payload:any) {
   // Broker entry orders do not automatically install protective stop/target orders.
   // Keep submission disabled until a protected, owner-authorized order lifecycle is verified.
+  // A flag alone cannot activate REST entries while stop + target lifecycle
+  // is still unverified. This is a hard code gate, not a deployment toggle.
+  if (!KRAKEN_LINKED_OCO_LIFECYCLE_VERIFIED)
+    throw new Error('kraken_linked_stop_target_lifecycle_unverified');
   if(process.env.AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED!=='1'){
     throw new Error('kraken_margin_execution_unverified_disabled');
   }
@@ -2117,7 +2122,8 @@ function registerMarketAndBotRoutes(app:Express) {
         price:Number(row?.descr?.price||0),volume:Number(row?.vol||0),
         filled:Number(row?.vol_exec||0),openedAt:Number(row?.opentm||0)
       }));
-      return sendNoStore(res,{ok:true,positions,orders,updatedAt:Date.now()});
+      const protection=auditKrakenMarginProtection(positions,orders);
+      return sendNoStore(res,{ok:true,positions,orders,protection,updatedAt:Date.now()});
     } catch(e:any){return sendNoStore(res,{ok:false,error:e?.message||String(e)},502)}
   });
 
@@ -2202,7 +2208,9 @@ function registerMarketAndBotRoutes(app:Express) {
         openMarginPositions:positionCount,openOrders:openOrderCount,
         testNotionalMaximumUsd:10,maxTestLeverage:2,
         accountClearForFirstTest:allSucceeded&&positionCount===0&&openOrderCount===0,
-        liveOrdersEnabled:process.env.AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED==='1',
+        liveOrdersEnabled:krakenLiveExecutionPermitted(process.env.AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED),
+        linkedStopTargetVerified:KRAKEN_LINKED_OCO_LIFECYCLE_VERIFIED,
+        executionBlockedReason:KRAKEN_LINKED_OCO_LIFECYCLE_VERIFIED?null:'linked_stop_target_lifecycle_unverified',
         usPerpsAccountVerified:false
       });
     }catch(error){
@@ -2213,10 +2221,12 @@ function registerMarketAndBotRoutes(app:Express) {
 
   app.get('/api/bots/kraken-execution-capability',async(req,res)=>{
     if(!requireBotAccountOwner(req,res))return;
-    const enabled=process.env.AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED==='1';
+    const enabled=krakenLiveExecutionPermitted(process.env.AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED);
     return sendNoStore(res,{ok:true,provider:'Kraken Spot/Margin',enabled,
       instrument:'spot_margin',usPerpetualsConnected:false,
       marketEntryWithConditionalStop:true,takeProfitAutomaticallyPlaced:false,
+      linkedStopTargetVerified:KRAKEN_LINKED_OCO_LIFECYCLE_VERIFIED,
+      blockedReason:enabled?null:'linked_stop_target_lifecycle_unverified',
       manualApprovalRequired:true,ordersTriggered:false});
   });
 

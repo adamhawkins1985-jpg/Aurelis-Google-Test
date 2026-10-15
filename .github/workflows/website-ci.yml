@@ -49,6 +49,7 @@ jobs:
           # Validate the CURRENT app and manual-execution safety controls.
           node scripts/test_kraken_manual_cap.mjs
           npx tsx scripts/test_kraken_protection_review.ts
+          npx tsx scripts/test_kraken_position_protection.ts
           npx tsx scripts/test_hunter_margin_handoff.ts
           node scripts/test_hunter_asset_selection.mjs
           node scripts/test_quick_bot_flow.mjs

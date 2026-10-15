@@ -30,6 +30,19 @@ assert(submit.includes('Number(p.positionValueUsd)>10||Number(p.positionValueUsd
 assert(submit.includes('Number(p.leverage)>2'),'Submit must recheck 2x max leverage');
 assert(submit.includes("payload?.acknowledgeLiveTest!==true"),'Submit must require fresh explicit user approval');
 assert(submit.includes("process.env.AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED!=='1'"),'Submit must be disabled by default');
+assert(submit.includes("if (!KRAKEN_LINKED_OCO_LIFECYCLE_VERIFIED)"),
+  'A hard source-level protection gate must refuse new entries regardless of deployment flags');
+assert(submit.includes("throw new Error('kraken_linked_stop_target_lifecycle_unverified')"),
+  'Unsafe submission must identify the missing linked stop/target lifecycle');
+assert(backend.includes('auditKrakenMarginProtection(positions,orders)'),
+  'Kraken open orders and positions must be audited without assuming protective linkage');
+assert(backend.includes('linkedStopTargetVerified:KRAKEN_LINKED_OCO_LIFECYCLE_VERIFIED'),
+  'Manual test readiness and capability must expose protection verification status');
+assert(backend.includes('const enabled=krakenLiveExecutionPermitted(process.env.AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED)'),
+  'Capability endpoint must never report enabled when only the flag is set');
+assert(live.includes('Open Kraken exposure · protection not verified'),
+  'Active exposure with unverified exits must be surfaced on Live Bet');
+
 assert(submit.includes("throw new Error('trade_confirmation_used')"),'Submit must reject reused confirmation tokens');
 assert(backend.includes("'close[ordertype]':'stop-loss'"),'Protected order payload must include Kraken stop-loss');
 assert(prepare.includes("takeProfitIsEstimateOnly:true"), 'Preview cannot claim Kraken has placed a take-profit order');
@@ -39,8 +52,8 @@ assert(submit.includes('takeProfitOrderPlaced:false'), 'Submit must disclose tha
 assert(submit.includes('activated after primary fill; monitor live order status'),
   'Stop activation must be described as post-fill and unconfirmed');
 assert(!submit.includes("'close[ordertype]':'take-profit'"), 'Do not claim an automatic take-profit order exists');
-assert(backend.includes("process.env.AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED==='1'"),
-  'Execution capability must remain server-controlled and off by default');
+assert(backend.includes('krakenLiveExecutionPermitted(process.env.AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED)'),
+  'Execution capability must require a protection gate in addition to the server flag');
 
 assert(submit.includes('krakenProtectedOrderPayload(item)'),'Submit must use the same order payload as validation');
 assert(submit.includes('kraken_price_moved_repreview'),'Submit must reject stale quotes');

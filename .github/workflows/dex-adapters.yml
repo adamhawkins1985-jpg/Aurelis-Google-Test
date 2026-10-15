@@ -60,7 +60,9 @@ jobs:
       - name: Type check current website app/server
         run: npx tsc --noEmit -p tsconfig.app-ci.json
       - name: Verify current bot execution safety
-        run: node scripts/test_kraken_manual_cap.mjs
+        run: |
+          node scripts/test_kraken_manual_cap.mjs
+          npx tsx scripts/test_kraken_position_protection.ts
       - name: Build
         run: npm run build
       - name: Publish job summary

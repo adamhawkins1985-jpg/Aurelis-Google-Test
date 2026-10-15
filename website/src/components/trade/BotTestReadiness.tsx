@@ -4,7 +4,8 @@ type Check={ok:boolean;error:string|null};
 type Readiness={
  ok:boolean;checked?:Record<string,Check>;freeMarginAvailable?:boolean;freeMarginUsd?:number|null;
  openMarginPositions?:number|null;openOrders?:number|null;accountClearForFirstTest?:boolean;
- liveOrdersEnabled?:boolean;usPerpsAccountVerified?:boolean;testNotionalMaximumUsd?:number;maxTestLeverage?:number;
+ liveOrdersEnabled?:boolean;linkedStopTargetVerified?:boolean;executionBlockedReason?:string|null;
+ usPerpsAccountVerified?:boolean;testNotionalMaximumUsd?:number;maxTestLeverage?:number;
 };
 export const BotTestReadiness:React.FC<{short?:boolean}>=({short=false})=>{
  const [result,setResult]=useState<Readiness|null>(null);
@@ -45,11 +46,13 @@ export const BotTestReadiness:React.FC<{short?:boolean}>=({short=false})=>{
   </div>
   <div className={result?.liveOrdersEnabled?'text-primary-container font-bold':'text-amber-400 font-bold'}>
     {result?.liveOrdersEnabled?'MANUAL LIVE TEST ENABLED':'LIVE EXECUTION LOCKED'}
-    {result?.accountClearForFirstTest?' · account checks passed':' · account checks not fully cleared'}
+    {result?.accountClearForFirstTest?' · account balance/order checks passed':' · account checks not fully cleared'}
+    {!result?.linkedStopTargetVerified?' · linked stop/target not yet verified':''}
   </div>
   {!short&&<div className="text-text-muted">
     First test: $10 total notional maximum, maximum 2× leverage, signed Bots owner, fresh per-order approval.
-    A passed balance check does not verify attached stops, actual fills or U.S. futures access.
+    Balance and order checks do not prove linked stop/target exits, activation, actual fills or U.S. futures access.
+    Changing an execution environment flag alone cannot unlock new orders.
   </div>}
   {error&&<div role="status" className="text-amber-400">{error}</div>}
  </section>;
