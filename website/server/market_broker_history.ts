@@ -73,3 +73,34 @@ export function brokerHistory(symbol:string,days=7){
     };
   }catch{return {available:false,error:'history_read_unavailable',startedAt:null,samples:0,sources:[],recent:[],notice:'Historical observations unavailable.'};}
 }
+
+/**
+ * Forward-observed price movement, not executed trade P&L or model accuracy.
+ * Samples are separated by >=4h to reduce repeated-candle overlap.
+ * A result requires a later fresh Kraken 1h observation 4-8h after signal.
+ */
+export function brokerObservedOutcomes(symbol:string,days=30){
+  const empty={available:false,samples:0,positive:0,negative:0,flat:0,medianDirectionalMovePct:null as number|null,
+    horizon:'4-8h next observed price',note:'No measured trade results; samples are forward spot-price observations without spreads, fees, funding, stops or execution.'};
+  if(!db||!/^[A-Z0-9]{2,12}$/.test(symbol))return empty;
+  try{
+    const since=Date.now()-Math.max(1,Math.min(30,days))*86400000;
+    const rows=db.prepare("SELECT direction,price,observed_at FROM broker_observations WHERE symbol=? AND source='kraken_indicators' AND timeframe='1h' AND observed_at>=? AND price>0 ORDER BY observed_at").all(symbol,since) as {direction:string;price:number;observed_at:number}[];
+    const moves:number[]=[];let lastSignal=0;
+    for(let i=0;i<rows.length;i++){
+      const current=rows[i];
+      if(!['LONG','SHORT'].includes(current.direction)||current.observed_at-lastSignal<4*3600000)continue;
+      lastSignal=current.observed_at;
+      const later=rows.find((r,j)=>j>i&&r.observed_at>=current.observed_at+4*3600000&&r.observed_at<=current.observed_at+8*3600000);
+      if(!later)continue;
+      const raw=(later.price/current.price-1)*100;
+      moves.push(current.direction==='LONG'?raw:-raw);
+    }
+    if(!moves.length)return {...empty,available:true,note:'No mature 4-8h forward observations yet. Do not infer win rates from scan scores.'};
+    const sorted=[...moves].sort((a,b)=>a-b),mid=Math.floor(sorted.length/2);
+    return {available:true,samples:moves.length,positive:moves.filter(x=>x>0).length,negative:moves.filter(x=>x<0).length,
+      flat:moves.filter(x=>x===0).length,
+      medianDirectionalMovePct:Number((sorted.length%2?sorted[mid]:(sorted[mid-1]+sorted[mid])/2).toFixed(4)),
+      horizon:'4-8h next observed price',note:'Observed directional spot-price changes, NOT independently validated trade win rates or execution P&L. Samples require continuous collector coverage, have selection bias and exclude costs; fewer than 15 samples are insufficient for even descriptive comparisons.'};
+  }catch{return empty;}
+}
