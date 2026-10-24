@@ -21,6 +21,7 @@ import { PredictionsScreen } from './components/PredictionsScreen';
 import { PerpsScreen } from './components/PerpsScreen';
 import { SignalDeskScreen } from './components/SignalDeskScreen';
 import { AiScreen } from './components/AiScreen';
+import { MarketBrokerScreen } from './components/MarketBrokerScreen';
 import { AssetTemplateScreen } from './components/AssetTemplateScreen';
 import { SwapWidgetDock, MobileSwapWidgetPage } from './components/SwapWidgetDock';
 import { AiChatDock } from './components/AiChatDock';
@@ -76,7 +77,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<HUDTab>('chart');
   const [chartViewMode, setChartViewMode] = useState<'all-starred' | 'single-coin'>('all-starred');
   const [timeframe, setTimeframe] = useState<Timeframe>('1H');
-  const [navigationTab, setNavigationTab] = useState<NavigationTab>('home');
+  const [navigationTab, setNavigationTab] = useState<NavigationTab>(() => new URLSearchParams(window.location.search).get('tab') === 'broker' ? 'broker' : 'home');
   const [embeddedUtilityKind, setEmbeddedUtilityKind] = useState<'chat' | 'notes' | 'livebet' | null>(() => {
     const requested = new URLSearchParams(window.location.search).get('utility');
     const saved = window.localStorage.getItem('aurelis_android_active_utility');
@@ -109,7 +110,7 @@ export default function App() {
     if (!bridge || typeof bridge.onMainNavigate !== 'function') return;
     const unsubscribe = bridge.onMainNavigate((payload:any) => {
       const tab = String(payload?.tab || '');
-      if (['home','markets','signals','trade','stocks','wallet','earn-borrow','predictions','perps','ai'].includes(tab)) {
+      if (['home','markets','signals','trade','stocks','wallet','earn-borrow','predictions','perps','ai','broker'].includes(tab)) {
         setSelectedAssetKey(null);
         setNavigationTab(tab as NavigationTab);
         if (payload?.action === 'ai-swap-plan') {
@@ -967,6 +968,7 @@ export default function App() {
             activeTab={navigationTab}
             onSelectTab={(tab) => {
               setMarketsDropdownTab(null);
+              setSelectedAssetKey(null);
               setNavigationTab(tab);
             }}
             soundEnabled={soundEnabled}
@@ -1257,6 +1259,11 @@ export default function App() {
               />
             )}
 
+            {/* AI MARKET BROKER: Verified Spot and Perps research */}
+            {navigationTab === 'broker' && (
+              <MarketBrokerScreen onNavigate={setNavigationTab} />
+            )}
+
             {/* EARN / BORROW SCREEN: Lending, APYs, Collateral, Health Factor */}
             {navigationTab === 'earn-borrow' && (
               <EarnBorrowScreen
@@ -1309,14 +1316,14 @@ export default function App() {
           {/* 5. Bottom Navigation Dock: Home, Trade, Wallet, Earn/Borrow, Predictions, Perps */}
           <BottomNav
             activeTab={navigationTab}
-            onSelectTab={setNavigationTab}
+            onSelectTab={(tab) => { setSelectedAssetKey(null); setNavigationTab(tab); }}
             soundEnabled={soundEnabled}
             isWalletConnected={isWalletConnected}
           />
         </div>
       )}
 
-      <div className="md:hidden fixed left-0 right-0 bottom-[62px] z-[10040] pointer-events-none">
+      {navigationTab !== 'broker' && <div className="md:hidden fixed left-0 right-0 bottom-[62px] z-[10040] pointer-events-none">
         <div className="max-w-md mx-auto pointer-events-auto">
           <MobileAiChatBar
             coins={coins}
@@ -1324,11 +1331,11 @@ export default function App() {
             soundEnabled={soundEnabled}
           />
         </div>
-      </div>
+      </div>}
 
       {!isPopout && (
         <>
-          <AiChatDock coins={coins} selectedCoin={selectedCoin} soundEnabled={soundEnabled} holdings={walletHoldings} onNavigate={setNavigationTab} />
+          {navigationTab !== 'broker' && <AiChatDock coins={coins} selectedCoin={selectedCoin} soundEnabled={soundEnabled} holdings={walletHoldings} onNavigate={setNavigationTab} />}
           <SwapWidgetDock />
         </>
       )}

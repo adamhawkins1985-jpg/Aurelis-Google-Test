@@ -22,7 +22,7 @@ type KrakenBar = {
 
 interface KrakenLiveChartProps {
   symbol: string;
-  timeframe: '5m' | '15m' | '1H' | '4H';
+  timeframe: '5m' | '15m' | '30m' | '1H' | '4H' | '8h' | '12h' | '1d' | '3d' | '7d';
   bars: KrakenBar[];
   stop?: number;
   target?: number;
@@ -184,8 +184,14 @@ export const KrakenLiveChart: React.FC<KrakenLiveChartProps> = ({
     const intervalSeconds: Record<string, number> = {
       '5m': 300,
       '15m': 900,
+      '30m': 1800,
       '1H': 3600,
       '4H': 14400,
+      '8h': 28800,
+      '12h': 43200,
+      '1d': 86400,
+      '3d': 259200,
+      '7d': 604800,
     };
     const bucketSize = intervalSeconds[timeframe] || 300;
     const ws = new WebSocket('wss://ws.kraken.com/v2');

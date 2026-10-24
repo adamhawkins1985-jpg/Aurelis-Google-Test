@@ -18,7 +18,7 @@ export interface CoinData {
 
 export type Timeframe = '15m' | '1H' | '24H' | '7D';
 
-export type NavigationTab = 'home' | 'markets' | 'signals' | 'trade' | 'stocks' | 'wallet' | 'earn-borrow' | 'predictions' | 'perps' | 'ai';
+export type NavigationTab = 'home' | 'markets' | 'signals' | 'trade' | 'stocks' | 'wallet' | 'earn-borrow' | 'predictions' | 'perps' | 'ai' | 'broker';
 
 export type HUDTab = 'chart' | 'watchlist' | 'heatmap';
 

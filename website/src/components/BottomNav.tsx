@@ -5,6 +5,7 @@ import {
   ArrowLeftRight,
   Sparkles,
   Wallet,
+  BarChart3,
 } from 'lucide-react';
 import { NavigationTab } from '../types';
 import { playHudSound } from '../services/marketData';
@@ -43,6 +44,11 @@ export const BottomNav: React.FC<BottomNavProps> = ({
       label: 'AI Bots',
       icon: <Sparkles className="w-4 h-4" />,
       badge: '6',
+    },
+    {
+      id: 'broker',
+      label: 'Broker',
+      icon: <BarChart3 className="w-4 h-4" />,
     },
     {
       id: 'wallet',

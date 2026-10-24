@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { exchangeRouter } from './server/exchange_routes';
+import { registerMarketBroker } from './server/market_broker';
 import { registerMigratedBackend, getVerifiedWalletAddress, runAaveAgentQuery } from './server/migrated_backend';
 
 dotenv.config();
@@ -31,6 +32,7 @@ app.use(express.json({ limit: '12mb' }));
 // vNext-owned wallet/auth/alerts/market/bot/borrow backend.
 // Registered before the temporary legacy proxy routes so migrated endpoints terminate here.
 registerMigratedBackend(app);
+registerMarketBroker(app, port);
 
 // AURELIS Exchange API (ChangeNOW Layer B)
 app.use('/api/exchange', exchangeRouter);

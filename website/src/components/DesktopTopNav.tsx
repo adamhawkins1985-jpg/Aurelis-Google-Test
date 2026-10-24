@@ -5,6 +5,7 @@ import {
   Sparkles,
   Activity,
   Crosshair,
+  BarChart3,
 } from 'lucide-react';
 import { NavigationTab } from '../types';
 import { playHudSound } from '../services/marketData';
@@ -45,6 +46,11 @@ export const DesktopTopNav: React.FC<DesktopTopNavProps> = ({
       icon: <Sparkles className="w-3.5 h-3.5 text-primary-container" />,
       badge: '6 BOTS',
       badgeColor: 'bg-primary-container/20 text-primary-container border-primary-container/40',
+    },
+    {
+      id: 'broker',
+      label: 'AI Market Broker',
+      icon: <BarChart3 className="w-3.5 h-3.5 text-primary-container" />,
     },
     {
       id: 'signals',
