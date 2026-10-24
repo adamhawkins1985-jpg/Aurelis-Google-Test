@@ -57,6 +57,7 @@ jobs:
           npx tsx scripts/test_market_broker_analogs.ts
           npx tsx scripts/test_market_broker_research_leverage.ts
           npx tsx scripts/test_market_broker_evidence_ui.ts
+          npx tsx scripts/test_market_broker_coach.ts
           npx tsc --noEmit -p tsconfig.app-ci.json
           npm run build
       - name: Store verified build artifact

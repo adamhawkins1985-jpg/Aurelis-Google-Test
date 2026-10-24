@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, Bot, ChevronRight, ExternalLink, RefreshCw, Send, ShieldAlert } from 'lucide-react';
 import { KrakenLiveChart } from './KrakenLiveChart';
+import { makeBrokerCoach } from '../services/brokerCoach';
 import { calculatePerpsResearch, MAX_RESEARCH_LEVERAGE, REAL_KRAKEN_TEST_LEVERAGE_CAP, REAL_KRAKEN_FIRST_TEST_NOTIONAL_USD, type ResearchSide } from '../services/perpsResearch';
 import type { NavigationTab } from '../types';
 
@@ -59,6 +60,7 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
   const [symbol,setSymbol]=useState('BTC');
   const [frame,setFrame]=useState<Frame>('1h');
   const [mode,setMode]=useState<Mode>('spot');
+  const [showEvidence,setShowEvidence]=useState(false);
   const [showMovingAverages,setShowMovingAverages]=useState(true);
   const [snapshot,setSnapshot]=useState<Snapshot|null>(null);
   const [bots,setBots]=useState<BrokerBots|null>(null);
@@ -89,6 +91,9 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
   const [question,setQuestion]=useState('');
   const [messages,setMessages]=useState<Message[]>([]);
   const [asking,setAsking]=useState(false);
+  const contextRef=useRef(symbol+':'+mode);
+  contextRef.current=symbol+':'+mode;
+  useEffect(()=>{setMessages([]);setQuestion('');},[symbol,mode]);
 
   useEffect(()=>{
     let mounted=true;
@@ -237,12 +242,6 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
   const marketState=!a?'NO DATA':!a.dataFresh?'STALE DATA':contradicts||timeframeConflict?'CONFLICTING SIGNALS':!deskSupport&&!radarSupport?'NO CONFIRMED SETUP':'BOT CONFIRMED';
   const botStatusText=bots?.signalDesk&&bots?.radar?'Signal Desk + Radar':bots?.signalDesk?'Signal Desk only':bots?.radar?'Radar only':'No live bot match';
   const indicatorAge=snapshot?.observedAt?Math.max(0,Math.floor((Date.now()-snapshot.observedAt)/1000)):null;
-  const infoCards=[
-    {title:'CURRENT ASSESSMENT',value:decision==='BUY'?'BUY SETUP':decision==='SELL'?'SELL / DEFENSIVE':'WAIT',sub:marketState},
-    {title:'SPOT OBSERVATION ZONE',value:a?.dataFresh?money(a.entryZone.low)+' – '+money(a.entryZone.high):'Unavailable',sub:decision==='BUY'?'Long setup supported, verify liquidity':'Not a confirmed long entry'},
-    {title:'SUPPORT / RESISTANCE',value:a?.dataFresh?money(a.support)+' / '+money(a.resistance):'Unavailable',sub:'Last 20 completed candles'},
-    {title:'CONFIRMATION',value:sourceConfirmation+' of 2',sub:botStatusText},
-  ];
   const marginUsd=inRange(Number(margin),0,100000);
   const perpMarkFresh=!!futures&&futures.markPrice>0&&Date.now()-futures.asOf<90000;
   const scenario=calculatePerpsResearch({
@@ -264,9 +263,29 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
     return (relevant.length?relevant:news).slice(0,4);
   },[news,symbol]);
 
+  const relatedNews=symbolNews.find(item=>new RegExp(symbol==='BTC'?'bitcoin|\\bBTC\\b':symbol==='ETH'?'ethereum|\\bETH\\b':symbol==='SOL'?'solana|\\bSOL\\b':symbol==='XRP'?'ripple|\\bXRP\\b':'\\b'+symbol+'\\b','i').test(item.title))||null;
+  const coach=makeBrokerCoach({
+    symbol,frame,mode,decision,asOf:snapshot?.observedAt??null,
+    chart:a?{signal:a.signal,rsi:a.rsi,volumeRatio:a.volumeRatio,support:a.support,resistance:a.resistance,price:a.price,dataFresh:a.dataFresh,entryZone:a.entryZone}:null,
+    desk:bots?.signalDesk??null,radar:bots?.radar??null,
+    timeframe:timeframes?{alignment:timeframes.alignment,live:timeframes.live}:null,
+    analogs:analogs?{nearest:analogs.nearest,sourceDecision:analogs.sourceDecision,outcomes:analogs.outcomes}:null,
+    news:relatedNews?{title:relatedNews.title,source:relatedNews.source,time:relatedNews.time}:null
+  });
+  const suggestions=mode==='spot'?[
+    'Explain the current '+symbol+' BUY, SELL or WAIT decision in plain English.',
+    'Where might a careful '+symbol+' spot limit buy make sense, and what invalidates it?',
+    'What do our '+symbol+' bots and today\'s headlines actually confirm?'
+  ]:[
+    'Does our current '+symbol+' data support LONG, SHORT, or WAIT? Explain the disagreements.',
+    'Explain my selected Perps margin and leverage, including possible profit, loss and liquidation risk.',
+    'What would need to change before a '+symbol+' Perps setup becomes more compelling?'
+  ];
+
   const ask=async(prompt?:string)=>{
     const query=(prompt||question).trim();
     if(!query||asking)return;
+    const scope=contextRef.current;
     setQuestion('');
     setMessages(current=>[...current.slice(-12),{role:'user',text:query,at:Date.now()}]);
     setAsking(true);
@@ -277,9 +296,9 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
           researchLeverage:leverage,researchSide,
           favorableMovePct:Number(favorableMove),adverseMovePct:Number(adverseMove)})
       });
-      setMessages(current=>[...current,{role:'assistant',text:answer.reply,engine:answer.engine,at:answer.marketAsOf||Date.now()}]);
+      if(contextRef.current===scope)setMessages(current=>[...current,{role:'assistant',text:answer.reply,engine:answer.engine,at:answer.marketAsOf||Date.now()}]);
     }catch(e:any){
-      setMessages(current=>[...current,{role:'assistant',text:'Live analysis unavailable: '+(e?.message||'data source offline')+'. No recommendation generated.',engine:'Unavailable',at:Date.now()}]);
+      if(contextRef.current===scope)setMessages(current=>[...current,{role:'assistant',text:'Live analysis unavailable: '+(e?.message||'data source offline')+'. No recommendation generated.',engine:'Unavailable',at:Date.now()}]);
     }finally{setAsking(false);}
   };
   const pill=(active:boolean)=>'rounded-md border px-2.5 py-1.5 text-[11px] font-semibold transition-colors '+(active?'border-primary-container/50 bg-primary-container/15 text-primary-container':'border-white/10 text-text-secondary hover:text-text-primary hover:bg-white/5');
@@ -328,26 +347,55 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
         </div>
       </div>
 
-      <section className="rounded-lg border border-white/10 bg-surface-panel p-2.5" aria-label="Market broker decision summary">
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
-          {infoCards.map((item,i)=><div key={item.title} className="min-w-0 bg-surface-canvas rounded-md border border-white/10 p-2.5">
-            <span className="block text-[10px] font-semibold tracking-wide text-text-secondary">{item.title}</span>
-            <span className={'block font-mono text-sm font-bold mt-1 break-words '+(i===0?(decision==='BUY'?'text-primary-container':decision==='SELL'?'text-rose-500':'text-text-primary'):'text-text-primary')}>{item.value}</span>
-            <span className="block text-[10px] text-text-secondary mt-0.5">{item.sub}</span>
-          </div>)}
+      <section className="rounded-xl border border-primary-container/20 bg-surface-panel p-3 sm:p-4 space-y-3" aria-label="AURELIS market coach briefing">
+        <div className="flex flex-wrap gap-2 items-center justify-between">
+          <span className="flex items-center gap-2 text-xs font-bold text-primary-container"><Bot size={16}/> AURELIS · YOUR MARKET READ</span>
+          <div className="flex items-center gap-1.5">
+            <button type="button" className={pill(mode==='spot')} onClick={()=>setMode('spot')}>Spot advisor</button>
+            <button type="button" className={pill(mode==='perps')} onClick={()=>setMode('perps')}>Perps advisor</button>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 px-1 font-mono text-[10px] text-text-secondary">
-          <span><b className="text-text-primary">RSI</b> {a?.dataFresh?a.rsi.toFixed(1):'—'}</span>
-          <span><b className="text-text-primary">ATR</b> {a?.dataFresh?money(a.atr):'—'}</span>
-          <span><b className="text-text-primary">VOL</b> {a?.dataFresh?a.volumeRatio.toFixed(2)+'x':'—'}</span>
-          <span><b className="text-text-primary">5-TF</b> {timeframes?timeframes.alignment+' ('+timeframes.live+'/5)':'Checking'}</span>
-          <span><b className="text-text-primary">HISTORY</b> {analogs?analogs.nearest+' matches · '+historicalLabels+' horizon labels':'Checking'}</span>
-          <span className="ml-auto">Kraken spot · {indicatorAge===null?'No update':indicatorAge+'s since response'}</span>
+        <div>
+          <span className={'text-[10px] font-bold font-mono tracking-wider '+(decision==='BUY'?'text-primary-container':decision==='SELL'?'text-rose-500':'text-text-secondary')}>
+            {decision==='BUY'?'BUY SETUP':decision==='SELL'?'BEARISH / DEFENSIVE':'WAIT'} · {symbol} {frame} · {coach.dataStatus}
+          </span>
+          <h2 className="mt-1 text-lg sm:text-xl font-bold leading-snug text-text-primary">{coach.headline}</h2>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <div className="rounded-lg bg-surface-canvas border border-white/10 p-3">
+            <span className="text-[10px] font-bold uppercase tracking-wide text-text-secondary">What our data says</span>
+            <p className="text-xs sm:text-sm mt-1.5 leading-relaxed">{coach.why}</p>
+          </div>
+          <div className="rounded-lg bg-surface-canvas border border-white/10 p-3">
+            <span className="text-[10px] font-bold uppercase tracking-wide text-text-secondary">What I would look for next</span>
+            <p className="text-xs sm:text-sm mt-1.5 leading-relaxed">{coach.next}</p>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-2 text-xs">
+          <div className="flex gap-2"><span className="shrink-0 text-primary-container font-semibold">Learn</span><span className="text-text-secondary">{coach.lesson}</span></div>
+          <div className="flex gap-2"><span className="shrink-0 text-primary-container font-semibold">History</span><span className="text-text-secondary">{coach.historical}</span></div>
+        </div>
+        <div className="text-[11px] text-text-secondary border-t border-white/10 pt-2">
+          <span className="font-semibold text-text-primary">In the news:</span> {coach.news}
+        </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] font-mono text-text-secondary border-t border-white/10 pt-2">
+          <span>RSI {a?.dataFresh?a.rsi.toFixed(1):'—'}</span>
+          <span>Volume {a?.dataFresh?a.volumeRatio.toFixed(2)+'x':'—'}</span>
+          <span>Support {a?.dataFresh?money(a.support):'—'}</span>
+          <span>Resistance {a?.dataFresh?money(a.resistance):'—'}</span>
+          <span>{timeframes?.alignment||'Timeframes unavailable'}</span>
+          <span className="ml-auto">Snapshot {time(snapshot?.observedAt)}</span>
         </div>
       </section>
 
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.7fr)_minmax(290px,1fr)] gap-2.5">
-        <div className="min-w-0 flex flex-col gap-2.5">
+      <div className="flex flex-col gap-3">
+      <button type="button" onClick={()=>setShowEvidence(x=>!x)} aria-expanded={showEvidence}
+        className="order-2 w-full rounded-lg border border-white/10 bg-surface-panel p-3 text-left flex justify-between gap-2 items-center hover:border-primary-container/30">
+        <span className="font-semibold text-xs">{showEvidence?'Hide technical details':'Explore live chart, full bot evidence & history'}</span>
+        <span className="text-[11px] text-text-secondary">{showEvidence?'Collapse':'Open when you want the numbers'} <ChevronRight size={14} className={'inline transition-transform '+(showEvidence?'rotate-90':'')}/></span>
+      </button>
+
+        <div className={showEvidence?"order-3 min-w-0 flex flex-col gap-2.5":"hidden"} aria-hidden={!showEvidence}>
           <div className="rounded-lg border border-white/10 bg-surface-panel overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
               <div className="flex items-center gap-2">
@@ -367,7 +415,7 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
             </div>
           </div>
 
-          <div className="rounded-lg border border-white/10 bg-surface-panel p-3">
+          <div className="order-2 rounded-lg border border-white/10 bg-surface-panel p-3">
             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <h2 className="text-xs font-bold">Signal consensus</h2>
               <span className={'text-[11px] font-bold '+(decision==='BUY'?'text-primary-container':decision==='SELL'?'text-rose-400':'text-text-secondary')}>
@@ -519,12 +567,8 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
           </div>
         </div>
 
-        <div className="flex flex-col min-w-0 gap-2.5">
+        <div className="order-1 grid grid-cols-1 xl:grid-cols-2 min-w-0 gap-3 items-start">
           <div className="rounded-lg border border-white/10 bg-surface-panel p-3">
-            <div className="grid grid-cols-2 gap-1.5 mb-3">
-              <button type="button" className={pill(mode==='spot')} onClick={()=>setMode('spot')}>SPOT BROKER</button>
-              <button type="button" className={pill(mode==='perps')} onClick={()=>setMode('perps')}>PERPS BROKER</button>
-            </div>
             {mode==='spot'?(
               <>
                 <div className="flex items-center justify-between mb-2">
@@ -625,18 +669,22 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
             )}
           </div>
 
-          <div className="rounded-lg border border-white/10 bg-surface-panel p-3 flex flex-col gap-2 min-h-[265px]">
+          <div className="order-1 rounded-xl border border-primary-container/25 bg-surface-panel p-3 sm:p-4 flex flex-col gap-3 min-h-[330px]">
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-xs font-bold"><Bot size={14} className="text-primary-container"/>AURELIS AI</span>
               <span className="text-[10px] text-text-muted">{symbol} · {mode.toUpperCase()}</span>
             </div>
-            <div role="log" aria-label="AURELIS market broker chat" className="max-h-[235px] min-h-[100px] overflow-y-auto flex flex-col gap-2">
-              {!messages.length&&<div className="text-[11px] text-text-muted leading-relaxed">Ask about this coin, today's news, spot limit levels, or a perp scenario. Every answer requests fresh verified market data.</div>}
+            <div role="log" aria-label="AURELIS market broker chat" className="max-h-[280px] min-h-[95px] overflow-y-auto flex flex-col gap-2">
+              {!messages.length&&<div className="text-[12px] text-text-secondary leading-relaxed">Ask me about an entry, market movement, or what the bots disagree on. I'll use the latest available evidence and explain the reasoning.</div>}
               {messages.slice(-12).map((m,i)=><div key={m.at+'-'+i} className={'rounded-md p-2 text-[11px] leading-relaxed whitespace-pre-wrap '+(m.role==='user'?'bg-primary-container/10 ml-6':'bg-surface-canvas mr-2')}>
                 {m.text}
                 {m.engine&&<div className="mt-1.5 text-[9px] text-text-muted">{m.engine} · {time(m.at)}</div>}
               </div>)}
               {asking&&<div className="text-[11px] text-text-muted">Checking live market and bot data…</div>}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {suggestions.map(suggestion=><button key={suggestion} type="button" disabled={asking} onClick={()=>void ask(suggestion)}
+                className="rounded-full border border-primary-container/30 bg-primary-container/5 px-2.5 py-1.5 text-[10px] text-left text-text-primary hover:bg-primary-container/15 disabled:opacity-40">{suggestion}</button>)}
             </div>
             <form className="mt-auto flex gap-1.5" onSubmit={e=>{e.preventDefault();void ask()}}>
               <input aria-label="Ask AURELIS AI" value={question} maxLength={700} onChange={e=>setQuestion(e.target.value)}
