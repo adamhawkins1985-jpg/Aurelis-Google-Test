@@ -1,6 +1,7 @@
 import type { Express } from 'express';
 import { GoogleGenAI } from '@google/genai';
 import { recordMarketObservation, brokerHistory } from './market_broker_history';
+import { legacyBrokerIntelligence } from './market_broker_legacy';
 
 type Bar={time:number;open:number;high:number;low:number;close:number;volume:number};
 type Frame='5m'|'15m'|'30m'|'1h'|'4h'|'8h'|'12h'|'1d'|'3d'|'7d';
@@ -349,6 +350,13 @@ export function registerMarketBroker(app:Express,port:number){
     try{return res.json({ok:true,...await futuresContext(symbol)});}
     catch(e:any){return res.status(503).json({ok:false,error:'futures_quote_unavailable',detail:String(e?.message||e)});}
   });
+  app.get('/api/market-broker/legacy-intelligence',async(req,res)=>{
+    res.setHeader('Cache-Control','no-store');
+    const symbol=safeSymbol(req.query.symbol);
+    if(!COINS.includes(symbol))return res.status(400).json({ok:false,error:'unsupported_symbol'});
+    try{return res.json({ok:true,...legacyBrokerIntelligence(symbol)});}
+    catch{return res.status(503).json({ok:false,error:'legacy_market_history_unavailable'});}
+  });
   app.get('/api/market-broker/history',async(req,res)=>{
     res.setHeader('Cache-Control','no-store');
     const symbol=safeSymbol(req.query.symbol);
@@ -398,7 +406,7 @@ export function registerMarketBroker(app:Express,port:number){
       const [perpsMarket,dexMarkets,arbitrageMarkets]=mode==='perps'?await Promise.all([futuresContext(symbol).catch(()=>null),dexPublicEvidence(symbol).catch(()=>null),arbitrageEvidence(symbol).catch(()=>null)]):[null,null,null];
       const [spotTape,macroTapeData]=await Promise.all([cryptoTape().catch(()=>[]),macroTape().catch(()=>[])]);
       const context={
-        spotTape,macroTape:macroTapeData,
+        spotTape,macroTape:macroTapeData,legacyIntelligence:legacyBrokerIntelligence(symbol),
         perpsMarket,dexMarkets,arbitrageMarkets,
         signalHistory:(()=>{const h=brokerHistory(symbol,7);return {available:h.available,samples:h.samples,startedAt:h.startedAt,sources:h.sources,recent:h.recent.slice(0,8).map((r:any)=>({source:r.source,timeframe:r.timeframe,direction:r.direction,score:r.score,sourceAt:r.sourceAt,observedAt:r.observedAt}))};})(),timeframes,
         clock:new Date().toISOString(),mode,marginUsd:margin,
@@ -421,6 +429,7 @@ export function registerMarketBroker(app:Express,port:number){
               'Radar, Hunter, Scope, DCA and Grid share market research; do not count them as separate independent votes. Historical observations only begin with this broker journal. '+
               'Require at least one FRESH confirmation: Signal Desk readiness >=68 matching direction OR qualified Radar score >=79 matching direction; otherwise WAIT. Opposing directional signals or opposing multi-timeframe alignment also mean WAIT. '+
               'Paper-only DEX orderbook/funding observations are not actionable directional signals. '+
+              'Original Hunter and Perps research databases have retrospective labels; they are NOT live executions, independent models, out-of-sample accuracy, or calibrated trade win probabilities. Use old records as historical context only, never as live confirmation. '+
               'Lead with BUY, SELL, or WAIT only when supported; disclose disagreeing or unavailable bots. '+
               'Give data-derived entries/stops/targets with clear invalidation when appropriate, noting trading fees/funding omitted. '+
               'For leverage use research scenarios; NEVER suggest exceeding the existing 2x real-test cap. '+

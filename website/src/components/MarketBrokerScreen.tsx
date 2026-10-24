@@ -20,6 +20,12 @@ type BrokerBots={
   scan?:{scannedMarkets:number;deepAnalyzed:number;source:string|null};
 };
 type Timeframes={live:number;checked:number;alignment:string;items:{timeframe:string;status:string;signal:'BUY'|'SELL'|'WAIT'|null;rsi:number|null;asOf:number|null}[];directionCounts:{buy:number;sell:number;wait:number}};
+type LegacyIntelligence={
+  connected:number;asOf:number;
+  sources:{source:string;status:'LIVE'|'STALE'|'HISTORICAL'|'UNAVAILABLE';observations:number;firstAt:number|null;lastAt:number|null;newest?:Record<string,number|string|null>}[];
+  outcomes:{source:string;horizonSeconds:number;samples:number;positiveDirectionalPct:number|null;label:string}[];
+  notes:string[];
+};
 type EvidenceRow={source:string;timeframe:string;direction:string;score:number|null;sourceAt:number;observedAt:number};
 type History={available:boolean;samples:number;startedAt:number|null;notice:string;sources:{source:string;timeframe:string;samples:number;lastAt:number}[];recent:EvidenceRow[]};
 type Arbitrage={status:string;venueCount:number;asOf?:number;opportunities:{longVenue:string;shortVenue:string;netSpreadBeforeFundingPct:number}[];note?:string};
@@ -49,6 +55,7 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
   const [bots,setBots]=useState<BrokerBots|null>(null);
   const [timeframes,setTimeframes]=useState<Timeframes|null>(null);
   const [history,setHistory]=useState<History|null>(null);
+  const [legacy,setLegacy]=useState<LegacyIntelligence|null>(null);
   const [venues,setVenues]=useState<Venues|null>(null);
   const [arbitrage,setArbitrage]=useState<Arbitrage|null>(null);
   const [evidenceError,setEvidenceError]=useState('');
@@ -156,6 +163,19 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
     const timer=window.setInterval(()=>void load(),120000);
     return()=>{mounted=false;window.clearInterval(timer);};
   },[symbol,refreshKey]);
+  useEffect(()=>{
+    let mounted=true;
+    const load=async()=>{
+      try{
+        const data=await request<LegacyIntelligence&{ok:boolean}>('/api/market-broker/legacy-intelligence?symbol='+symbol);
+        if(mounted)setLegacy(data);
+      }catch{if(mounted)setLegacy(null);}
+    };
+    setLegacy(null);void load();
+    const timer=window.setInterval(()=>void load(),180000);
+    return()=>{mounted=false;window.clearInterval(timer);};
+  },[symbol,refreshKey]);
+
   useEffect(()=>{
     if(mode!=='perps'){setVenues(null);setArbitrage(null);return;}
     let mounted=true;
@@ -338,6 +358,24 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
                   <span className="text-text-muted"> · as of {time(bots.radar.generatedAt)}</span>
                 </div>}
                 <p className="text-text-muted">Hunter, Scope, DCA and Grid currently reuse Radar-derived inputs. They are not four independent signal confirmations. DEX venue observations are paper-only.</p>
+                <div className="border-t border-white/10 pt-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <strong>VPS historical intelligence</strong>
+                    <span className="text-text-muted">{legacy?.connected??0} research datasets with records</span>
+                  </div>
+                  {legacy?.sources?.length?<div className="mt-1 space-y-1">
+                    {legacy.sources.filter(x=>x.observations>0).map((item,i)=><div key={item.source+i} className="flex justify-between gap-2 font-mono text-[10px]">
+                      <span className="truncate">{item.source}</span>
+                      <span className="shrink-0 text-text-muted">{item.observations.toLocaleString()} · {item.status.toLowerCase()}</span>
+                    </div>)}
+                    {!legacy.connected&&<div className="text-text-muted">No accessible historical rows for this asset</div>}
+                  </div>:<div className="text-text-muted mt-1">Older bot research unavailable or being checked</div>}
+                  {legacy?.outcomes?.length?(
+                    <p className="text-text-muted mt-2">
+                      Perps retrospective directional labels: {legacy.outcomes.map(x=>(x.horizonSeconds/60)+'m '+x.positiveDirectionalPct?.toFixed(1)+'% ('+x.samples.toLocaleString()+')').join(' · ')}. Not executed trades or validated predictive accuracy.
+                    </p>
+                  ):null}
+                </div>
                 <div className="border-t border-white/10 pt-1.5">
                   <strong>Evidence journal</strong> · {history?.available?'Recording new observations':'Storage unavailable'} · {history?.samples??0} samples
                   {history?.recent?.length?<div className="mt-1 space-y-1">
