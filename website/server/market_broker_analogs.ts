@@ -83,6 +83,9 @@ export function analogDistance(anchor:Vector,other:Vector):number|null{
   // Require most indicators to exist: no false similarity from 1 shared score.
   return count<6?null:Math.sqrt(sum/count);
 }
+export function analogQueryArgs(mode:Mode,symbol:string,side:Side,decision:string,after:number,before:number){
+  return mode==='spot'?[symbol,side,decision,after,before]:[symbol,side,after,before];
+}
 export function selectAnalogRows(rows:{id:number;at:number;distance:number}[],limit=36,spacingSeconds=14400,maxDistance=1.3){
   const chosen:{id:number;at:number;distance:number}[]=[];
   for(const x of rows.sort((a,b)=>a.distance-b.distance||b.at-a.at)){
@@ -124,7 +127,8 @@ function compute(db:Database.Database,symbol:string,mode:Mode):AnalogReport{
   const rowsSql=mode==='spot'?
     "SELECT id,created_at,direction,actual_decision,long_score,short_score,confidence,features_json FROM research_candidates WHERE asset=? AND direction=? AND actual_decision=? AND created_at BETWEEN ? AND ? ORDER BY created_at DESC,id DESC LIMIT 16000":
     "SELECT id,observed_at,decision,long_score,short_score,confidence,feature_json FROM closed_features WHERE coin=? AND decision=? AND observed_at BETWEEN ? AND ? ORDER BY observed_at DESC,id DESC LIMIT 15000";
-  const recent=db.prepare(rowsSql).all(symbol,side,anchor.decision,after,before) as any[];
+  const args=analogQueryArgs(mode,symbol,side,anchor.decision,after,before);
+  const recent=db.prepare(rowsSql).all(...args) as any[];
   const distances:{id:number;at:number;distance:number}[]=[];
   for(const row of recent){
     const sample=unpack(mode,row);

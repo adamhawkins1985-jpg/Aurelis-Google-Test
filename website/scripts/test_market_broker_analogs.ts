@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {analogDistance,selectAnalogRows,historicalAnalogs} from '../server/market_broker_analogs';
+import {analogDistance,selectAnalogRows,historicalAnalogs,analogQueryArgs} from '../server/market_broker_analogs';
 
 const anchor={keys:['a','b','c','d','e','f'],values:[50,50,60,48,51,20],scales:[25,25,25,20,20,20]};
 const equal={...anchor,values:[50,50,60,48,51,20]};
@@ -17,6 +17,8 @@ const candidates=[
 const selected=selectAnalogRows(candidates,36,14400,1.3);
 assert.deepEqual(selected.map(x=>x.id),[2,3,5]);
 assert.ok(selected.every((x,i)=>selected.slice(i+1).every(y=>Math.abs(x.at-y.at)>=14400)));
+assert.deepEqual(analogQueryArgs('spot','BTC','SHORT','NO_TRADE',1,2),['BTC','SHORT','NO_TRADE',1,2]);
+assert.deepEqual(analogQueryArgs('perps','BTC','SHORT','SHORT',1,2),['BTC','SHORT',1,2]);
 const unsupported=await historicalAnalogs('INVALID_PAIR','perps');
 assert.equal(unsupported.sourceStatus,'UNAVAILABLE');
 assert.equal(unsupported.outcomes.length,0);
