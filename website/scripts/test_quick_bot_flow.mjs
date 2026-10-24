@@ -7,23 +7,32 @@ const hunter=readFileSync('src/components/trade/HunterPerpsView.tsx','utf8');
 const live=readFileSync('src/components/trade/LiveBetView.tsx','utf8');
 const auto=readFileSync('src/components/trade/BotAutoScanView.tsx','utf8');
 const calculator=readFileSync('src/components/trade/BetScenarioCalculator.tsx','utf8');
+const opportunity=readFileSync('src/services/botOpportunity.ts','utf8');
 
 assert(screen.includes("{ id: 'radar', label: 'AUTO SCAN' }"), 'Auto Scan must be the primary bot entry');
 assert(screen.includes("{ id: 'live', label: 'LIVE BET' }"), 'Live Bet must remain one click away');
 assert(screen.includes('Other tools'), 'Other specialist bots must remain accessible in collapsed tools');
+assert(screen.includes("{ id: 'dex', label: 'DEX RADAR · PAPER' }") && screen.includes('<DexTradeRadarView'),
+  'DEX research must be reachable without implying exchange execution');
 assert(screen.includes('<BotAutoScanView'), 'Radar must use automated pipeline instead of manual Hunter navigation');
 assert(screen.includes('setAutoScanEnabled(false)'), 'Handoff pauses scanning so the user is not spammed with repeated bets');
 assert(screen.includes('setPendingTradeSetup(setup)') && screen.includes("setActiveBotTab('live')"),
   'Auto-detected vetted setups must go directly to Live Bet');
 assert(auto.includes('/api/trade-radar?mode=all&limit=100&force=1') && auto.includes('const candidates = result.candidates;'),
   'Auto Scan must request and evaluate the complete ranked response instead of truncating at five');
+assert(auto.includes('filterAndSortOpportunities') && auto.includes('Best signals this scan') && auto.includes('setSelectedId('),
+  'Opportunity Desk must display an interactive ranked shortlist rather than one blind auto-handoff');
+assert(auto.includes('BetScenarioCalculator') && auto.includes('Why it matters:') && auto.includes('What could invalidate it'),
+  'Opportunity Desk must explain signals, counter-evidence and interactive P&L');
 assert(auto.includes('/api/bots/kraken-margin-handoff/'), 'Hunter executable quote and risk check must still run before Live Bet');
-assert(auto.includes('verdict?.compatible !== true'), 'Unverified venue compatibility must block the pipeline');
+assert(auto.includes('verdict?.compatible !== true') && auto.includes('const checkedAt = Number(verdict.checkedAt)'),
+  'Unverified or stale venue quotes must block the pipeline');
 assert(auto.includes('controller.abort()'), 'Pausing scanner must abort outstanding preflight requests');
-assert(auto.includes('riskPct > 0 && riskPct <= 5'), 'Maximum manual test stop-distance control must remain');
-assert(auto.includes('leverage = supported.includes(2) ? 2 : supported.includes(1) ? 1 : 0'),
+assert(opportunity.includes('stopPct > 0 && stopPct <= 5'), 'Maximum manual test stop-distance control must remain');
+assert(opportunity.includes('leverageReported.includes(2) ? 2 : leverageReported.includes(1) ? 1 : null'),
   'Auto scanner must respect exchange-supported leverage and the 2× test cap');
-assert(auto.includes('onBetReady(setup)'), 'Qualified bets automatically advance to human Live Bet review');
+assert(auto.includes('onBetReady(toReviewedSetup(row))') && auto.includes('freshCheckAndHandoff(selected)'),
+  'Only checked qualified bets can advance to human Live Bet review');
 assert(!auto.includes('/api/signal-desk/order/submit'), 'Auto scanner must never submit a real Kraken order');
 
 

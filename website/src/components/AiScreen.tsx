@@ -24,6 +24,7 @@ import { playHudSound, formatCurrency } from '../services/marketData';
 
 // Bot Views
 import { BotAutoScanView } from './trade/BotAutoScanView';
+import { DexTradeRadarView } from './trade/DexTradeRadarView';
 import type { SetupCandidate } from './trade/TradeRadarView';
 import { HunterPerpsView } from './trade/HunterPerpsView';
 import { ScopeTradeHunterView } from './trade/ScopeTradeHunterView';
@@ -44,6 +45,7 @@ export type AiBotTab =
   | 'dca'
   | 'grid'
   | 'arbitrage'
+  | 'dex'
   | 'live'
   | 'signals';
 
@@ -140,6 +142,8 @@ export const AiScreen: React.FC<AiScreenProps> = ({
         return 'Auto Scan';
       case 'hunter':
         return 'Hunter Perps';
+      case 'dex':
+        return 'DEX Research';
       case 'scope':
         return 'Scope Trade';
       case 'dca':
@@ -286,6 +290,7 @@ export const AiScreen: React.FC<AiScreenProps> = ({
   ];
   const advancedBotTabs: { id: AiBotTab; label: string }[] = [
     { id: 'hunter', label: 'HUNTER RESEARCH' },
+    { id: 'dex', label: 'DEX RADAR · PAPER' },
     { id: 'scope', label: 'SCOPE TRADE' },
     { id: 'dca', label: 'DCA' },
     { id: 'grid', label: 'GRID' },
@@ -294,7 +299,8 @@ export const AiScreen: React.FC<AiScreenProps> = ({
   ];
 
   const brokerRouteMessage: Record<AiBotTab,string> = {
-    radar:'Automated Kraken-backed scanning → Hunter market preflight → Live Bet manual review. Scanning and validation NEVER submit orders.',
+    radar:'Live Kraken rankings and per-market preflight. Select a bet for Live Bet manual review, or turn on automatic handoff. Scanning never places orders.',
+    dex:'Decentralized markets are researched using public indicative routing data only. Leverage, collateral, wallet route, fees and execution have NOT been verified.',
     hunter:'Kraken public futures prices plus Trade Radar research. Kraken Spot balances are NOT perpetual-futures collateral. Only a reviewed proposal can advance to Live Bet.',
     scope:'Kraken market-data research and shortlist only. Balances are read-only. Scope Trade does not submit brokerage orders.',
     dca:'Target accounts: Kraken Spot and Coinbase Advanced. Account status and funding plan shown below.',
@@ -329,6 +335,7 @@ export const AiScreen: React.FC<AiScreenProps> = ({
           onBetReady={handleAutoBetReady}
         />
       )}
+      {activeBotTab === 'dex' && <DexTradeRadarView coins={coins} soundEnabled={soundEnabled} />}
       {activeBotTab === 'hunter' && (
         <HunterPerpsView
           soundEnabled={soundEnabled}

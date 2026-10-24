@@ -53,6 +53,7 @@ jobs:
           npx tsx scripts/test_hunter_margin_handoff.ts
           node scripts/test_hunter_asset_selection.mjs
           node scripts/test_quick_bot_flow.mjs
+          npx tsx scripts/test_bot_opportunity.ts
           npx tsx scripts/test_market_broker_evidence.ts
           npx tsx scripts/test_market_broker_analogs.ts
           npx tsx scripts/test_market_broker_research_leverage.ts
