@@ -1,6 +1,6 @@
 import type { Express } from 'express';
 import { GoogleGenAI } from '@google/genai';
-import { recordMarketObservation, brokerHistory } from './market_broker_history';
+import { recordMarketObservation, brokerHistory, brokerObservedOutcomes } from './market_broker_history';
 import { legacyBrokerIntelligence } from './market_broker_legacy';
 import { historicalAnalogs } from './market_broker_analogs';
 import { calculatePerpsResearch, MAX_RESEARCH_LEVERAGE, REAL_KRAKEN_TEST_LEVERAGE_CAP, REAL_KRAKEN_FIRST_TEST_NOTIONAL_USD } from '../src/services/perpsResearch';
@@ -479,7 +479,7 @@ export function registerMarketBroker(app:Express,port:number){
     res.setHeader('Cache-Control','no-store');
     const symbol=safeSymbol(req.query.symbol);
     if(!COINS.includes(symbol))return res.status(400).json({ok:false,error:'unsupported_symbol'});
-    return res.json({ok:true,symbol,...brokerHistory(symbol,Number(req.query.days||7))});
+    return res.json({ok:true,symbol,...brokerHistory(symbol,Number(req.query.days||7)),forwardObservations:brokerObservedOutcomes(symbol,Number(req.query.days||7))});
   });
   app.get('/api/market-broker/timeframes',async(req,res)=>{
     res.setHeader('Cache-Control','no-store');
@@ -541,7 +541,7 @@ export function registerMarketBroker(app:Express,port:number){
         explicitBudgetUsd:(()=>{const value=/\$\s*(\d+(?:\.\d+)?)/.exec(message)?.[1];return value?clamp(Number(value),0,100000):null;})(),
         venue:mode==='perps'?'Kraken Derivatives public research only; US execution NOT VERIFIED':'Kraken Spot USD',
         liveMarket:{symbol:market.symbol,timeframe:market.timeframe,asOf:market.observedAt,source:market.source,...market.analysis},
-        brokerSignals:bot,marketWideResearch:marketWide,
+        brokerSignals:bot,marketWideResearch:marketWide,forwardObservations:crossAsset?null:brokerObservedOutcomes(symbol,30),
         recentHeadlines:headlines.slice(0,9).map(x=>({title:x.title,source:x.source,published:x.published,url:x.url})),
         riskPolicy:'Hypothetical research may model up to '+MAX_RESEARCH_LEVERAGE+'x but authorizes no orders. Real Kraken Spot/Margin first test still requires explicit approval and a maximum of '+REAL_KRAKEN_TEST_LEVERAGE_CAP+'x at $'+REAL_KRAKEN_FIRST_TEST_NOTIONAL_USD+' notional. This endpoint cannot place or prepare orders. Kraken Derivatives execution is not verified.'
       };
@@ -559,6 +559,7 @@ export function registerMarketBroker(app:Express,port:number){
               'Require at least one FRESH confirmation: Signal Desk readiness >=68 matching direction OR qualified Radar score >=79 matching direction; otherwise WAIT. Opposing directional signals or opposing multi-timeframe alignment also mean WAIT. '+
               'Paper-only DEX orderbook/funding observations are not actionable directional signals. '+
               'Original Hunter and Perps research databases have retrospective labels; they are NOT live executions, independent models, out-of-sample accuracy, or calibrated trade win probabilities. Use old records as historical context only, never as live confirmation. '+
+              'ForwardObservations (when present) are later measured spot-price movements, not orders, backtests, win probabilities or execution P&L; mention sample count and do not suggest predictive validity, especially with fewer than 15 samples. '+
               'The analog report is descriptive and source-specific: never treat positivePct as a predicted probability. When fewer than 15 time-separated matches, say evidence is insufficient. When sourceDecision=NO_TRADE, no directional recommendation may be inferred from analog outcomes. Name the source and sample sizes if discussing history. '+
               'If marketWideResearch exists, compare its actual candidates, cite the actual checked symbol universe and limited bot coverage, and do not claim the entire crypto market was scanned. If no fresh qualifying independent confirmation exists, state WAIT/no verified trade rather than manufacturing a winner. '+
               'For cross-market questions, no historical analog or legacy profile for the selected default coin may be described as proof about other scanned assets. '+
