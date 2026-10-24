@@ -26,6 +26,13 @@ type LegacyIntelligence={
   outcomes:{source:string;horizonSeconds:number;samples:number;positiveDirectionalPct:number|null;label:string}[];
   notes:string[];
 };
+type AnalogReport={
+  source:string;sourceStatus:'CURRENT'|'STALE'|'UNAVAILABLE';sourceDecision:string|null;
+  sourceAt:number|null;direction:'LONG'|'SHORT'|null;
+  observationsExamined:number;nearest:number;similarityMethod:string;message:string;
+  outcomes:{horizonSeconds:number;samples:number;positivePct:number|null;medianReturnPct:number|null;
+    meanReturnPct:number|null;p10ReturnPct:number|null;p90ReturnPct:number|null;medianFavorablePct:number|null;medianAdversePct:number|null}[];
+};
 type EvidenceRow={source:string;timeframe:string;direction:string;score:number|null;sourceAt:number;observedAt:number};
 type History={available:boolean;samples:number;startedAt:number|null;notice:string;sources:{source:string;timeframe:string;samples:number;lastAt:number}[];recent:EvidenceRow[]};
 type Arbitrage={status:string;venueCount:number;asOf?:number;opportunities:{longVenue:string;shortVenue:string;netSpreadBeforeFundingPct:number}[];note?:string};
@@ -56,6 +63,8 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
   const [timeframes,setTimeframes]=useState<Timeframes|null>(null);
   const [history,setHistory]=useState<History|null>(null);
   const [legacy,setLegacy]=useState<LegacyIntelligence|null>(null);
+  const [analogs,setAnalogs]=useState<AnalogReport|null>(null);
+  const [analogError,setAnalogError]=useState('');
   const [venues,setVenues]=useState<Venues|null>(null);
   const [arbitrage,setArbitrage]=useState<Arbitrage|null>(null);
   const [evidenceError,setEvidenceError]=useState('');
@@ -175,6 +184,19 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
     const timer=window.setInterval(()=>void load(),180000);
     return()=>{mounted=false;window.clearInterval(timer);};
   },[symbol,refreshKey]);
+
+  useEffect(()=>{
+    let mounted=true;
+    const load=async()=>{
+      try{
+        const data=await request<AnalogReport&{ok:boolean}>('/api/market-broker/analogs?symbol='+symbol+'&mode='+mode);
+        if(mounted){setAnalogs(data);setAnalogError('');}
+      }catch{if(mounted){setAnalogs(null);setAnalogError('Historical comparison unavailable');}}
+    };
+    setAnalogs(null);setAnalogError('');void load();
+    const timer=window.setInterval(()=>void load(),180000);
+    return()=>{mounted=false;window.clearInterval(timer);};
+  },[symbol,mode,refreshKey]);
 
   useEffect(()=>{
     if(mode!=='perps'){setVenues(null);setArbitrage(null);return;}
@@ -337,6 +359,33 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
                 {item.timeframe} {item.signal||'OFF'}
               </span>):<span className="text-[10px] text-text-muted">{evidenceError||'Checking timeframes…'}</span>}
               <span className="text-[10px] text-text-muted ml-auto">{timeframes?.alignment||'No alignment yet'} · {timeframes?.live??0}/5 live</span>
+            </div>
+            <div className="mt-3 border-t border-white/10 pt-2" aria-label="Historically similar recorded market setups">
+              <div className="flex justify-between items-center gap-2">
+                <span className="text-xs font-semibold">Similar past setups · {mode==='spot'?'Hunter':'Perps'}</span>
+                <span className="text-[10px] text-text-muted">
+                  {analogs?analogs.nearest+' matches / 40d':analogError||'Checking…'}
+                </span>
+              </div>
+              {analogs?(
+                <>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1 text-[10px] text-text-muted">
+                    <span>Latest: {analogs.sourceDecision||'Unknown'} {analogs.direction?'('+analogs.direction+')':''}</span>
+                    <span>{analogs.sourceStatus.toLowerCase()} · {analogs.sourceAt?new Date(analogs.sourceAt).toLocaleString():'No source time'}</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mt-2">
+                    {analogs.outcomes.map(x=><div key={x.horizonSeconds} className="rounded-md border border-white/5 bg-surface-canvas p-2">
+                      <div className="text-[9px] text-text-muted">{x.horizonSeconds<3600?x.horizonSeconds/60+'m':x.horizonSeconds/3600+'h'} forward · {x.samples} labeled</div>
+                      <div className="font-mono text-xs font-semibold">{x.samples>=15&&x.positivePct!=null?x.positivePct.toFixed(1)+'% positive':'Insufficient'}</div>
+                      <div className="text-[9px] text-text-muted">{x.samples>=15&&x.medianReturnPct!=null?'median '+signed(x.medianReturnPct):'No reliable comparison'}</div>
+                    </div>)}
+                  </div>
+                  <div className="flex items-start justify-between gap-2 mt-2 text-[10px] text-text-muted">
+                    <span>{analogs.message} Paper/shadow forward movement only, not trade win odds or net P/L. No matching data is used as live confirmation.</span>
+                    <button className="shrink-0 text-primary-container hover:underline" type="button" onClick={()=>void ask('Compare '+symbol+' '+mode+' current setup with recorded historical analogs. What happened at each horizon, how many nonoverlapping samples, what disagrees and should I wait?')}>Ask AI</button>
+                  </div>
+                </>
+              ):<div className="text-[10px] text-text-muted mt-2">{analogError||'Querying recorded research outcomes…'}</div>}
             </div>
             <details className="mt-2 border-t border-white/10 pt-2 text-[10px] text-text-secondary">
               <summary className="cursor-pointer font-semibold text-text-primary flex justify-between items-center">

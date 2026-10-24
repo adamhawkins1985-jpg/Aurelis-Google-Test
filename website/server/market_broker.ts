@@ -2,6 +2,7 @@ import type { Express } from 'express';
 import { GoogleGenAI } from '@google/genai';
 import { recordMarketObservation, brokerHistory } from './market_broker_history';
 import { legacyBrokerIntelligence } from './market_broker_legacy';
+import { historicalAnalogs } from './market_broker_analogs';
 
 type Bar={time:number;open:number;high:number;low:number;close:number;volume:number};
 type Frame='5m'|'15m'|'30m'|'1h'|'4h'|'8h'|'12h'|'1d'|'3d'|'7d';
@@ -357,6 +358,13 @@ export function registerMarketBroker(app:Express,port:number){
     try{return res.json({ok:true,...legacyBrokerIntelligence(symbol)});}
     catch{return res.status(503).json({ok:false,error:'legacy_market_history_unavailable'});}
   });
+  app.get('/api/market-broker/analogs',async(req,res)=>{
+    res.setHeader('Cache-Control','no-store');
+    const symbol=safeSymbol(req.query.symbol),mode=req.query.mode==='perps'?'perps':'spot';
+    if(!COINS.includes(symbol))return res.status(400).json({ok:false,error:'unsupported_symbol'});
+    try{return res.json(await historicalAnalogs(symbol,mode));}
+    catch{return res.status(503).json({ok:false,error:'historical_comparison_unavailable'});}
+  });
   app.get('/api/market-broker/history',async(req,res)=>{
     res.setHeader('Cache-Control','no-store');
     const symbol=safeSymbol(req.query.symbol);
@@ -397,7 +405,7 @@ export function registerMarketBroker(app:Express,port:number){
     const message=String(req.body?.message||'').trim().slice(0,700),margin=clamp(num(req.body?.margin)||100,1,100000);
     if(!COINS.includes(symbol)||!message)return res.status(400).json({ok:false,error:'invalid_broker_question'});
     try{
-      const [market,bot,headlines,timeframes]=await Promise.all([snapshot(symbol,tf),botSignals(symbol,port),brokerNews().catch(()=>[]),timeframeEvidence(symbol).catch(()=>null)]);
+      const [market,bot,headlines,timeframes,analogs]=await Promise.all([snapshot(symbol,tf),botSignals(symbol,port),brokerNews().catch(()=>[]),timeframeEvidence(symbol).catch(()=>null),historicalAnalogs(symbol,mode)]);
       if(!market.analysis.dataFresh)throw new Error('market_data_stale');
       const crossAsset=/where|best|which|compare|market|opportunit|scan/.test(message.toLowerCase());
       const peers=crossAsset?(await Promise.allSettled(['BTC','ETH','SOL','XRP'].filter(x=>x!==symbol).map(s=>snapshot(s,'1h'))))
@@ -407,6 +415,7 @@ export function registerMarketBroker(app:Express,port:number){
       const [spotTape,macroTapeData]=await Promise.all([cryptoTape().catch(()=>[]),macroTape().catch(()=>[])]);
       const context={
         spotTape,macroTape:macroTapeData,legacyIntelligence:legacyBrokerIntelligence(symbol),
+        historicalAnalogComparison:{source:analogs.source,sourceStatus:analogs.sourceStatus,sourceAt:analogs.sourceAt,sourceDecision:analogs.sourceDecision,direction:analogs.direction,nearest:analogs.nearest,featuresUsed:analogs.featuresUsed,method:analogs.similarityMethod,outcomes:analogs.outcomes,notes:analogs.notes,message:analogs.message},
         perpsMarket,dexMarkets,arbitrageMarkets,
         signalHistory:(()=>{const h=brokerHistory(symbol,7);return {available:h.available,samples:h.samples,startedAt:h.startedAt,sources:h.sources,recent:h.recent.slice(0,8).map((r:any)=>({source:r.source,timeframe:r.timeframe,direction:r.direction,score:r.score,sourceAt:r.sourceAt,observedAt:r.observedAt}))};})(),timeframes,
         clock:new Date().toISOString(),mode,marginUsd:margin,
@@ -430,6 +439,7 @@ export function registerMarketBroker(app:Express,port:number){
               'Require at least one FRESH confirmation: Signal Desk readiness >=68 matching direction OR qualified Radar score >=79 matching direction; otherwise WAIT. Opposing directional signals or opposing multi-timeframe alignment also mean WAIT. '+
               'Paper-only DEX orderbook/funding observations are not actionable directional signals. '+
               'Original Hunter and Perps research databases have retrospective labels; they are NOT live executions, independent models, out-of-sample accuracy, or calibrated trade win probabilities. Use old records as historical context only, never as live confirmation. '+
+              'The analog report is descriptive and source-specific: never treat positivePct as a predicted probability. When fewer than 15 time-separated matches, say evidence is insufficient. When sourceDecision=NO_TRADE, no directional recommendation may be inferred from analog outcomes. Name the source and sample sizes if discussing history. '+
               'Lead with BUY, SELL, or WAIT only when supported; disclose disagreeing or unavailable bots. '+
               'Give data-derived entries/stops/targets with clear invalidation when appropriate, noting trading fees/funding omitted. '+
               'For leverage use research scenarios; NEVER suggest exceeding the existing 2x real-test cap. '+

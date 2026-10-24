@@ -54,6 +54,7 @@ jobs:
           node scripts/test_hunter_asset_selection.mjs
           node scripts/test_quick_bot_flow.mjs
           npx tsx scripts/test_market_broker_evidence.ts
+          npx tsx scripts/test_market_broker_analogs.ts
           npx tsc --noEmit -p tsconfig.app-ci.json
           npm run build
       - name: Store verified build artifact
