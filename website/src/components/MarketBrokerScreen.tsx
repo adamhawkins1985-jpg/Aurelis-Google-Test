@@ -93,7 +93,7 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
   const [asking,setAsking]=useState(false);
   const contextRef=useRef(symbol+':'+mode);
   contextRef.current=symbol+':'+mode;
-  useEffect(()=>{setMessages([]);setQuestion('');},[symbol,mode]);
+  // Preserve the conversation across mode/coin changes; the request is still scoped to its selected context.
 
   useEffect(()=>{
     let mounted=true;
@@ -272,19 +272,15 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
     analogs:analogs?{nearest:analogs.nearest,sourceDecision:analogs.sourceDecision,outcomes:analogs.outcomes}:null,
     news:relatedNews?{title:relatedNews.title,source:relatedNews.source,time:relatedNews.time}:null
   });
-  const suggestions=mode==='spot'?[
-    'Explain the current '+symbol+' BUY, SELL or WAIT decision in plain English.',
-    'Where might a careful '+symbol+' spot limit buy make sense, and what invalidates it?',
-    'What do our '+symbol+' bots and today\'s headlines actually confirm?'
-  ]:[
-    'Does our current '+symbol+' data support LONG, SHORT, or WAIT? Explain the disagreements.',
-    'Explain my selected Perps margin and leverage, including possible profit, loss and liquidation risk.',
-    'What would need to change before a '+symbol+' Perps setup becomes more compelling?'
+  const suggestions=[
+    'Markets are down. Scan our supported coins and explain which might be worth accumulating, and why.',
+    'I have $100 total. Screen for a potential perp setup, explain the risks, or tell me to wait.',
+    'Teach me why our bots disagree on '+symbol+' and what would change the setup.'
   ];
-
   const ask=async(prompt?:string)=>{
     const query=(prompt||question).trim();
     if(!query||asking)return;
+    const intentMode=/perp|leverag|futures|liquidat|short\b|long\b/i.test(query)?'perps':/accumulat|spot|buy and hold/i.test(query)?'spot':mode;
     const scope=contextRef.current;
     setQuestion('');
     setMessages(current=>[...current.slice(-12),{role:'user',text:query,at:Date.now()}]);
@@ -292,7 +288,7 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
     try{
       const answer=await request<{reply:string;engine:string;marketAsOf:number}>('/api/market-broker/chat',{
         method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({message:query,symbol,tf:frame,mode,margin:marginUsd,
+        body:JSON.stringify({message:query,symbol,tf:frame,mode:intentMode,margin:marginUsd,
           researchLeverage:leverage,researchSide,
           favorableMovePct:Number(favorableMove),adverseMovePct:Number(adverseMove)})
       });
@@ -316,6 +312,38 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
         <button type="button" onClick={()=>setRefreshKey(x=>x+1)} className={pill(false)} aria-label="Refresh broker market data"><RefreshCw size={13} className="inline mr-1"/>Refresh</button>
       </div>
 
+      <section aria-label="Ask AURELIS AI" className="flex flex-col gap-2">
+        <p className="text-xs text-text-secondary">Tell me your budget or what the market is doing. I’ll look at what the available data actually supports, explain the reasoning, and tell you when waiting makes more sense.</p>
+        <div className="rounded-xl border border-primary-container/30 bg-surface-panel p-3 sm:p-4 flex flex-col gap-3 min-h-[500px]">
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-1.5 text-lg font-bold"><Bot size={19} className="text-primary-container"/>AURELIS AI</span>
+            <span className="text-[10px] text-text-muted">Ask about any of 10 screened markets · Research only</span>
+          </div>
+          <div role="log" aria-label="AURELIS market broker chat" className="max-h-[440px] min-h-[230px] overflow-y-auto flex flex-col gap-2">
+            {!messages.length&&<div className="text-[12px] text-text-secondary leading-relaxed">Ask me what to buy, what to avoid, or what to learn. For market-wide questions I screen the configured coins, check available bot signals, and tell you what is actually supported. No charts to decipher.</div>}
+            {messages.slice(-12).map((m,i)=><div key={m.at+'-'+i} className={'rounded-md p-2 text-[11px] leading-relaxed whitespace-pre-wrap '+(m.role==='user'?'bg-primary-container/10 ml-6':'bg-surface-canvas mr-2')}>
+              {m.text}
+              {m.engine&&<div className="mt-1.5 text-[9px] text-text-muted">{m.engine} · {time(m.at)}</div>}
+            </div>)}
+            {asking&&<div className="text-[11px] text-text-muted">Checking live market and bot data…</div>}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {suggestions.map(suggestion=><button key={suggestion} type="button" disabled={asking} onClick={()=>void ask(suggestion)}
+              className="rounded-full border border-primary-container/30 bg-primary-container/5 px-2.5 py-1.5 text-[10px] text-left text-text-primary hover:bg-primary-container/15 disabled:opacity-40">{suggestion}</button>)}
+          </div>
+          <form className="mt-auto flex gap-1.5" onSubmit={e=>{e.preventDefault();void ask()}}>
+            <input aria-label="Ask AURELIS AI" value={question} maxLength={700} onChange={e=>setQuestion(e.target.value)}
+              placeholder="Ask anything: Which coins to accumulate? I have $100, find a potential perp..." className="w-full min-w-0 rounded-md border border-white/10 bg-surface-canvas px-2.5 py-2 text-xs text-text-primary placeholder:text-text-muted"/>
+            <button disabled={!question.trim()||asking} type="submit" className="rounded-md bg-primary-container text-on-primary-container px-3 disabled:opacity-40" aria-label="Send broker question"><Send size={15}/></button>
+          </form>
+        </div>
+      </section>
+      <button type="button" aria-expanded={showEvidence} onClick={()=>setShowEvidence(x=>!x)}
+        className="w-full text-left rounded-lg border border-white/10 bg-surface-panel p-3 flex justify-between items-center gap-2 hover:border-primary-container/30">
+        <span className="text-xs font-semibold">{showEvidence?'Hide technical workspace':'Show supporting charts, bot reports & research tools'}</span>
+        <span className="text-[11px] text-text-secondary">{showEvidence?'Close':'Optional details'} <ChevronRight size={13} className={'inline '+(showEvidence?'rotate-90':'')}/></span>
+      </button>
+      <div className={showEvidence?'flex flex-col gap-2.5':'hidden'} aria-hidden={!showEvidence}>
       <div className="rounded-lg border border-white/10 bg-surface-panel overflow-hidden" aria-label="Live crypto and macro market prices">
         {ticker.length ? (
           <div className="overflow-hidden">
@@ -389,13 +417,8 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
       </section>
 
       <div className="flex flex-col gap-3">
-      <button type="button" onClick={()=>setShowEvidence(x=>!x)} aria-expanded={showEvidence}
-        className="order-2 w-full rounded-lg border border-white/10 bg-surface-panel p-3 text-left flex justify-between gap-2 items-center hover:border-primary-container/30">
-        <span className="font-semibold text-xs">{showEvidence?'Hide technical details':'Explore live chart, full bot evidence & history'}</span>
-        <span className="text-[11px] text-text-secondary">{showEvidence?'Collapse':'Open when you want the numbers'} <ChevronRight size={14} className={'inline transition-transform '+(showEvidence?'rotate-90':'')}/></span>
-      </button>
 
-        <div className={showEvidence?"order-3 min-w-0 flex flex-col gap-2.5":"hidden"} aria-hidden={!showEvidence}>
+        <div className="order-3 min-w-0 flex flex-col gap-2.5">
           <div className="rounded-lg border border-white/10 bg-surface-panel overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
               <div className="flex items-center gap-2">
@@ -669,29 +692,7 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
             )}
           </div>
 
-          <div className="order-1 rounded-xl border border-primary-container/25 bg-surface-panel p-3 sm:p-4 flex flex-col gap-3 min-h-[330px]">
-            <div className="flex items-center justify-between">
-              <span className="flex items-center gap-1.5 text-xs font-bold"><Bot size={14} className="text-primary-container"/>AURELIS AI</span>
-              <span className="text-[10px] text-text-muted">{symbol} · {mode.toUpperCase()}</span>
-            </div>
-            <div role="log" aria-label="AURELIS market broker chat" className="max-h-[280px] min-h-[95px] overflow-y-auto flex flex-col gap-2">
-              {!messages.length&&<div className="text-[12px] text-text-secondary leading-relaxed">Ask me about an entry, market movement, or what the bots disagree on. I'll use the latest available evidence and explain the reasoning.</div>}
-              {messages.slice(-12).map((m,i)=><div key={m.at+'-'+i} className={'rounded-md p-2 text-[11px] leading-relaxed whitespace-pre-wrap '+(m.role==='user'?'bg-primary-container/10 ml-6':'bg-surface-canvas mr-2')}>
-                {m.text}
-                {m.engine&&<div className="mt-1.5 text-[9px] text-text-muted">{m.engine} · {time(m.at)}</div>}
-              </div>)}
-              {asking&&<div className="text-[11px] text-text-muted">Checking live market and bot data…</div>}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {suggestions.map(suggestion=><button key={suggestion} type="button" disabled={asking} onClick={()=>void ask(suggestion)}
-                className="rounded-full border border-primary-container/30 bg-primary-container/5 px-2.5 py-1.5 text-[10px] text-left text-text-primary hover:bg-primary-container/15 disabled:opacity-40">{suggestion}</button>)}
-            </div>
-            <form className="mt-auto flex gap-1.5" onSubmit={e=>{e.preventDefault();void ask()}}>
-              <input aria-label="Ask AURELIS AI" value={question} maxLength={700} onChange={e=>setQuestion(e.target.value)}
-                placeholder="Where should my BTC spot limit go?" className="w-full min-w-0 rounded-md border border-white/10 bg-surface-canvas px-2.5 py-2 text-xs text-text-primary placeholder:text-text-muted"/>
-              <button disabled={!question.trim()||asking} type="submit" className="rounded-md bg-primary-container text-on-primary-container px-3 disabled:opacity-40" aria-label="Send broker question"><Send size={15}/></button>
-            </form>
-          </div>
+
         </div>
       </div>
 
@@ -709,6 +710,7 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
             <ExternalLink size={12} className="text-text-muted shrink-0 mt-0.5"/>
           </a>)}
         </div>:<p className="text-[11px] text-text-muted">{newsError||'Checking news feeds. No verified headlines currently available.'}</p>}
+      </div>
       </div>
       <div className="flex flex-wrap gap-2 justify-between text-[10px] text-text-muted">
         <span><Activity size={12} className="inline mr-1"/>Spot Kraken · Macro quotes delayed/last available · Bot signals only when available</span>

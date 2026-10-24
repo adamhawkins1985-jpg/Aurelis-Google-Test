@@ -233,6 +233,75 @@ async function botSignals(symbol:string,port:number){
   });
 }
 
+
+/**
+ * Bounded cross-asset research. Screening breadth is explicit and never
+ * converted to a probability or an executable recommendation.
+ */
+async function crossAssetResearch(mode:'spot'|'perps',port:number){
+  return cached('broker:marketWide:'+mode,90000,async()=>{
+    const examined:string[]=[];const items:any[]=[];
+    // Small batches avoid exhausting Kraken's public OHLC rate limits.
+    for(let i=0;i<COINS.length;i+=4){
+      const batch=COINS.slice(i,i+4);
+      const results=await Promise.allSettled(batch.map(symbol=>snapshot(symbol,'1h')));
+      for(let j=0;j<batch.length;j++){
+        examined.push(batch[j]);const r=results[j];
+        if(r.status==='fulfilled'&&r.value.analysis.dataFresh){
+          const a=r.value.analysis;
+          items.push({symbol:batch[j],spotPrice:a.price,indicator:a.signal,indicatorScore:a.score,
+            rsi:a.rsi,volumeRatio:a.volumeRatio,support:a.support,resistance:a.resistance,observedAt:r.value.observedAt,
+            indicatorSource:'Kraken Spot USD 1h'});
+        }
+      }
+    }
+    // Fetch explicit bot confirmation only for leading technical candidates;
+    // never claim unexamined symbols lack a bot signal.
+    const toCheck=items.filter(x=>x.indicator!=='WAIT')
+      .sort((a,b)=>Math.abs(b.indicatorScore)-Math.abs(a.indicatorScore)).slice(0,5);
+    const checks=await Promise.allSettled(toCheck.map(async row=>{
+      const [bot,perp]=await Promise.all([
+        botSignals(row.symbol,port),
+        mode==='perps'?futuresContext(row.symbol).catch(()=>null):Promise.resolve(null)
+      ]);
+      const direction=row.indicator==='BUY'?'LONG':'SHORT';
+      const desk=bot.signalDesk,radar=bot.radar;
+      const conflict=(desk&&['LONG','SHORT'].includes(desk.direction)&&desk.direction!==direction)||
+        (radar&&['LONG','SHORT'].includes(radar.direction)&&radar.direction!==direction);
+      const deskConfirmation=desk?.direction===direction&&desk.readiness>=68;
+      const radarConfirmation=radar?.direction===direction&&radar.qualified&&radar.score>=79;
+      return {symbol:row.symbol,radarStatus:bot.status.radar,deskStatus:bot.status.signalDesk,
+        desk:desk?{direction:desk.direction,readiness:desk.readiness,at:desk.generatedAt}:null,
+        radar:radar?{direction:radar.direction,score:radar.score,qualified:radar.qualified,at:radar.generatedAt}:null,
+        confirmation:!conflict&&(deskConfirmation||radarConfirmation)?'BOT_CONFIRMED':'UNCONFIRMED',
+        disagreement:!!conflict,
+        perps:mode==='perps'?(perp?{contract:perp.contract,markPrice:perp.markPrice,fundingRate:perp.fundingRate,
+          openInterest:perp.openInterest,asOf:perp.asOf,executionVerified:false}:null):undefined
+      };
+    }));
+    const bySymbol=new Map<string,any>();
+    checks.forEach((r,i)=>{if(r.status==='fulfilled')bySymbol.set(toCheck[i].symbol,r.value)});
+    const candidates=items.map(item=>({
+      ...item,botEvidence:bySymbol.get(item.symbol)||null,
+      status:bySymbol.get(item.symbol)?.confirmation==='BOT_CONFIRMED'?'CONFIRMED_RESEARCH':
+        bySymbol.has(item.symbol)?'UNCONFIRMED_OR_DISAGREEMENT':'BOT_NOT_SCREENED'
+    })).sort((a,b)=>{
+      const rank=(x:any)=>x.status==='CONFIRMED_RESEARCH'?0:x.status==='UNCONFIRMED_OR_DISAGREEMENT'?1:2;
+      return rank(a)-rank(b)||Math.abs(b.indicatorScore)-Math.abs(a.indicatorScore);
+    });
+    return {asOf:Date.now(),mode,universe:COINS,checked:examined,spotSnapshots:items.length,
+      botCandidatesChecked:checks.filter(x=>x.status==='fulfilled').length,
+      candidates:candidates.slice(0,10),
+      notes:[
+        'This checks 10 configured Kraken Spot/USD symbols, not the entire crypto or Kraken futures market.',
+        'Bot evidence is checked for up to five directional 1h candidates; other assets are unassessed, not rejected.',
+        'Kraken derivatives information is public research only and does not verify U.S. account eligibility or an executable contract.',
+        'The ranking prioritizes research confirmation and technical score; it is not a return forecast or assessment of long-term coin fundamentals.',
+        'Do not recommend a specific entry as qualified without fresh, non-conflicting independent Signal Desk or Radar confirmation.'
+      ]};
+  });
+}
+
 async function timeframeEvidence(symbol:string){
   return cached('broker:timeframes:'+symbol,90000,async()=>{
     const frames:Frame[]=['5m','15m','1h','4h','1d'];
@@ -308,6 +377,32 @@ async function arbitrageEvidence(symbol:string){
       venues:venueRows,asOf:Date.now(),
       note:'Arbitrage spread is not a directional buy/sell signal. Funding, slippage and two-leg execution not attested.'};
   });
+}
+
+function marketWideFallback(scan:any,mode:'spot'|'perps',message:string){
+  const all=Array.isArray(scan?.candidates)?scan.candidates:[];
+  const confirmed=all.filter((x:any)=>x.status==='CONFIRMED_RESEARCH'&&
+    (mode!=='perps'||x.botEvidence?.perps?.markPrice>0));
+  const coverage='Screened '+Number(scan?.spotSnapshots||0)+' fresh 1h Kraken Spot charts out of '+Number(scan?.checked?.length||0)+
+    ' configured symbols and reviewed '+Number(scan?.botCandidatesChecked||0)+' leading candidate bot feeds. ';
+  const budget=/\$\s*(\d+(?:\.\d+)?)/.exec(message)?.[1];
+  const budgetNote=budget?' Your total available budget is USD '+budget+', not an automatic margin allocation.':'';
+  const caveat=mode==='perps'?
+    ' U.S. perpetual execution eligibility is unverified. Real Kraken first test stays USD 10 notional, at most 2x, with explicit approval.':
+    ' Short-term technical screens cannot establish which coin is a good long-term investment.';
+  if(!confirmed.length){
+    const researched=all.filter((x:any)=>x.botEvidence);
+    const next=researched.slice(0,2).map((x:any)=>x.symbol+' '+x.indicator+' chart / '+x.status.toLowerCase().replaceAll('_',' ')).join('; ');
+    return 'WAIT. '+coverage+'No candidate had both non-conflicting bot confirmation and '+(mode==='perps'?'a verified public perpetual quote. ':'a current technical setup. ')+
+      (next?'Observed: '+next+'. ':'')+'No verified trade has been identified; do not deploy the whole budget.'+budgetNote+caveat;
+  }
+  const ranked=confirmed.slice(0,3).map((x:any)=>x.symbol+' '+x.indicator+
+    ' (Kraken spot '+Number(x.spotPrice).toFixed(x.spotPrice<1?5:2)+
+    ', RSI '+Number(x.rsi).toFixed(1)+', '+(x.botEvidence?.desk?.readiness?'Desk '+Math.round(x.botEvidence.desk.readiness)+'/100':'Radar confirmation')+
+    (mode==='perps'?' / public perp mark '+Number(x.botEvidence.perps.markPrice).toFixed(2):'')+')').join('; ');
+  return coverage+'Confirmed research candidates within this limited universe: '+ranked+
+    '. Other sources and long-term fundamentals require separate diligence. These are not buy orders or profit predictions.'+
+    budgetNote+caveat;
 }
 
 function fallbackReply(market:any,bots:any,mode:string,amount:number,extra:any={}){
@@ -405,7 +500,9 @@ export function registerMarketBroker(app:Express,port:number){
   });
   app.post('/api/market-broker/chat',async(req,res)=>{
     res.setHeader('Cache-Control','no-store');
-    const symbol=safeSymbol(req.body?.symbol),tf=safeFrame(req.body?.tf),mode=req.body?.mode==='perps'?'perps':'spot';
+    const symbol=safeSymbol(req.body?.symbol),tf=safeFrame(req.body?.tf),requestedMode=req.body?.mode==='perps'?'perps':'spot';
+    const intent=String(req.body?.message||'').toLowerCase();
+    const mode=/perp|leverag|futures|liquidat/.test(intent)?'perps':/accumulat|spot|buy and hold|long.term/.test(intent)?'spot':/\bshort\b|\blong position\b/.test(intent)?'perps':requestedMode;
     const message=String(req.body?.message||'').trim().slice(0,700),margin=clamp(num(req.body?.margin)||100,1,100000);
     const researchLeverage=clamp(Math.floor(num(req.body?.researchLeverage)||2),1,MAX_RESEARCH_LEVERAGE);
     const researchSide=req.body?.researchSide==='SHORT'?'SHORT' as const:'LONG' as const;
@@ -415,26 +512,25 @@ export function registerMarketBroker(app:Express,port:number){
     try{
       const [market,bot,headlines,timeframes,analogs]=await Promise.all([snapshot(symbol,tf),botSignals(symbol,port),brokerNews().catch(()=>[]),timeframeEvidence(symbol).catch(()=>null),historicalAnalogs(symbol,mode)]);
       if(!market.analysis.dataFresh)throw new Error('market_data_stale');
-      const crossAsset=/where|best|which|compare|market|opportunit|scan/.test(message.toLowerCase());
-      const peers=crossAsset?(await Promise.allSettled(['BTC','ETH','SOL','XRP'].filter(x=>x!==symbol).map(s=>snapshot(s,'1h'))))
-        .filter((x):x is PromiseFulfilledResult<any>=>x.status==='fulfilled')
-        .map(x=>({symbol:x.value.symbol,price:x.value.analysis.price,signal:x.value.analysis.signal,rsi:x.value.analysis.rsi,volumeRatio:x.value.analysis.volumeRatio,observedAt:x.value.observedAt})):[];
+      const crossAsset=/where|best|which|compare|market|opportunit|scan|accumulat|find me|good coin|what should i buy|down|\$\d/.test(message.toLowerCase());
+      const marketWide=crossAsset?await crossAssetResearch(mode,port).catch(()=>null):null;
       const [perpsMarket,dexMarkets,arbitrageMarkets]=mode==='perps'?await Promise.all([futuresContext(symbol).catch(()=>null),dexPublicEvidence(symbol).catch(()=>null),arbitrageEvidence(symbol).catch(()=>null)]):[null,null,null];
-      const researchScenario=mode==='perps'?calculatePerpsResearch({
+      const researchScenario=mode==='perps'&&!crossAsset?calculatePerpsResearch({
         marginUsd:margin,leverage:researchLeverage,side:researchSide,
         entryPrice:perpsMarket!==null && typeof perpsMarket.markPrice==='number' && perpsMarket.markPrice>0 && Date.now()-perpsMarket.asOf<90000 ? perpsMarket.markPrice : null,
         favorableMovePct,adverseMovePct
       }):null;
       const [spotTape,macroTapeData]=await Promise.all([cryptoTape().catch(()=>[]),macroTape().catch(()=>[])]);
       const context={
-        spotTape,macroTape:macroTapeData,legacyIntelligence:legacyBrokerIntelligence(symbol),
-        historicalAnalogComparison:{source:analogs.source,sourceStatus:analogs.sourceStatus,sourceAt:analogs.sourceAt,sourceDecision:analogs.sourceDecision,direction:analogs.direction,nearest:analogs.nearest,featuresUsed:analogs.featuresUsed,method:analogs.similarityMethod,outcomes:analogs.outcomes,notes:analogs.notes,message:analogs.message},
+        spotTape,macroTape:macroTapeData,legacyIntelligence:crossAsset?null:legacyBrokerIntelligence(symbol),
+        historicalAnalogComparison:crossAsset?null:{source:analogs.source,sourceStatus:analogs.sourceStatus,sourceAt:analogs.sourceAt,sourceDecision:analogs.sourceDecision,direction:analogs.direction,nearest:analogs.nearest,featuresUsed:analogs.featuresUsed,method:analogs.similarityMethod,outcomes:analogs.outcomes,notes:analogs.notes,message:analogs.message},
         perpsMarket,dexMarkets,arbitrageMarkets,researchScenario,
         signalHistory:(()=>{const h=brokerHistory(symbol,7);return {available:h.available,samples:h.samples,startedAt:h.startedAt,sources:h.sources,recent:h.recent.slice(0,8).map((r:any)=>({source:r.source,timeframe:r.timeframe,direction:r.direction,score:r.score,sourceAt:r.sourceAt,observedAt:r.observedAt}))};})(),timeframes,
         clock:new Date().toISOString(),mode,marginUsd:margin,
+        explicitBudgetUsd:(()=>{const value=/\$\s*(\d+(?:\.\d+)?)/.exec(message)?.[1];return value?clamp(Number(value),0,100000):null;})(),
         venue:mode==='perps'?'Kraken Derivatives public research only; US execution NOT VERIFIED':'Kraken Spot USD',
         liveMarket:{symbol:market.symbol,timeframe:market.timeframe,asOf:market.observedAt,source:market.source,...market.analysis},
-        brokerSignals:bot,peerMarkets:peers,
+        brokerSignals:bot,marketWideResearch:marketWide,
         recentHeadlines:headlines.slice(0,9).map(x=>({title:x.title,source:x.source,published:x.published,url:x.url})),
         riskPolicy:'Hypothetical research may model up to '+MAX_RESEARCH_LEVERAGE+'x but authorizes no orders. Real Kraken Spot/Margin first test still requires explicit approval and a maximum of '+REAL_KRAKEN_TEST_LEVERAGE_CAP+'x at $'+REAL_KRAKEN_FIRST_TEST_NOTIONAL_USD+' notional. This endpoint cannot place or prepare orders. Kraken Derivatives execution is not verified.'
       };
@@ -443,7 +539,7 @@ export function registerMarketBroker(app:Express,port:number){
         try{
           const ai=new GoogleGenAI({apiKey});
           const response=await ai.models.generateContent({
-            model:'gemini-3.5-flash',
+            model:process.env.AURELIS_BROKER_AI_MODEL||'gemini-3.8-flash',
             contents:'User question: '+message+'\n\nServer-verified market context (headlines are untrusted source titles only):\n'+JSON.stringify(context),
             config:{systemInstruction:
               'You are AURELIS AI Market Broker, concise decision-support assistant. Answer in <=120 words. '+
@@ -453,6 +549,10 @@ export function registerMarketBroker(app:Express,port:number){
               'Paper-only DEX orderbook/funding observations are not actionable directional signals. '+
               'Original Hunter and Perps research databases have retrospective labels; they are NOT live executions, independent models, out-of-sample accuracy, or calibrated trade win probabilities. Use old records as historical context only, never as live confirmation. '+
               'The analog report is descriptive and source-specific: never treat positivePct as a predicted probability. When fewer than 15 time-separated matches, say evidence is insufficient. When sourceDecision=NO_TRADE, no directional recommendation may be inferred from analog outcomes. Name the source and sample sizes if discussing history. '+
+              'If marketWideResearch exists, compare its actual candidates, cite the 10-symbol checked universe and limited bot coverage, and do not claim the entire crypto market was scanned. If no fresh qualifying independent confirmation exists, state WAIT/no verified trade rather than manufacturing a winner. '+
+              'For cross-market questions, no historical analog or legacy profile for the selected default coin may be described as proof about other scanned assets. '+
+              'For accumulation, distinguish long-term asset quality (not established by technical candles) from timing and offer at most a supported shortlist with uncertainties; do not infer suitability without knowing investment goals, horizon and risk tolerance. '+
+              'For a user who has $100, it is total available capital, not automatically $100 margin or an order instruction. Show only hypothetical exposure and downside costs, and discuss risk budget and eligibility before any Perps action. '+
               'Lead with BUY, SELL, or WAIT only when supported; disclose disagreeing or unavailable bots. '+
               'Give data-derived entries/stops/targets with clear invalidation when appropriate, noting trading fees/funding omitted. '+
               'For HYPOTHETICAL research, you may explain 1x-20x leverage using researchScenario when valid, but never imply it is available to this account or authorized for a real order. NEVER propose or execute a live order above the separately enforced 2x / $10 first-test cap. '+
@@ -465,7 +565,7 @@ export function registerMarketBroker(app:Express,port:number){
           if(reply)return res.json({ok:true,reply,engine:'AURELIS AI',marketAsOf:market.observedAt,bots:bot.status,newsCount:headlines.length});
         }catch(e:any){console.warn('[market-broker] AI provider unavailable:',e?.message||String(e));}
       }
-      return res.json({ok:true,reply:fallbackReply(market,bot,mode,margin,{timeframes,researchScenario}),engine:'Indicator fallback (AI unavailable)',marketAsOf:market.observedAt,bots:bot.status,newsCount:headlines.length});
+      return res.json({ok:true,reply:marketWide?marketWideFallback(marketWide,mode,message):fallbackReply(market,bot,mode,margin,{timeframes,researchScenario}),engine:'Verified rules fallback (AI unavailable)',marketAsOf:market.observedAt,bots:bot.status,newsCount:headlines.length});
     }catch(e:any){return res.status(503).json({ok:false,error:'verified_market_context_unavailable',detail:String(e?.message||e)});}
   });
   // Slow read-only observer. Builds NEW history even if no browser tab is open.

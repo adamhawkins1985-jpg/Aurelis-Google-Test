@@ -9,7 +9,7 @@ assert.ok(screen.includes('No valid long stop'),'invalid long stop fails closed'
 assert.ok(screen.includes("Signal Desk · liquidity & trade flow"),'real Signal Desk evidence is visible');
 assert.ok(screen.includes("Trade Radar · qualified setup"),'Radar score and qualification are visible');
 assert.ok(screen.includes('makeBrokerCoach('),'briefing derives from market evidence rather than fabricated confidence');
-assert.ok(screen.includes('Explore live chart, full bot evidence & history'),'detailed metrics are available without dominating initial view');
+assert.ok(screen.includes('Show supporting charts, bot reports & research tools'),'detailed metrics are available without dominating initial view');
 assert.ok(screen.includes('suggestions.map('),'example questions launch real AI requests');
 assert.ok(screen.includes('ShowMovingAverages') || screen.includes('showMovingAverages'),'EMA overlays can be toggled');
 assert.ok(chart.includes('LineSeries'),'chart draws real moving averages');
