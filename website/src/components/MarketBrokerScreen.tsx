@@ -59,6 +59,7 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
   const [symbol,setSymbol]=useState('BTC');
   const [frame,setFrame]=useState<Frame>('1h');
   const [mode,setMode]=useState<Mode>('spot');
+  const [showMovingAverages,setShowMovingAverages]=useState(true);
   const [snapshot,setSnapshot]=useState<Snapshot|null>(null);
   const [bots,setBots]=useState<BrokerBots|null>(null);
   const [timeframes,setTimeframes]=useState<Timeframes|null>(null);
@@ -230,6 +231,18 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
   const deskSupport=!!desiredDirection&&bots?.signalDesk?.direction===desiredDirection&&(bots?.signalDesk?.readiness??0)>=68;
   const radarSupport=!!desiredDirection&&bots?.radar?.direction===desiredDirection&&bots?.radar?.qualified===true&&(bots?.radar?.score??0)>=79;
   const decision:Signal['signal']=!a||!a.dataFresh||contradicts||timeframeConflict||(!deskSupport&&!radarSupport)?'WAIT':a.signal;
+  const sourceConfirmation=Number(deskSupport)+Number(radarSupport);
+  const historicalLabels=analogs?.outcomes?.reduce((total,item)=>total+item.samples,0)??0;
+  const spotLongStop=a?.dataFresh&&a.signal==='BUY'&&a.stop<a.entryZone.low?a.stop:null;
+  const marketState=!a?'NO DATA':!a.dataFresh?'STALE DATA':contradicts||timeframeConflict?'CONFLICTING SIGNALS':!deskSupport&&!radarSupport?'NO CONFIRMED SETUP':'BOT CONFIRMED';
+  const botStatusText=bots?.signalDesk&&bots?.radar?'Signal Desk + Radar':bots?.signalDesk?'Signal Desk only':bots?.radar?'Radar only':'No live bot match';
+  const indicatorAge=snapshot?.observedAt?Math.max(0,Math.floor((Date.now()-snapshot.observedAt)/1000)):null;
+  const infoCards=[
+    {title:'CURRENT ASSESSMENT',value:decision==='BUY'?'BUY SETUP':decision==='SELL'?'SELL / DEFENSIVE':'WAIT',sub:marketState},
+    {title:'SPOT OBSERVATION ZONE',value:a?.dataFresh?money(a.entryZone.low)+' – '+money(a.entryZone.high):'Unavailable',sub:decision==='BUY'?'Long setup supported, verify liquidity':'Not a confirmed long entry'},
+    {title:'SUPPORT / RESISTANCE',value:a?.dataFresh?money(a.support)+' / '+money(a.resistance):'Unavailable',sub:'Last 20 completed candles'},
+    {title:'CONFIRMATION',value:sourceConfirmation+' of 2',sub:botStatusText},
+  ];
   const marginUsd=inRange(Number(margin),0,100000);
   const perpMarkFresh=!!futures&&futures.markPrice>0&&Date.now()-futures.asOf<90000;
   const scenario=calculatePerpsResearch({
@@ -315,20 +328,41 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
         </div>
       </div>
 
+      <section className="rounded-lg border border-white/10 bg-surface-panel p-2.5" aria-label="Market broker decision summary">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+          {infoCards.map((item,i)=><div key={item.title} className="min-w-0 bg-surface-canvas rounded-md border border-white/10 p-2.5">
+            <span className="block text-[10px] font-semibold tracking-wide text-text-secondary">{item.title}</span>
+            <span className={'block font-mono text-sm font-bold mt-1 break-words '+(i===0?(decision==='BUY'?'text-primary-container':decision==='SELL'?'text-rose-500':'text-text-primary'):'text-text-primary')}>{item.value}</span>
+            <span className="block text-[10px] text-text-secondary mt-0.5">{item.sub}</span>
+          </div>)}
+        </div>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-2 px-1 font-mono text-[10px] text-text-secondary">
+          <span><b className="text-text-primary">RSI</b> {a?.dataFresh?a.rsi.toFixed(1):'—'}</span>
+          <span><b className="text-text-primary">ATR</b> {a?.dataFresh?money(a.atr):'—'}</span>
+          <span><b className="text-text-primary">VOL</b> {a?.dataFresh?a.volumeRatio.toFixed(2)+'x':'—'}</span>
+          <span><b className="text-text-primary">5-TF</b> {timeframes?timeframes.alignment+' ('+timeframes.live+'/5)':'Checking'}</span>
+          <span><b className="text-text-primary">HISTORY</b> {analogs?analogs.nearest+' matches · '+historicalLabels+' horizon labels':'Checking'}</span>
+          <span className="ml-auto">Kraken spot · {indicatorAge===null?'No update':indicatorAge+'s since response'}</span>
+        </div>
+      </section>
+
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.7fr)_minmax(290px,1fr)] gap-2.5">
         <div className="min-w-0 flex flex-col gap-2.5">
           <div className="rounded-lg border border-white/10 bg-surface-panel overflow-hidden">
             <div className="flex items-center justify-between px-3 py-2 border-b border-white/10">
-              <span className="text-xs font-semibold">Price & volume <span className="text-text-muted font-normal">{symbol}/USD · {frame}</span></span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold">Price, volume & levels <span className="text-text-muted font-normal">{symbol}/USD · {frame}</span></span>
+                <button type="button" className={pill(showMovingAverages)} onClick={()=>setShowMovingAverages(x=>!x)} aria-pressed={showMovingAverages}>EMA 20/50 {showMovingAverages?'ON':'OFF'}</button>
+              </div>
               <span className={'text-[10px] font-mono '+(a?.dataFresh?'text-primary-container':'text-text-muted')}>{loading?'Loading…':a?.dataFresh?'LIVE candles':'Data unavailable / stale'}</span>
             </div>
             <div className="h-[310px] md:h-[365px] relative">
               {snapshot?.bars?.length ? (
-                <KrakenLiveChart symbol={symbol} timeframe={chartTimeframe as any} bars={snapshot.bars} stop={a?.dataFresh?a.stop:undefined} target={a?.dataFresh?a.target:undefined} onPrice={onPrice}/>
+                <KrakenLiveChart symbol={symbol} timeframe={chartTimeframe as any} bars={snapshot.bars} support={a?.dataFresh?a.support:undefined} resistance={a?.dataFresh?a.resistance:undefined} showMovingAverages={showMovingAverages} onPrice={onPrice}/>
               ) : <div className="absolute inset-0 flex items-center justify-center text-xs text-text-muted">{chartError||'Loading verified candles…'}</div>}
             </div>
             <div className="flex flex-wrap justify-between gap-2 border-t border-white/10 px-3 py-2 text-[10px] font-mono text-text-muted">
-              <span>Support {money(a?.support)} · Resistance {money(a?.resistance)}</span>
+              <span>Support {money(a?.support)} · Resistance {money(a?.resistance)} · EMA20 {money(a?.ema20)} · EMA50 {money(a?.ema50)}</span>
               <span>Updated {time(snapshot?.observedAt)}</span>
             </div>
           </div>
@@ -352,10 +386,48 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
                 <div className="text-[9px] text-text-secondary mt-0.5 truncate">{detail}</div>
               </div>)}
             </div>
-            <div className="text-[10px] text-text-muted">
+            <div className="text-[11px] text-text-secondary">
               {contradicts||timeframeConflict?'Conflicting verified signals; WAIT overrides the chart direction.':
                 deskSupport||radarSupport?'A current bot supports this indicator direction. Entry, execution and costs still need review.':
                 'No sufficiently strong matching bot confirmation. Missing bots do not count as confirmation.'}
+            </div>
+            <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2" aria-label="Verified bot market evidence">
+              <div className="rounded-md bg-surface-canvas border border-white/10 p-2.5">
+                <div className="flex justify-between items-center text-[11px]">
+                  <strong>Signal Desk · liquidity & trade flow</strong>
+                  <span className="text-text-muted">{bots?.signalDesk?time(bots.signalDesk.generatedAt):bots?.status.signalDesk||'Unavailable'}</span>
+                </div>
+                {bots?.signalDesk?(
+                  <>
+                    <div className="mt-2 grid grid-cols-3 gap-2 font-mono">
+                      <div><span className="text-[9px] text-text-secondary block">Readiness</span><b className="text-xs">{Number.isFinite(bots.signalDesk.readiness)?bots.signalDesk.readiness.toFixed(0)+'/100':'—'}</b></div>
+                      <div><span className="text-[9px] text-text-secondary block">Tape imbalance</span><b className="text-xs">{typeof bots.signalDesk.micro?.tapeImbalance==='number'?signed(bots.signalDesk.micro.tapeImbalance*100):'—'}</b></div>
+                      <div><span className="text-[9px] text-text-secondary block">Book imbalance</span><b className="text-xs">{typeof bots.signalDesk.micro?.bookImbalance==='number'?signed(bots.signalDesk.micro.bookImbalance*100):'—'}</b></div>
+                    </div>
+                    <div className="mt-2 h-1.5 bg-surface-panel rounded-full overflow-hidden" title="Signal Desk readiness, not a win probability">
+                      <div className="h-full rounded-full bg-primary-container" style={{width:Math.max(0,Math.min(100,bots.signalDesk.readiness||0))+'%'}}/>
+                    </div>
+                    {bots.signalDesk.contradictions?.length>0&&<p className="mt-2 text-[10px] text-rose-500">{bots.signalDesk.contradictions[0]}</p>}
+                  </>
+                ):<p className="mt-2 text-[10px] text-text-secondary">No fresh Signal Desk snapshot for this asset.</p>}
+              </div>
+              <div className="rounded-md bg-surface-canvas border border-white/10 p-2.5">
+                <div className="flex justify-between items-center text-[11px]">
+                  <strong>Trade Radar · qualified setup</strong>
+                  <span className="text-text-muted">{bots?.radar?time(bots.radar.generatedAt):bots?.status.radar||'Unavailable'}</span>
+                </div>
+                {bots?.radar?(
+                  <>
+                    <div className="mt-2 grid grid-cols-3 gap-2 font-mono">
+                      <div><span className="text-[9px] text-text-secondary block">Radar score</span><b className="text-xs">{Number.isFinite(bots.radar.score)?bots.radar.score.toFixed(0):'—'}</b></div>
+                      <div><span className="text-[9px] text-text-secondary block">Direction</span><b className="text-xs">{bots.radar.direction||'—'}</b></div>
+                      <div><span className="text-[9px] text-text-secondary block">Qualified</span><b className="text-xs">{bots.radar.qualified?'YES':'NO'}</b></div>
+                    </div>
+                    <div className="mt-2 text-[10px] text-text-secondary">Entry {money(bots.radar.entry)} · Stop {money(bots.radar.stop)} · Target {money(bots.radar.target)}</div>
+                    {bots.radar.reasons?.length>0&&<p className="mt-1 text-[10px] text-text-secondary">{bots.radar.reasons[0]}</p>}
+                  </>
+                ):<p className="mt-2 text-[10px] text-text-secondary">No fresh Radar candidate matches this asset. Nothing is counted as a vote.</p>}
+              </div>
             </div>
             {botsError&&<div className="text-[10px] text-rose-400 mt-1">{botsError}</div>}
 
@@ -460,12 +532,12 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
                   <span className="text-[10px] text-text-muted">Kraken USD reference</span>
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <div className="rounded-md bg-surface-canvas p-2"><span className="text-[10px] text-text-muted block">Watch buy limit zone</span><strong className="text-xs font-mono">{a?.dataFresh?money(a.entryZone.low)+' – '+money(a.entryZone.high):'Unavailable'}</strong></div>
-                  <div className="rounded-md bg-surface-canvas p-2"><span className="text-[10px] text-text-muted block">Invalidation / stop reference</span><strong className="text-xs font-mono">{a?.dataFresh?money(a.stop):'Unavailable'}</strong></div>
+                  <div className="rounded-md bg-surface-canvas p-2"><span className="text-[10px] text-text-muted block">Unconfirmed spot observation zone</span><strong className="text-xs font-mono">{a?.dataFresh?money(a.entryZone.low)+' – '+money(a.entryZone.high):'Unavailable'}</strong></div>
+                  <div className="rounded-md bg-surface-canvas p-2"><span className="text-[10px] text-text-muted block">Potential long invalidation</span><strong className="text-xs font-mono">{spotLongStop!==null?money(spotLongStop):'No valid long stop'}</strong></div>
                   <div className="rounded-md bg-surface-canvas p-2"><span className="text-[10px] text-text-muted block">Resistance</span><strong className="text-xs font-mono">{money(a?.resistance)}</strong></div>
                   <div className="rounded-md bg-surface-canvas p-2"><span className="text-[10px] text-text-muted block">EMA 20 / EMA 50</span><strong className="text-xs font-mono">{money(a?.ema20)} / {money(a?.ema50)}</strong></div>
                 </div>
-                <p className="text-[10px] text-text-muted mt-2">{decision==='WAIT'?'No confirmed entry. These are observation levels, not a buy order.':'Derived technical levels only; review spread, fees, liquidity and invalidation before an order.'}</p>
+                <p className="text-[10px] text-text-muted mt-2">{decision==='WAIT'?'WAIT: no confirmed spot entry. An unconfirmed observation zone is not a limit-order recommendation.':decision==='SELL'?'SELL / defensive conditions: do not interpret the chart’s short-side stop as a long-buy stop.':'Long setup supported by current bots; levels are technical references, not executable quotes. Review spread, fees and liquidity.'}</p>
                 <button type="button" onClick={()=>void ask('Should I place a spot limit buy for '+symbol+' now? Give me a data-backed entry, stop and reasons to wait.')} className="mt-2 text-[11px] text-primary-container hover:underline">Ask AURELIS about this spot setup <ChevronRight size={12} className="inline"/></button>
               </>
             ):(
