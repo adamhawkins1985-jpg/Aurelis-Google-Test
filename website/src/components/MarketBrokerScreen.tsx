@@ -321,7 +321,7 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
         <div className="rounded-xl border border-primary-container/30 bg-surface-panel p-3 sm:p-4 flex flex-col gap-3 min-h-[500px]">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-1.5 text-lg font-bold"><Bot size={19} className="text-primary-container"/>AURELIS AI</span>
-            <span className="text-[10px] text-text-muted">Ask about any of 10 screened markets · Research only</span>
+            <span className="text-[10px] text-text-muted">Ask about up to 20 configured markets · Research only</span>
           </div>
           <div role="log" aria-label="AURELIS market broker chat" className="max-h-[440px] min-h-[230px] overflow-y-auto flex flex-col gap-2">
             {!messages.length&&<div className="text-[12px] text-text-secondary leading-relaxed">Ask me what to buy, what to avoid, or what to learn. For market-wide questions I screen the configured coins, check available bot signals, and tell you what is actually supported. No charts to decipher.</div>}
