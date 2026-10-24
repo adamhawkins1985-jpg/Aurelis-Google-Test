@@ -384,7 +384,7 @@ function marketWideFallback(scan:any,mode:'spot'|'perps',message:string){
   const confirmed=all.filter((x:any)=>x.status==='CONFIRMED_RESEARCH'&&(mode!=='perps'||x.botEvidence?.perps?.markPrice>0));
   const coverage='Checked '+Number(scan?.spotSnapshots||0)+' fresh Kraken Spot 1h charts of '+Number(scan?.checked?.length||0)+
     ' configured symbols; obtained bot evidence for '+Number(scan?.botCandidatesChecked||0)+' directional candidates. ';
-  const budget=/\\$\\s*(\\d+(?:\\.\\d+)?)/.exec(message)?.[1];
+  const budget=/\$\s*(\d+(?:\.\d+)?)/.exec(message)?.[1];
   const budgetNote=budget?' USD '+budget+' is your total budget, not an instruction to use it all as margin.':'';
   const caveat=mode==='perps'
     ?' Perpetual account eligibility and execution are NOT verified. The first real Kraken test remains capped at USD 10 notional and 2x with explicit approval.'
