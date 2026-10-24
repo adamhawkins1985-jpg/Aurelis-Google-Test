@@ -47,7 +47,7 @@ export const BotAutoScanView: React.FC<Props> = ({ enabled, onEnabledChange, onB
       setActivity('Searching for qualified Kraken setups…');
       setChecks([]);
       try {
-        const scan = await fetch('/api/trade-radar?mode=all&limit=5&force=1', {
+        const scan = await fetch('/api/trade-radar?mode=all&limit=100&force=1', {
           cache: 'no-store', signal: controller.signal, credentials: 'same-origin',
         });
         const result = await scan.json();
@@ -55,7 +55,7 @@ export const BotAutoScanView: React.FC<Props> = ({ enabled, onEnabledChange, onB
           throw new Error(result?.error || 'Radar scan unavailable');
         }
         if (!active) return;
-        const candidates = result.candidates.slice(0, 5);
+        const candidates = result.candidates; // Check the returned eligible set, not only the first five.
         setLastScanAt(Date.now());
         setMeta({
           scanned: Number(result.scannedMarkets || 0),
@@ -139,7 +139,9 @@ export const BotAutoScanView: React.FC<Props> = ({ enabled, onEnabledChange, onB
               forge: Number(agents.structure || 0), pulse: Number(agents.flow || 0),
               scope: score, atlas: Number(agents.history || 0),
               aegis: Number(agents.risk || 0), notes: [],
-              margin: 10, leverage, targetNet: Number(economics.expectedNetRewardPct || 0),
+              margin: 10, leverage,
+              leverageOptions: supported,
+              targetNet: Number(economics.expectedNetRewardPct || 0),
               stopLoss: Number(economics.plannedRiskPct || 0),
               tradeCost: Number(economics.estimatedRoundTripCostPct || 0), qualified: true,
             };
@@ -155,7 +157,7 @@ export const BotAutoScanView: React.FC<Props> = ({ enabled, onEnabledChange, onB
           }
         }
         setStep('waiting');
-        setActivity('No executable $10 setup passed. Rescanning automatically.');
+        setActivity('No eligible setup passed the venue/risk checks. Rescanning automatically.');
       } catch (error: any) {
         if (!active || controller.signal.aborted) return;
         setStep('unavailable');
@@ -218,7 +220,7 @@ export const BotAutoScanView: React.FC<Props> = ({ enabled, onEnabledChange, onB
         </div>
         <div className="text-[10px] text-text-muted flex items-center gap-1.5">
           <ShieldCheck className="h-3.5 w-3.5 shrink-0"/>
-          No automatic orders. $10 test notional, 2× maximum, exchange check and final signed approval remain.
+          No automatic orders. The simulator can model any collateral amount; the first live Kraken test stays at $10 notional, 2× maximum, with final approval.
         </div>
       </div>
       {checks.length > 0 && <details className="rounded-xl border border-white/10 bg-surface-panel p-3 text-[10px]">

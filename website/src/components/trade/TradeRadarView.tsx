@@ -18,7 +18,8 @@ import {
   Zap,
 } from 'lucide-react';
 import { CoinData } from '../../types';
-import { playHudSound, formatCurrency } from '../../services/marketData';
+import { playHudSound } from '../../services/marketData';
+import { BetScenarioCalculator } from './BetScenarioCalculator';
 
 export interface SetupCandidate {
   id: string;
@@ -43,6 +44,7 @@ export interface SetupCandidate {
   notes: { step: string; agent: string; detail: string }[];
   margin: number;
   leverage?: number;
+  leverageOptions?: number[];
   targetNet: number;
   stopLoss: number;
   tradeCost: number;
@@ -86,7 +88,6 @@ export const TradeRadarView: React.FC<TradeRadarViewProps> = ({
   const [radarMeta, setRadarMeta] = useState({ scanned: 0, deepAnalyzed: 0, source: 'AURELIS' });
   const [showWhyModal, setShowWhyModal] = useState<boolean>(false);
   const [copiedNote, setCopiedNote] = useState<boolean>(false);
-  const [positionAmount, setPositionAmount] = useState('10');
   const [positionLeverage, setPositionLeverage] = useState('2');
   const [supportedLeverage, setSupportedLeverage] = useState<number[]>([]);
   const [marketCheck, setMarketCheck] = useState<{ url: string; data: RadarKrakenMarketCheck } | null>(null);
@@ -137,6 +138,9 @@ export const TradeRadarView: React.FC<TradeRadarViewProps> = ({
       targetNet: Number(econ.expectedNetRewardPct || 0),
       stopLoss: Number(econ.plannedRiskPct || 0),
       tradeCost: Number(econ.estimatedRoundTripCostPct || 0),
+      leverageOptions: Array.isArray(candidate?.kraken?.[String(candidate?.direction).toUpperCase() === 'SHORT' ? 'leverageSell' : 'leverageBuy'])
+        ? candidate.kraken[String(candidate.direction).toUpperCase() === 'SHORT' ? 'leverageSell' : 'leverageBuy'].map(Number)
+        : [],
       qualified: true,
     };
   }, []);
@@ -147,7 +151,8 @@ export const TradeRadarView: React.FC<TradeRadarViewProps> = ({
     try {
       const query = new URLSearchParams({
         mode: filterMode === 'btc' ? 'btc' : 'all',
-        limit: filterMode === 'btc' ? '1' : '5',
+        // Full Kraken universe remains server-owned; request all ranked candidates, not a top-five UI cap.
+        limit: filterMode === 'btc' ? '1' : '200',
         force: '1',
       });
       const res = await fetch('/api/trade-radar?' + query.toString(), { cache: 'no-store' });
@@ -194,11 +199,14 @@ export const TradeRadarView: React.FC<TradeRadarViewProps> = ({
     let active = true;
     const load = async () => {
       if (!activeSetup?.symbol) return;
+      const fromSignal = (activeSetup.leverageOptions || []).filter(x => Number.isInteger(x) && x >= 1 && x <= 2);
+      setSupportedLeverage(fromSignal);
+      if (fromSignal.length && !fromSignal.includes(Number(positionLeverage))) setPositionLeverage(String(fromSignal[0]));
       try {
         const response = await fetch('/api/kraken/margin-info/' + encodeURIComponent(activeSetup.symbol), { cache: 'no-store' });
         const data = await response.json();
         if (!active || !response.ok || !data?.ok) return;
-        const allowed = (activeSetup.direction === 'SHORT' ? data.sell : data.buy)
+        const allowed = (Array.isArray(activeSetup.direction === 'SHORT' ? data.sell : data.buy) ? (activeSetup.direction === 'SHORT' ? data.sell : data.buy) : [])
           .map(Number)
           .filter((x: number) => Number.isFinite(x) && x >= 1 && x <= 2);
         setSupportedLeverage(allowed);
@@ -279,18 +287,6 @@ export const TradeRadarView: React.FC<TradeRadarViewProps> = ({
     }
   };
 
-  const sizing = useMemo(() => {
-    if (!activeSetup) return null;
-    const position = Number(positionAmount);
-    const leverage = Number(positionLeverage);
-    if (!(position > 0) || !(leverage > 0) || !(activeSetup.entry > 0) || !(activeSetup.stop > 0) || !(activeSetup.target > 0)) return null;
-    const stopPct = Math.abs(activeSetup.entry - activeSetup.stop) / activeSetup.entry;
-    const targetPct = Math.abs(activeSetup.target - activeSetup.entry) / activeSetup.entry;
-    const loss = position * stopPct;
-    const gain = position * targetPct;
-    return { position, leverage, margin: position / leverage, loss, gain, stopPct: stopPct * 100, targetPct: targetPct * 100, rr: loss > 0 ? gain / loss : 0 };
-  }, [activeSetup, positionAmount, positionLeverage]);
-
   const handleHunt = () => {
     if (soundEnabled) playHudSound('switch');
     loadRadar();
@@ -357,7 +353,7 @@ Commentary: ${activeSetup.commentary}`;
                   : 'text-text-muted hover:text-text-primary'
               }`}
             >
-              Top 200
+              All eligible
             </button>
             <button
               type="button"
@@ -560,41 +556,31 @@ Commentary: ${activeSetup.commentary}`;
           </div>
         </details>
 
-        {/* Sizing Footer Bar */}
-        <div className="p-3 rounded-xl bg-surface-base border border-white/5 space-y-3">
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            <label className="text-[9px] text-text-muted">POSITION USD
-              <input value={positionAmount} readOnly title="First Kraken test is fixed at $10 total notional" className="mt-1 w-full p-2 rounded-lg bg-surface-panel border border-white/10 text-text-primary" />
-            </label>
-            <label className="text-[9px] text-text-muted">LEVERAGE
-              <select value={positionLeverage} onChange={(e) => setPositionLeverage(e.target.value)} className="mt-1 w-full p-2 rounded-lg bg-surface-panel border border-white/10 text-text-primary">
-                {(supportedLeverage.length ? supportedLeverage : [1,2]).map((x) => <option key={x} value={String(x)}>{x}x</option>)}
-              </select>
-            </label>
-            <div className="p-2 rounded-lg bg-cyan-500/10 border border-cyan-500/20"><div className="text-[8px] text-text-muted uppercase">Est. Margin</div><div className="text-[11px] font-bold text-cyan-300 mt-1">{sizing ? formatCurrency(sizing.margin) : '—'}</div></div>
-          </div>
-          {sizing && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              <div><span className="text-[8px] text-text-muted uppercase block">Lose at Stop</span><strong className="text-status-error">-{formatCurrency(sizing.loss)} · {sizing.stopPct.toFixed(2)}%</strong></div>
-              <div><span className="text-[8px] text-text-muted uppercase block">Make at Target</span><strong className="text-primary-container">+{formatCurrency(sizing.gain)} · {sizing.targetPct.toFixed(2)}%</strong></div>
-              <div><span className="text-[8px] text-text-muted uppercase block">Risk / Reward</span><strong className="text-cyan-300">1 : {sizing.rr.toFixed(2)}</strong></div>
-              <div><span className="text-[8px] text-text-muted uppercase block">Round-trip Cost</span><strong className="text-text-secondary">{activeSetup.tradeCost.toFixed(4)}%</strong></div>
-            </div>
-          )}
-          <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={handleCopyReport}
-            className="text-[10px] text-text-muted hover:text-text-primary flex items-center gap-1 self-start sm:self-auto cursor-pointer"
-          >
-            {copiedNote ? <Check className="w-3 h-3 text-primary-container" /> : <Copy className="w-3 h-3" />}
-            <span>{copiedNote ? 'Setup Copied' : 'Copy Setup'}</span>
-          </button>
-          </div>
+        {/* Interactive what-if values are deliberately independent of the live test order. */}
+        <BetScenarioCalculator
+          key={activeSetup.id + '-' + activeSetup.direction}
+          asset={activeSetup.symbol}
+          direction={activeSetup.direction}
+          entry={activeSetup.entry}
+          stop={activeSetup.stop}
+          target={activeSetup.target}
+          roundTripCostPct={activeSetup.tradeCost}
+          signalLeverage={activeSetup.leverageOptions}
+        />
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-surface-base p-3">
+          <span className="text-[10px] text-text-muted">LIVE TEST: $10 position notional, 2× maximum. Scenario values above do not change the order.</span>
+          <label className="text-[10px] text-text-muted">Order leverage
+            <select value={positionLeverage} disabled={!supportedLeverage.length}
+              onChange={(e) => setPositionLeverage(e.target.value)}
+              className="ml-2 p-2 rounded-lg bg-surface-panel border border-white/10 text-text-primary">
+              {!supportedLeverage.length && <option value={positionLeverage}>Unverified</option>}
+              {supportedLeverage.map(x => <option key={x} value={String(x)}>{x}×</option>)}
+            </select>
+          </label>
         </div>
       </div>
 
-      {/* 4. Ranked Setups Table */}
+            {/* 4. Ranked Setups Table */}
       <div className="p-3.5 sm:p-4 rounded-2xl bg-surface-panel/95 border border-white/10 shadow-xl space-y-2">
         <div className="flex items-center justify-between pb-2 border-b border-white/10 text-xs">
           <strong className="font-headline font-bold text-text-primary">Ranked setups</strong>

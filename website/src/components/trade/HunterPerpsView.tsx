@@ -3,6 +3,7 @@ import { Activity, RefreshCw, ShieldCheck, TrendingUp, TrendingDown, ArrowRight 
 import { playHudSound, formatCurrency } from '../../services/marketData';
 import { fetchKrakenFutures, fetchKrakenRadar, KrakenFutureTicker, KrakenRadarCandidate } from '../../services/krakenBots';
 import type { SetupCandidate } from './TradeRadarView';
+import { BetScenarioCalculator } from './BetScenarioCalculator';
 
 interface KrakenMarginHandoff {
   ok:boolean;compatible:boolean;code:string;reason:string;
@@ -22,7 +23,6 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
   const [futures, setFutures] = useState<KrakenFutureTicker[]>([]);
   const [radar, setRadar] = useState<KrakenRadarCandidate[]>([]);
   const [selectedAsset, setSelectedAsset] = useState('BTC');
-  const [betAmount, setBetAmount] = useState('10');
   const [leverage, setLeverage] = useState('2');
   const [supportedLeverage, setSupportedLeverage] = useState<number[]>([]);
   const [loading, setLoading] = useState(false);
@@ -59,7 +59,6 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
     if (!initialSetup) return;
     setSelectedAsset(initialSetup.symbol.toUpperCase());
     // Test execution is capped to $10 notional and 2x. Hunter is not a futures order ticket.
-    setBetAmount('10');
     setLeverage(String(Math.min(2,Math.max(1,Number(initialSetup.leverage)||2))));
   }, [initialSetup]);
 
@@ -83,12 +82,14 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
     (ticker?.change24h ?? 0) >= 0 ? 'LONG' : 'SHORT';
   useEffect(() => {
     let active = true;
+    setSupportedLeverage((matchingSetup?.leverageOptions || []).filter(x => Number.isInteger(x) && x >= 1 && x <= 2));
     const loadMarginInfo = async () => {
       try {
         const response = await fetch('/api/kraken/margin-info/' + encodeURIComponent(selectedAsset), { cache: 'no-store' });
         const data = await response.json();
         if (!active || !response.ok || !data?.ok) return;
-        const allowed = (bias === 'SHORT' ? data.sell : data.buy)
+        const reported = bias === 'SHORT' ? data.sell : data.buy;
+        const allowed = (Array.isArray(reported) ? reported : [])
           .map(Number).filter((x: number) => Number.isFinite(x) && x>=1 && x<=2);
         setSupportedLeverage(allowed);
         if(allowed.length && !allowed.includes(Number(leverage)))setLeverage(String(allowed[0]));
@@ -139,17 +140,6 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
     const id=window.setInterval(refresh,25000);
     return ()=>{active=false;window.clearInterval(id)};
   },[handoffUrl]);
-  const sizing = useMemo(() => {
-    const position = Number(betAmount);
-    const lev = Number(leverage);
-    if (!(position > 0) || !(lev > 0) || !(entry > 0) || !(stop > 0) || !(target > 0)) return null;
-    const stopPct = Math.abs(entry - stop) / entry;
-    const targetPct = Math.abs(target - entry) / entry;
-    const loss = position * stopPct;
-    const gain = position * targetPct;
-    return { position, margin: position / lev, loss, gain, stopPct: stopPct * 100, targetPct: targetPct * 100, rr: loss > 0 ? gain / loss : 0 };
-  }, [betAmount, leverage, entry, stop, target]);
-
   const sendToLiveBet = async () => {
     if(!matchingSetup||!onSendToLiveBet||sendingToLiveBet)return;
     setSendingToLiveBet(true);
@@ -200,7 +190,7 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
               {matchingSetup.symbol} {matchingSetup.direction} · Entry {formatMicroPrice(entry)} · Stop {formatMicroPrice(stop)} · Target {formatMicroPrice(target)}
             </div>
           </div>
-          <span className="text-[10px] font-bold text-primary-container">${betAmount} @ {leverage}x</span>
+          <span className="text-[10px] font-bold text-primary-container">$10 live test notional @ {leverage}x</span>
         </div>
       )}
 
@@ -217,26 +207,30 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
             The Kraken US Spot/Margin preflight below uses a separate BTNL market quote.
           </div>}
           <div className="grid grid-cols-2 gap-2">
-            <label className="text-[9px] text-text-muted">POSITION USD
-              <input value={betAmount} readOnly title="First Kraken Spot/Margin test is fixed at $10 notional"
-                className="mt-1 w-full p-2 rounded-lg bg-surface-base border border-white/10 text-text-primary" />
-            </label>
+            <div className="text-[9px] text-text-muted">LIVE TEST NOTIONAL USD
+              <div className="mt-1 w-full p-2 rounded-lg bg-surface-base border border-white/10 text-text-primary">10.00 (fixed)</div>
+            </div>
             <label className="text-[9px] text-text-muted">LEVERAGE
-              <select value={leverage} onChange={(e) => setLeverage(e.target.value)} className="mt-1 w-full p-2 rounded-lg bg-surface-base border border-white/10 text-text-primary">
-                {(supportedLeverage.length ? supportedLeverage.map(String) : ['1','2']).map((x) => <option key={x} value={x}>{x}x</option>)}
+              <select value={leverage} disabled={!supportedLeverage.length} onChange={(e) => setLeverage(e.target.value)} className="mt-1 w-full p-2 rounded-lg bg-surface-base border border-white/10 text-text-primary">
+                {!supportedLeverage.length && <option value={leverage}>Unverified</option>}
+                {supportedLeverage.map(x => <option key={x} value={String(x)}>{x}×</option>)}
               </select>
             </label>
           </div>
         </div>
 
         <div className="lg:col-span-8 p-4 rounded-2xl bg-surface-panel/95 border border-white/10 space-y-3">
-          {matchingSetup && sizing && (
-            <div className="p-3 rounded-xl border border-white/10 bg-surface-base flex flex-wrap gap-x-5 gap-y-2 items-center text-[10px]">
-              <strong>{selectedAsset} {bias} · $10 at {leverage}×</strong>
-              <span className="text-red-400">Est. loss at stop: -{formatCurrency(sizing.loss)}</span>
-              <span className="text-primary-container">Est. gain at target: +{formatCurrency(sizing.gain)}</span>
-              <span>R:R 1:{sizing.rr.toFixed(2)}</span>
-            </div>
+          {matchingSetup && (
+            <BetScenarioCalculator
+              key={matchingSetup.id + '-' + matchingSetup.direction}
+              asset={selectedAsset}
+              direction={bias}
+              entry={entry}
+              stop={stop}
+              target={target}
+              roundTripCostPct={matchingSetup.tradeCost}
+              signalLeverage={matchingSetup.leverageOptions}
+            />
           )}
           <details className="rounded-xl border border-white/10 bg-surface-base/60 p-2 text-[10px]" open={!matchingSetup}>
             <summary className="cursor-pointer font-bold text-text-secondary">Futures research & market statistics (optional)</summary>
@@ -251,18 +245,6 @@ export const HunterPerpsView: React.FC<HunterPerpsViewProps> = ({ soundEnabled, 
               {bias}
             </div>
           </div>
-          {sizing && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {[
-                ['Position', formatCurrency(sizing.position)],
-                ['Est. Margin', formatCurrency(sizing.margin)],
-                ['Lose at Stop', '-' + formatCurrency(sizing.loss) + ' (' + sizing.stopPct.toFixed(2) + '%)'],
-                ['Make at Target', '+' + formatCurrency(sizing.gain) + ' (' + sizing.targetPct.toFixed(2) + '%)'],
-                ['Risk / Reward', '1 : ' + sizing.rr.toFixed(2)],
-              ].map(([k,v]) => <div key={k} className="p-2.5 rounded-lg bg-surface-base border border-white/5"><div className="text-[8.5px] text-text-muted uppercase">{k}</div><div className="font-bold mt-1">{v}</div></div>)}
-            </div>
-          )}
-
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {[
               ['Bid', ticker?.bid ? formatMicroPrice(ticker.bid) : '—'],

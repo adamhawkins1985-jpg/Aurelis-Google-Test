@@ -1,0 +1,38 @@
+name: Verify AURELIS bet scenarios
+
+on:
+  pull_request:
+    paths:
+      - 'website/src/components/trade/**'
+      - 'website/src/services/betScenario.ts'
+      - 'website/src/services/dexDiscovery.ts'
+      - 'website/scripts/test_bet_scenario.ts'
+      - '.github/workflows/check-bet-scenarios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - name: Install dependencies
+        working-directory: website
+        run: npm ci --legacy-peer-deps
+      - name: Test bet scenario arithmetic
+        working-directory: website
+        run: npx tsx scripts/test_bet_scenario.ts
+      - name: Typecheck web application
+        working-directory: website
+        run: npx tsc --noEmit --project tsconfig.app-ci.json
+      - name: Build deployable website
+        working-directory: website
+        run: npm run build

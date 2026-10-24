@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CheckCircle2, ImagePlus, Loader2, ShieldCheck, Upload, X } from 'lucide-react';
 import { formatCurrency, playHudSound } from '../../services/marketData';
 import type { SetupCandidate } from './TradeRadarView';
+import { BetScenarioCalculator } from './BetScenarioCalculator';
 
 interface LiveBetViewProps {
   soundEnabled: boolean;
@@ -161,27 +162,6 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
     };
   }, [trade, leverage]);
 
-  const liveEstimate = useMemo(() => {
-    if (!normalized?.entry || !normalized?.stop || !normalized?.target) return null;
-    const positionValue = Number(amount);
-    const lev = Number(leverage);
-    if (!Number.isFinite(positionValue) || positionValue <= 0 || !Number.isFinite(lev) || lev <= 0) return null;
-    const entry = Number(normalized.entry);
-    const stopPct = Math.abs(entry - Number(normalized.stop)) / entry;
-    const targetPct = Math.abs(Number(normalized.target) - entry) / entry;
-    const estimatedLoss = positionValue * stopPct;
-    const estimatedGain = positionValue * targetPct;
-    return {
-      positionValue,
-      margin: positionValue / lev,
-      estimatedLoss,
-      estimatedGain,
-      stopPct: stopPct * 100,
-      targetPct: targetPct * 100,
-      rr: estimatedLoss > 0 ? estimatedGain / estimatedLoss : 0,
-    };
-  }, [normalized?.entry, normalized?.stop, normalized?.target, amount, leverage]);
-
   useEffect(() => {
     let active = true;
     const asset = normalized?.asset;
@@ -190,12 +170,14 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
       setSupportedLeverage([]);
       return () => { active = false; };
     }
+    setSupportedLeverage([]);
     const loadMarginInfo = async () => {
       try {
         const response = await fetch('/api/kraken/margin-info/' + encodeURIComponent(asset), { cache: 'no-store' });
         const data = await response.json();
         if (!active || !response.ok || !data?.ok) return;
-        const allowed = (direction === 'SHORT' ? data.sell : data.buy)
+        const returned = direction === 'SHORT' ? data.sell : data.buy;
+        const allowed = (Array.isArray(returned) ? returned : [])
           .map(Number)
           .filter((x: number) => Number.isFinite(x) && x >= 1 && x <= 2);
         setSupportedLeverage(allowed);
@@ -205,7 +187,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
           setToken('');
           setStatus(`Adjusted leverage to ${allowed[0]}x, the lowest Kraken-supported value for ${asset} ${direction}.`);
         }
-      } catch {}
+      } catch { if (active) setSupportedLeverage([]); }
     };
     loadMarginInfo();
     return () => { active = false; };
@@ -364,6 +346,10 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
     }
     if (!normalized.stop || !normalized.target) {
       setStatus('A visible stop and target are required before Kraken review.');
+      return;
+    }
+    if (!supportedLeverage.includes(Number(leverage))) {
+      setStatus('Live Kraken leverage not verified for this pair and direction. Cannot prepare an order.');
       return;
     }
     setBusy(true);
@@ -642,7 +628,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
           </div>
           <div className="grid grid-cols-2 gap-2">
             <label className="min-w-0 text-[9px] text-text-muted">
-              POSITION USD
+              LIVE ORDER NOTIONAL USD (FIXED TEST)
               <input
                 value={amount}
                 readOnly
@@ -654,38 +640,30 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
               LEVERAGE
               <select
                 value={leverage}
+                disabled={!supportedLeverage.length}
                 onChange={(e) => { setLeverage(e.target.value); setPreview(null); setToken(''); setKrakenValidated(false); setValidationExpiresAt(null); }}
                 className="mt-1 w-full min-w-0 p-2 rounded-lg bg-surface-base border border-white/10 text-text-primary"
               >
-                {(supportedLeverage.length ? supportedLeverage : [1,2]).map((x) => <option key={x} value={String(x)}>{x}x</option>)}
+                {!supportedLeverage.length && <option value={leverage}>Unverified</option>}
+                {supportedLeverage.map((x) => <option key={x} value={String(x)}>{x}x</option>)}
               </select>
             </label>
           </div>
 
-          {liveEstimate && (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              <div className="p-2.5 rounded-lg bg-surface-base border border-white/5">
-                <div className="text-[8.5px] text-text-muted uppercase">Est. margin</div>
-                <div className="font-bold mt-1">{formatCurrency(liveEstimate.margin)}</div>
-              </div>
-              <div className="p-2.5 rounded-lg bg-red-500/10 border border-red-500/20">
-                <div className="text-[8.5px] text-text-muted uppercase">Lose at stop</div>
-                <div className="font-bold mt-1 text-red-400">-{formatCurrency(liveEstimate.estimatedLoss)} <span className="text-[8px]">({liveEstimate.stopPct.toFixed(2)}%)</span></div>
-              </div>
-              <div className="p-2.5 rounded-lg bg-primary-container/10 border border-primary-container/20">
-                <div className="text-[8.5px] text-text-muted uppercase">Make at target</div>
-                <div className="font-bold mt-1 text-primary-container">+{formatCurrency(liveEstimate.estimatedGain)} <span className="text-[8px]">({liveEstimate.targetPct.toFixed(2)}%)</span></div>
-              </div>
-              <div className="p-2.5 rounded-lg bg-surface-base border border-white/5">
-                <div className="text-[8.5px] text-text-muted uppercase">Risk / reward</div>
-                <div className="font-bold mt-1">1 : {liveEstimate.rr.toFixed(2)}</div>
-              </div>
-            </div>
-          )}
+          <BetScenarioCalculator
+            key={normalized.asset + '-' + normalized.direction + '-' + (normalized.entry || '')}
+            asset={normalized.asset}
+            direction={normalized.direction === 'SHORT' ? 'SHORT' : 'LONG'}
+            entry={Number(normalized.entry || 0)}
+            stop={Number(normalized.stop || 0)}
+            target={Number(normalized.target || 0)}
+            roundTripCostPct={initialSetup?.symbol === normalized.asset ? initialSetup.tradeCost : null}
+            signalLeverage={initialSetup?.symbol === normalized.asset ? initialSetup.leverageOptions : undefined}
+          />
 
           <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 p-2 text-[10px] text-text-secondary">
+            Live order uses the verified setup, fixed $10 notional and up to 2× leverage, not the scenario inputs.
             Stop requested only after the entry fills. ¹ Target NOT placed as an order.
-            Profit/loss figures are estimates, not guaranteed exits.
           </div>
           {krakenReviewError && (
             <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-[11px] text-amber-300">
@@ -701,7 +679,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
             </div>
           )}
           {!preview && (
-            <button type="button" onClick={reviewKraken} disabled={busy}
+            <button type="button" onClick={reviewKraken} disabled={busy || !supportedLeverage.includes(Number(leverage))}
               className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold disabled:opacity-40">
               Review $10 Kraken bet
             </button>

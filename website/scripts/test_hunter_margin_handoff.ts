@@ -43,6 +43,7 @@ assert(hunter.includes('disabled={!marginHandoff?.compatible||marginHandoffBusy|
   'Hunter must disable handoff unless live Kraken margin market is compatible');
 assert(hunter.includes('const checked=await checkMarginHandoff()'),
   'Hunter must recheck live Kraken margin quote right before handoff');
-assert(hunter.includes("setBetAmount('10')"),'First test remains $10 notional');
+assert(hunter.includes('10.00 (fixed)') && hunter.includes('margin:10') && !hunter.includes('setBetAmount('),
+  'First live test remains fixed at $10 notional, independently of the simulator');
 assert(hunter.includes('formatMicroPrice(entry)'),'PEPE prices must display micro precision');
 console.log('PASS: PEPE Kraken BTNL margin quote, stop bracket, 2x cap, $10 minimums, side bid/ask, fail-closed Hunter handoff.');

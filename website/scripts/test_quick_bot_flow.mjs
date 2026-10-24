@@ -6,6 +6,7 @@ const radar=readFileSync('src/components/trade/TradeRadarView.tsx','utf8');
 const hunter=readFileSync('src/components/trade/HunterPerpsView.tsx','utf8');
 const live=readFileSync('src/components/trade/LiveBetView.tsx','utf8');
 const auto=readFileSync('src/components/trade/BotAutoScanView.tsx','utf8');
+const calculator=readFileSync('src/components/trade/BetScenarioCalculator.tsx','utf8');
 
 assert(screen.includes("{ id: 'radar', label: 'AUTO SCAN' }"), 'Auto Scan must be the primary bot entry');
 assert(screen.includes("{ id: 'live', label: 'LIVE BET' }"), 'Live Bet must remain one click away');
@@ -14,7 +15,8 @@ assert(screen.includes('<BotAutoScanView'), 'Radar must use automated pipeline i
 assert(screen.includes('setAutoScanEnabled(false)'), 'Handoff pauses scanning so the user is not spammed with repeated bets');
 assert(screen.includes('setPendingTradeSetup(setup)') && screen.includes("setActiveBotTab('live')"),
   'Auto-detected vetted setups must go directly to Live Bet');
-assert(auto.includes('/api/trade-radar?mode=all&limit=5&force=1'), 'Automatic search must use fresh ranked scanner candidates');
+assert(auto.includes('/api/trade-radar?mode=all&limit=100&force=1') && auto.includes('const candidates = result.candidates;'),
+  'Auto Scan must request and evaluate the complete ranked response instead of truncating at five');
 assert(auto.includes('/api/bots/kraken-margin-handoff/'), 'Hunter executable quote and risk check must still run before Live Bet');
 assert(auto.includes('verdict?.compatible !== true'), 'Unverified venue compatibility must block the pipeline');
 assert(auto.includes('controller.abort()'), 'Pausing scanner must abort outstanding preflight requests');
@@ -45,7 +47,8 @@ assert(radar.includes('STOP</span>') && radar.includes('TARGET</span>'),'Radar m
 assert(radar.includes('Full analysis & decision notes'),'Radar research must remain available on demand');
 
 assert(hunter.includes('Futures research & market statistics (optional)'),'Futures research should be collapsible');
-assert(hunter.includes('Est. loss at stop:'),'Hunter must show financial risk prominently');
+assert(hunter.includes('<BetScenarioCalculator') && calculator.includes('Stop loss'),
+  'Hunter must show dynamically computed dollar risk without changing the live order');
 assert(hunter.includes('Continue to Live Bet'),'Hunter should give a clear next action');
 assert(hunter.includes('disabled={!marginHandoff?.compatible||marginHandoffBusy||sendingToLiveBet}'),
   'A blocked Kraken setup must not move to Live Bet');
@@ -83,5 +86,6 @@ assert(live.includes("!executionEnabled||!krakenValidated||busy||!token"),
   'Live execution must remain locked without server capability, fresh validation and token');
 assert(live.includes('window.confirm('),'A future enabled real order still requires manual approval');
 assert(live.includes('Full order details & risks'),'Detailed risk disclosure must remain available');
-assert(live.includes('Lose at stop') && live.includes('Make at target'),'Dollar risk/reward estimates must remain visible');
+assert(live.includes('<BetScenarioCalculator') && calculator.includes('Stop loss') && calculator.includes('Target profit'),
+  'Dollar target and stop estimates must remain visible and editable in Live Bet');
 console.log('PASS: concise bet-first UI, visible risks, collapsible diagnostics and unchanged execution safeguards.');
