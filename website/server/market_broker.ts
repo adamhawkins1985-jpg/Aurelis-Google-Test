@@ -381,28 +381,39 @@ async function arbitrageEvidence(symbol:string){
 
 function marketWideFallback(scan:any,mode:'spot'|'perps',message:string){
   const all=Array.isArray(scan?.candidates)?scan.candidates:[];
-  const confirmed=all.filter((x:any)=>x.status==='CONFIRMED_RESEARCH'&&
-    (mode!=='perps'||x.botEvidence?.perps?.markPrice>0));
-  const coverage='Screened '+Number(scan?.spotSnapshots||0)+' fresh 1h Kraken Spot charts out of '+Number(scan?.checked?.length||0)+
-    ' configured symbols and reviewed '+Number(scan?.botCandidatesChecked||0)+' leading candidate bot feeds. ';
-  const budget=/\$\s*(\d+(?:\.\d+)?)/.exec(message)?.[1];
-  const budgetNote=budget?' Your total available budget is USD '+budget+', not an automatic margin allocation.':'';
-  const caveat=mode==='perps'?
-    ' U.S. perpetual execution eligibility is unverified. Real Kraken first test stays USD 10 notional, at most 2x, with explicit approval.':
-    ' Short-term technical screens cannot establish which coin is a good long-term investment.';
-  if(!confirmed.length){
-    const researched=all.filter((x:any)=>x.botEvidence);
-    const next=researched.slice(0,2).map((x:any)=>x.symbol+' '+x.indicator+' chart / '+x.status.toLowerCase().replaceAll('_',' ')).join('; ');
-    return 'WAIT. '+coverage+'No candidate had both non-conflicting bot confirmation and '+(mode==='perps'?'a verified public perpetual quote. ':'a current technical setup. ')+
-      (next?'Observed: '+next+'. ':'')+'No verified trade has been identified; do not deploy the whole budget.'+budgetNote+caveat;
-  }
-  const ranked=confirmed.slice(0,3).map((x:any)=>x.symbol+' '+x.indicator+
-    ' (Kraken spot '+Number(x.spotPrice).toFixed(x.spotPrice<1?5:2)+
-    ', RSI '+Number(x.rsi).toFixed(1)+', '+(x.botEvidence?.desk?.readiness?'Desk '+Math.round(x.botEvidence.desk.readiness)+'/100':'Radar confirmation')+
-    (mode==='perps'?' / public perp mark '+Number(x.botEvidence.perps.markPrice).toFixed(2):'')+')').join('; ');
-  return coverage+'Confirmed research candidates within this limited universe: '+ranked+
-    '. Other sources and long-term fundamentals require separate diligence. These are not buy orders or profit predictions.'+
-    budgetNote+caveat;
+  const confirmed=all.filter((x:any)=>x.status==='CONFIRMED_RESEARCH'&&(mode!=='perps'||x.botEvidence?.perps?.markPrice>0));
+  const coverage='Checked '+Number(scan?.spotSnapshots||0)+' fresh Kraken Spot 1h charts of '+Number(scan?.checked?.length||0)+
+    ' configured symbols; obtained bot evidence for '+Number(scan?.botCandidatesChecked||0)+' directional candidates. ';
+  const budget=/\\$\\s*(\\d+(?:\\.\\d+)?)/.exec(message)?.[1];
+  const budgetNote=budget?' USD '+budget+' is your total budget, not an instruction to use it all as margin.':'';
+  const caveat=mode==='perps'
+    ?' Perpetual account eligibility and execution are NOT verified. The first real Kraken test remains capped at USD 10 notional and 2x with explicit approval.'
+    :' Technical charts assess timing, not long-term asset quality.';
+  const describe=(x:any)=>{
+    const bot=x.botEvidence;
+    const blockers:string[]=[];
+    if(x.indicator==='WAIT')blockers.push('1h indicator has no directional setup');
+    if(!bot)blockers.push('bot confirmation not checked');
+    else {
+      if(bot.disagreement)blockers.push('bot direction conflicts');
+      else if(bot.confirmation!=='BOT_CONFIRMED')blockers.push('fresh Signal Desk >=68 or qualified Radar >=79 matching direction needed');
+      if(mode==='perps'&&!(bot.perps?.markPrice>0))blockers.push('public perpetual quote unavailable');
+    }
+    const price=Number(x.spotPrice);
+    const detail=x.symbol+' '+(x.indicator==='WAIT'?'neutral':x.indicator)+
+      ' (spot '+(Number.isFinite(price)?'$'+price.toFixed(price<1?5:2):'unavailable')+
+      ', RSI '+Number(x.rsi).toFixed(1)+', signal '+Number(x.indicatorScore)+')';
+    return detail+(blockers.length?' | Missing: '+blockers.join('; '):' | Non-conflicting bot signal checked');
+  };
+  const watch=all.filter((x:any)=>x.indicator!=='WAIT').sort((a:any,b:any)=>{
+    const priority=(x:any)=>x.status==='CONFIRMED_RESEARCH'?0:x.botEvidence?1:2;
+    return priority(a)-priority(b)||Math.abs(b.indicatorScore)-Math.abs(a.indicatorScore);
+  }).slice(0,3);
+  const intro=confirmed.length?'Research candidates found. ':'No verified trade right now. ';
+  const watchText=watch.length?'Top directional watchlist: '+watch.map(describe).join(' / ')+'. '
+    :'No directional setups in the fresh scanned charts. ';
+  const next='These are observation priorities, not automatic trades. Recheck fresh candles, volume and bot direction before entry; if disagreement persists, avoid execution. ';
+  return intro+coverage+watchText+next+budgetNote+caveat;
 }
 
 function fallbackReply(market:any,bots:any,mode:string,amount:number,extra:any={}){
@@ -553,7 +564,7 @@ export function registerMarketBroker(app:Express,port:number){
               'For cross-market questions, no historical analog or legacy profile for the selected default coin may be described as proof about other scanned assets. '+
               'For accumulation, distinguish long-term asset quality (not established by technical candles) from timing and offer at most a supported shortlist with uncertainties; do not infer suitability without knowing investment goals, horizon and risk tolerance. '+
               'For a user who has $100, it is total available capital, not automatically $100 margin or an order instruction. Show only hypothetical exposure and downside costs, and discuss risk budget and eligibility before any Perps action. '+
-              'Lead with BUY, SELL, or WAIT only when supported; disclose disagreeing or unavailable bots. '+
+              'Lead with a verified research candidate or state NO VERIFIED TRADE; never frame WAIT as no useful analysis. For market-wide research, always show up to three directional near-misses with specific missing confirmations and what would change the assessment. Distinguish unscanned, neutral, conflicting and unavailable data; do not claim a candidate is good just because it ranks above the others. Show scan breadth and freshness. Disclose disagreeing or unavailable bots. '+
               'Give data-derived entries/stops/targets with clear invalidation when appropriate, noting trading fees/funding omitted. '+
               'For HYPOTHETICAL research, you may explain 1x-20x leverage using researchScenario when valid, but never imply it is available to this account or authorized for a real order. NEVER propose or execute a live order above the separately enforced 2x / $10 first-test cap. '+
               'Favorable and adverse price changes in researchScenario are user-defined assumptions, NOT predictions, actual stop/target orders, or a forecast for the selected horizon. Its theoreticalMarginExhaustionPrice is NOT an exchange liquidation quote; maintenance margin, funding, fees and slippage can trigger liquidation earlier. '+
