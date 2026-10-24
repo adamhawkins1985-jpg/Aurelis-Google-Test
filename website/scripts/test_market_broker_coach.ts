@@ -33,4 +33,11 @@ assert.ok(screen.indexOf('aria-label="Ask AURELIS AI"')<screen.indexOf('Price, v
 assert.ok(screen.includes('Show supporting charts, bot reports & research tools')&&screen.includes("showEvidence?'flex flex-col gap-2.5':'hidden'"),'advanced research collapses by default');
 assert.ok(screen.includes('aria-label="AURELIS market broker chat"'),'prominent chat preserved');
 assert.ok(screen.includes("if(contextRef.current===scope)"),'stale assistant responses cannot cross coin/mode changes');
+const brokerServer=readFileSync('server/market_broker.ts','utf8');
+assert.ok(brokerServer.includes('Top directional watchlist:'),'no-confirmation fallback must show near misses');
+assert.ok(brokerServer.includes('fresh Signal Desk >=68 or qualified Radar >=79 matching direction needed'),'near misses must disclose exact confirmation requirements');
+assert.ok(brokerServer.includes('total budget, not an instruction to use it all as margin'),'budget is not margin');
+assert.ok(brokerServer.includes('Research candidates found.')&&brokerServer.includes('No verified trade right now.'),'verified and unverified responses must be distinct');
+assert.ok(brokerServer.includes('watchlist|rank|closest setups'),'chat must route watchlist research to market scan');
+assert.ok(screen.includes('Conservative: rank')&&screen.includes('Aggressive: find early momentum'),'risk-style suggestions should remain accessible');
 console.log('PASS: conversational broker guidance, bot disagreements, freshness, education, historical labels and focused chat.');
