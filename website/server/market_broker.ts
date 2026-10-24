@@ -14,8 +14,8 @@ const FRAMES:Record<Frame,{interval:number;seconds:number}>={
   '12h':{interval:240,seconds:43200},'1d':{interval:1440,seconds:86400},
   '3d':{interval:1440,seconds:259200},'7d':{interval:10080,seconds:604800}
 };
-const COINS=['BTC','ETH','SOL','XRP','DOGE','ADA','AVAX','LINK','LTC','DOT'];
-const SPOT_PAIRS:Record<string,string>={BTC:'XXBTZUSD',ETH:'XETHZUSD',SOL:'SOLUSD',XRP:'XXRPZUSD',DOGE:'XDGUSD',ADA:'ADAUSD',AVAX:'AVAXUSD',LINK:'LINKUSD',LTC:'XLTCZUSD',DOT:'DOTUSD'};
+const COINS=['BTC','ETH','SOL','XRP','DOGE','ADA','AVAX','LINK','LTC','DOT','BCH','XLM','TRX','UNI','AAVE','ATOM','FIL','NEAR','ALGO','ETC'];
+const SPOT_PAIRS:Record<string,string>={BTC:'XXBTZUSD',ETH:'XETHZUSD',SOL:'SOLUSD',XRP:'XXRPZUSD',DOGE:'XDGUSD',ADA:'ADAUSD',AVAX:'AVAXUSD',LINK:'LINKUSD',LTC:'XLTCZUSD',DOT:'DOTUSD',BCH:'BCHUSD',XLM:'XLMUSD',TRX:'TRXUSD',UNI:'UNIUSD',AAVE:'AAVEUSD',ATOM:'ATOMUSD',FIL:'FILUSD',NEAR:'NEARUSD',ALGO:'ALGOUSD',ETC:'ETCUSD'};
 const num=(v:unknown)=>Number.isFinite(Number(v))?Number(v):0;
 const clamp=(n:number,min:number,max:number)=>Math.max(min,Math.min(max,n));
 const safeSymbol=(v:unknown)=>String(v||'BTC').trim().toUpperCase();
@@ -293,7 +293,7 @@ async function crossAssetResearch(mode:'spot'|'perps',port:number){
       botCandidatesChecked:checks.filter(x=>x.status==='fulfilled').length,
       candidates:candidates.slice(0,10),
       notes:[
-        'This checks 10 configured Kraken Spot/USD symbols, not the entire crypto or Kraken futures market.',
+        'This checks up to 20 configured Kraken Spot/USD symbols, not the entire crypto or Kraken futures market.',
         'Bot evidence is checked for up to five directional 1h candidates; other assets are unassessed, not rejected.',
         'Kraken derivatives information is public research only and does not verify U.S. account eligibility or an executable contract.',
         'The ranking prioritizes research confirmation and technical score; it is not a return forecast or assessment of long-term coin fundamentals.',
@@ -560,7 +560,7 @@ export function registerMarketBroker(app:Express,port:number){
               'Paper-only DEX orderbook/funding observations are not actionable directional signals. '+
               'Original Hunter and Perps research databases have retrospective labels; they are NOT live executions, independent models, out-of-sample accuracy, or calibrated trade win probabilities. Use old records as historical context only, never as live confirmation. '+
               'The analog report is descriptive and source-specific: never treat positivePct as a predicted probability. When fewer than 15 time-separated matches, say evidence is insufficient. When sourceDecision=NO_TRADE, no directional recommendation may be inferred from analog outcomes. Name the source and sample sizes if discussing history. '+
-              'If marketWideResearch exists, compare its actual candidates, cite the 10-symbol checked universe and limited bot coverage, and do not claim the entire crypto market was scanned. If no fresh qualifying independent confirmation exists, state WAIT/no verified trade rather than manufacturing a winner. '+
+              'If marketWideResearch exists, compare its actual candidates, cite the actual checked symbol universe and limited bot coverage, and do not claim the entire crypto market was scanned. If no fresh qualifying independent confirmation exists, state WAIT/no verified trade rather than manufacturing a winner. '+
               'For cross-market questions, no historical analog or legacy profile for the selected default coin may be described as proof about other scanned assets. '+
               'Conservative, balanced and aggressive are research preferences, NOT execution permissions. Conservative prioritizes non-conflicting confirmed evidence and lower modeled loss. Balanced contrasts supported candidates and tradeoffs. Aggressive may highlight unconfirmed early momentum only as WATCH, never as a verified or executable bet, and must state concrete missing confirmations and downside. Never increase leverage or position size solely because the user says aggressive. '+
                'For accumulation, distinguish long-term asset quality (not established by technical candles) from timing and offer at most a supported shortlist with uncertainties; do not infer suitability without knowing investment goals, horizon and risk tolerance. '+
