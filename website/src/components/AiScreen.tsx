@@ -355,7 +355,7 @@ export const AiScreen: React.FC<AiScreenProps> = ({
       {activeBotTab === 'dca' && <DcaBotView coins={coins} soundEnabled={soundEnabled} />}
       {activeBotTab === 'grid' && <GridBotView coins={coins} soundEnabled={soundEnabled} />}
       {activeBotTab === 'arbitrage' && <ArbitrageBotView coins={coins} soundEnabled={soundEnabled} />}
-      {activeBotTab === 'live' && <LiveBetView soundEnabled={soundEnabled} initialSetup={pendingTradeSetup} />}
+      {activeBotTab === 'live' && <LiveBetView soundEnabled={soundEnabled} initialSetup={pendingTradeSetup} onFindNewBet={() => { setPendingTradeSetup(null); setAutoScanEnabled(true); setActiveBotTab('radar'); }} />}
       {activeBotTab === 'signals' && (
         <SignalDeskScreen coins={coins} onSelectCoin={onSelectCoin} soundEnabled={soundEnabled} />
       )}

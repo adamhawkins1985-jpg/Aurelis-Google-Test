@@ -3,10 +3,12 @@ import { CheckCircle2, ImagePlus, Loader2, ShieldCheck, Upload, X } from 'lucide
 import { formatCurrency, playHudSound } from '../../services/marketData';
 import type { SetupCandidate } from './TradeRadarView';
 import { BetScenarioCalculator } from './BetScenarioCalculator';
+import { explainKrakenBlock } from '../../services/krakenBlockGuide';
 
 interface LiveBetViewProps {
   soundEnabled: boolean;
   initialSetup?: SetupCandidate | null;
+  onFindNewBet?: () => void;
 }
 
 interface ParsedTrade {
@@ -59,6 +61,7 @@ const prepareScreenshotForAnalysis = async (file: File, originalDataUrl: string)
 export const LiveBetView: React.FC<LiveBetViewProps> = ({
   soundEnabled,
   initialSetup = null,
+  onFindNewBet,
 }) => {
   const fileRef = useRef<HTMLInputElement>(null);
   const [imageUrl, setImageUrl] = useState<string>('');
@@ -90,6 +93,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
   const [submitResult, setSubmitResult] = useState<any | null>(null);
   const [submitError, setSubmitError] = useState('');
   const [krakenReviewError,setKrakenReviewError]=useState('');
+  const krakenBlockedGuide = krakenReviewError ? explainKrakenBlock(krakenReviewError) : null;
   const [executionEnabled,setExecutionEnabled]=useState(false);
   const [executionCapabilityMessage,setExecutionCapabilityMessage]=useState('Checking execution safeguards…');
   useEffect(()=>{
@@ -665,15 +669,30 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
             Live order uses the verified setup, fixed $10 notional and up to 2× leverage, not the scenario inputs.
             Stop requested only after the entry fills. ¹ Target NOT placed as an order.
           </div>
-          {krakenReviewError && (
-            <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-[11px] text-amber-300">
-              <strong className="block mb-1">
-                {krakenReviewError.includes('at/below its stop')?'Price below stop · New bet needed' :
-                 krakenReviewError.includes('at/above its target')?'Price beyond target · New bet needed' :
-                 'Kraken review blocked · No order placed'}
-              </strong>
-              <details>
-                <summary className="cursor-pointer text-[10px]">Why was it blocked?</summary>
+          {!executionEnabled && executionCapabilityMessage !== 'Checking execution safeguards…' && (
+            <div role="status" className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-[12px] text-text-secondary space-y-1">
+              <strong className="block text-text-primary">Live orders are currently locked</strong>
+              <p>You can check and validate this $10 Kraken test order without trading. Actual order submission is disabled until the required position-protection lifecycle is verified and server access is enabled.</p>
+              <p className="text-[11px]">Status: {executionCapabilityMessage}</p>
+            </div>
+          )}
+          {krakenReviewError && krakenBlockedGuide && (
+            <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-[12px] text-text-primary space-y-2">
+              <strong className="block text-[14px]">{krakenBlockedGuide.title} · No order placed</strong>
+              <p>{krakenBlockedGuide.explanation}</p>
+              <p className="font-medium">{krakenBlockedGuide.nextStep}</p>
+              <div className="flex flex-wrap gap-2">
+                {krakenBlockedGuide.tryNewScan && onFindNewBet && (
+                  <button type="button" onClick={onFindNewBet}
+                    className="rounded-lg px-3 py-2 bg-primary-container text-on-primary-container font-bold">Find a new bet</button>
+                )}
+                {krakenBlockedGuide.tryWallet && (
+                  <button type="button" onClick={()=>document.getElementById('aurelis-bot-wallet-auth')?.scrollIntoView({behavior:'smooth',block:'center'})}
+                    className="rounded-lg px-3 py-2 border border-white/20 bg-surface-base font-bold">Go to Bot Wallet verification</button>
+                )}
+              </div>
+              <details className="text-[11px]">
+                <summary className="cursor-pointer font-semibold">Why was it blocked? · Technical details</summary>
                 <p className="mt-2 break-words leading-relaxed">{krakenReviewError}</p>
               </details>
             </div>
@@ -681,7 +700,7 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
           {!preview && (
             <button type="button" onClick={reviewKraken} disabled={busy || !supportedLeverage.includes(Number(leverage))}
               className="w-full py-2.5 rounded-xl bg-primary-container text-on-primary-container font-bold disabled:opacity-40">
-              Review $10 Kraken bet
+              Check $10 Kraken order · No trade placed
             </button>
           )}
           {preview && (

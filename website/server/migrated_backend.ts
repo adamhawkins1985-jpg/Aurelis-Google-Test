@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { getAddress, verifyMessage } from 'ethers';
+import { WalletChallengeStore } from './wallet_auth_challenges';
 import { assessKrakenProtection, assessKrakenMarginHandoff, krakenExecutablePrice } from './kraken_protection_review';
 import { auditKrakenMarginProtection, krakenLiveExecutionPermitted, KRAKEN_LINKED_OCO_LIFECYCLE_VERIFIED } from './kraken_position_protection';
 
@@ -96,7 +97,7 @@ type Challenge = {
   used: boolean;
 };
 
-const challenges = new Map<string, Challenge>();
+const challenges = new WalletChallengeStore<Challenge>();
 
 function parseCookies(req: Request): Record<string, string> {
   const out: Record<string, string> = {};
@@ -140,24 +141,32 @@ function normalizeAddress(value: string): string {
   }
 }
 
-function getVerifiedSession(req: Request, res: Response): any | null {
+function getVerifiedSession(req: Request, res: Response, purpose?: 'bots'): any | null {
   const sid = sessionId(req, res);
-  const row = authDb.prepare(
-    'SELECT address,chain_id,origin,purpose,verified_at,expires_at FROM wallet_auth_sessions WHERE session_id=?'
-  ).get(sid) as any;
-  if (!row) return null;
-  if (Date.now() / 1000 >= Number(row.expires_at || 0)) {
-    authDb.prepare('DELETE FROM wallet_auth_sessions WHERE session_id=?').run(sid);
-    return null;
+  // Bot permissions are stored separately from general wallet sign-in so a
+  // simultaneous/repeated Web login cannot silently revoke bot authorization.
+  // Legacy unsuffixed bot sessions remain recognized until they expire.
+  const keys = purpose === 'bots' ? [sid + ':bots', sid] : [sid, sid + ':bots'];
+  for (const key of keys) {
+    const row = authDb.prepare(
+      'SELECT address,chain_id,origin,purpose,verified_at,expires_at FROM wallet_auth_sessions WHERE session_id=?'
+    ).get(key) as any;
+    if (!row) continue;
+    if (Date.now() / 1000 >= Number(row.expires_at || 0)) {
+      authDb.prepare('DELETE FROM wallet_auth_sessions WHERE session_id=?').run(key);
+      continue;
+    }
+    if (purpose === 'bots' && row.purpose !== 'bots') continue;
+    return {
+      address: row.address,
+      chainId: Number(row.chain_id),
+      origin: row.origin,
+      purpose: row.purpose,
+      verifiedAt: Number(row.verified_at),
+      expiresAt: Number(row.expires_at),
+    };
   }
-  return {
-    address: row.address,
-    chainId: Number(row.chain_id),
-    origin: row.origin,
-    purpose: row.purpose,
-    verifiedAt: Number(row.verified_at),
-    expiresAt: Number(row.expires_at),
-  };
+  return null;
 }
 
 export function getVerifiedWalletAddress(req: Request, res: Response): string | null {
@@ -166,6 +175,7 @@ export function getVerifiedWalletAddress(req: Request, res: Response): string | 
 }
 
 function saveVerifiedSession(sid: string, value: any) {
+  const key = value.purpose === 'bots' ? sid + ':bots' : sid;
   authDb.prepare(`
     INSERT INTO wallet_auth_sessions(session_id,address,chain_id,origin,purpose,verified_at,expires_at)
     VALUES(?,?,?,?,?,?,?)
@@ -173,7 +183,7 @@ function saveVerifiedSession(sid: string, value: any) {
       address=excluded.address,chain_id=excluded.chain_id,origin=excluded.origin,
       purpose=excluded.purpose,verified_at=excluded.verified_at,expires_at=excluded.expires_at
   `).run(
-    sid,
+    key,
     value.address,
     value.chainId,
     value.origin,
@@ -314,7 +324,7 @@ function registerAuthRoutes(app: Express) {
         origin,
         String(req.body?.purpose || 'web')
       );
-      challenges.set(sid, challenge);
+      challenges.issue(sid, challenge);
       return sendNoStore(res, {
         ok: true,
         message: challenge.message,
@@ -330,15 +340,13 @@ function registerAuthRoutes(app: Express) {
   app.post('/api/auth/verify', async (req, res) => {
     const sid = sessionId(req, res);
     try {
-      const challenge = challenges.get(sid);
-      if (!challenge) throw new Error('challenge_missing');
-      if (challenge.used) throw new Error('challenge_replayed');
-      challenge.used = true;
-      if (Date.now() / 1000 >= challenge.expiresAt) throw new Error('challenge_expired');
+      // Match the specific signed message. Concurrent wallet/UI requests must not
+      // overwrite each other, and each challenge can be consumed only once.
+      const message = String(req.body?.message || '');
+      const challenge = challenges.consume(sid, message);
       const origin = authOrigin(req);
       const address = normalizeAddress(String(req.body?.address || ''));
       const chainId = Number(req.body?.chainId);
-      const message = String(req.body?.message || '');
       const signature = String(req.body?.signature || '');
       if (message !== challenge.message) throw new Error('message_mismatch');
       if (address !== challenge.address) throw new Error('address_mismatch');
@@ -355,7 +363,6 @@ function registerAuthRoutes(app: Express) {
         verifiedAt: now,
         expiresAt: now + AUTH_SESSION_TTL,
       });
-      challenges.delete(sid);
       return sendNoStore(res, { ok: true, verified: true, address, chainId });
     } catch (e: any) {
       return sendNoStore(res, { ok: false, verified: false, error: e?.message || 'invalid_signature' }, 401);
@@ -1224,8 +1231,11 @@ function krakenPrivate(route:string,payload:Record<string,any>={}):Promise<any>{
 // AURELIS CEX funding assistant: owner-scoped, READ-ONLY accounts and review-only orders.
 // A signed Bots wallet does not automatically authorize reading the owner's exchange balances.
 function requireBotAccountOwner(req:Request,res:Response):boolean {
-  const session=requireVerified(req,res);
-  if(!session)return false;
+  const session=getVerifiedSession(req,res,'bots');
+  if(!session){
+    sendNoStore(res,{ok:false,error:'wallet_auth_required',next:'verify_bot_wallet'},401);
+    return false;
+  }
   const owner=String(process.env.AURELIS_BOTS_OWNER_WALLET_ADDRESS||'').trim().toLowerCase();
   if(!owner || session.purpose!=='bots' || String(session.address||'').toLowerCase()!==owner){
     sendNoStore(res,{ok:false,error:'bot_account_owner_not_authorized'},403);
@@ -1909,7 +1919,7 @@ function registerMarketAndBotRoutes(app:Express) {
 
 
   app.get('/api/bots/auth/status',(req,res)=>{
-    const session=getVerifiedSession(req,res);
+    const session=getVerifiedSession(req,res,'bots');
     const owner=String(process.env.AURELIS_BOTS_OWNER_WALLET_ADDRESS||'').trim().toLowerCase();
     const isOwner=Boolean(owner&&session?.purpose==='bots'&&String(session?.address||'').toLowerCase()===owner);
     return sendNoStore(res,{ok:true,ownerConfigured:Boolean(owner),verified:isOwner,
@@ -2205,9 +2215,10 @@ function registerMarketAndBotRoutes(app:Express) {
         ok:true,venue:'Kraken Spot/Margin',checked,
         freeMarginAvailable:Number.isFinite(availableMargin)&&availableMargin>=0,
         freeMarginUsd:Number.isFinite(availableMargin)?availableMargin:null,
+        freeMarginSufficientForTenDollarTest:Number.isFinite(availableMargin)&&availableMargin>=10,
         openMarginPositions:positionCount,openOrders:openOrderCount,
         testNotionalMaximumUsd:10,maxTestLeverage:2,
-        accountClearForFirstTest:allSucceeded&&positionCount===0&&openOrderCount===0,
+        accountClearForFirstTest:allSucceeded&&positionCount===0&&openOrderCount===0&&Number.isFinite(availableMargin)&&availableMargin>=10,
         liveOrdersEnabled:krakenLiveExecutionPermitted(process.env.AURELIS_KRAKEN_MARGIN_EXECUTION_ENABLED),
         linkedStopTargetVerified:KRAKEN_LINKED_OCO_LIFECYCLE_VERIFIED,
         executionBlockedReason:KRAKEN_LINKED_OCO_LIFECYCLE_VERIFIED?null:'linked_stop_target_lifecycle_unverified',

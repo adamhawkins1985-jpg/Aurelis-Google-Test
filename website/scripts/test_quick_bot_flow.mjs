@@ -80,7 +80,7 @@ assert(live.includes("key={normalized?'loaded-setup':'no-setup'} open={!normaliz
   'Hide the screenshot upload UI once a bet is loaded');
 assert(live.includes('liveStatus.positions.length||liveStatus.orders.length'),
   'Open-position management must remain visible whenever live orders or positions exist');
-assert(live.includes('Review $10 Kraken bet'),'Kraken review button must stay available');
+assert(live.includes('Check $10 Kraken order · No trade placed'),'Kraken review button must stay available');
 assert(live.includes('Kraken Spot/Margin · $10 test'), 'Live Bet must show a single compact review card');
 assert(live.includes('className="border-t border-white/15 pt-3 space-y-3"'), 'Kraken preview must render inside the existing setup card');
 assert(!live.includes("['Bet', preview.symbol+' '+preview.direction]"), 'Do not render a second copy of the bet, position, stop, and target');

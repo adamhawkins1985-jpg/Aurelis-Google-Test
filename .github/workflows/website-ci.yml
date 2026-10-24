@@ -48,6 +48,9 @@ jobs:
           # modules removed from the currently deployed website.
           # Validate the CURRENT app and manual-execution safety controls.
           node scripts/test_kraken_manual_cap.mjs
+          node scripts/test_bot_auth_flow.mjs
+          npx tsx scripts/test_wallet_auth_challenges.ts
+          npx tsx scripts/test_kraken_block_guide.ts
           npx tsx scripts/test_kraken_protection_review.ts
           npx tsx scripts/test_kraken_position_protection.ts
           npx tsx scripts/test_hunter_margin_handoff.ts
