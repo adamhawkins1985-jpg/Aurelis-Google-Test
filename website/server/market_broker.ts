@@ -1,5 +1,6 @@
 import type { Express } from 'express';
 import { GoogleGenAI } from '@google/genai';
+import { recordMarketObservation, brokerHistory } from './market_broker_history';
 
 type Bar={time:number;open:number;high:number;low:number;close:number;volume:number};
 type Frame='5m'|'15m'|'30m'|'1h'|'4h'|'8h'|'12h'|'1d'|'3d'|'7d';
@@ -17,9 +18,14 @@ const clamp=(n:number,min:number,max:number)=>Math.max(min,Math.min(max,n));
 const safeSymbol=(v:unknown)=>String(v||'BTC').trim().toUpperCase();
 const safeFrame=(v:unknown):Frame=>Object.prototype.hasOwnProperty.call(FRAMES,String(v))?String(v) as Frame:'1h';
 const cache=new Map<string,{expires:number,payload:any}>();
+const pending=new Map<string,Promise<any>>();
 async function cached<T>(key:string,ttl:number,work:()=>Promise<T>):Promise<T>{
   const c=cache.get(key);if(c&&c.expires>Date.now())return c.payload as T;
-  const value=await work();cache.set(key,{expires:Date.now()+ttl,payload:value});return value;
+  const active=pending.get(key);if(active)return active as Promise<T>;
+  const promise=work().then(value=>{cache.set(key,{expires:Date.now()+ttl,payload:value});return value;})
+    .finally(()=>pending.delete(key));
+  pending.set(key,promise);
+  return promise;
 }
 async function remoteJson(url:string,timeout=8500):Promise<any>{
   const r=await fetch(url,{headers:{Accept:'application/json','User-Agent':'AURELIS-Market-Broker/1.0'},signal:AbortSignal.timeout(timeout)});
@@ -93,7 +99,9 @@ function technical(bars:Bar[],intervalSeconds:number){
 }
 async function snapshot(symbol:string,tf:Frame){
   const result=await candles(symbol,tf);
-  return {ok:true,symbol,timeframe:tf,...result,analysis:technical(result.bars,result.intervalSeconds)};
+  const market={ok:true,symbol,timeframe:tf,...result,analysis:technical(result.bars,result.intervalSeconds)};
+  if(market.analysis.dataFresh)recordMarketObservation({symbol,source:'kraken_indicators',timeframe:tf,direction:market.analysis.signal==='BUY'?'LONG':market.analysis.signal==='SELL'?'SHORT':'WAIT',score:market.analysis.score,price:market.analysis.price,sourceAt:result.observedAt,evidence:{rsi:market.analysis.rsi,ema20:market.analysis.ema20,ema50:market.analysis.ema50,volumeRatio:market.analysis.volumeRatio,support:market.analysis.support,resistance:market.analysis.resistance}});
+  return market;
 }
 async function cryptoTape(){
   const symbols=['BTC','ETH','SOL','XRP','DOGE','ADA'];
@@ -130,7 +138,7 @@ async function macroTape(){
 const stripTags=(v:string)=>v.replace(/<[^>]*>/g,'').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#39;/g,"'").trim();
 async function brokerNews(){
   return cached('broker:news',180000,async()=>{
-    const feeds=[['Decrypt','https://decrypt.co/feed'],['Cointelegraph','https://cointelegraph.com/rss'],['CryptoSlate','https://cryptoslate.com/feed/']];
+    const feeds=[['Decrypt','https://decrypt.co/feed'],['Cointelegraph','https://cointelegraph.com/rss'],['CryptoSlate','https://cryptoslate.com/feed/'],['NewsBTC','https://www.newsbtc.com/feed/'],['Bitcoin Magazine','https://bitcoinmagazine.com/.rss/full/'],['BeInCrypto','https://beincrypto.com/feed/'],['Crypto Briefing','https://cryptobriefing.com/feed/'],['CoinDesk','https://www.coindesk.com/arc/outboundfeeds/rss/']];
     const grouped=await Promise.all(feeds.map(async ([source,url])=>{
       try{
         const r=await fetch(url,{headers:{'User-Agent':'AURELIS-Market-Broker/1.0'},signal:AbortSignal.timeout(6500)});
@@ -143,7 +151,7 @@ async function brokerNews(){
         }).filter(a=>a.title&&/^https:\/\//.test(a.url));
       }catch{return [];}
     }));
-    return grouped.flat().sort((a,b)=>b.time-a.time).slice(0,18);
+    const seen=new Set<string>();return grouped.flat().filter(a=>a.time>0&&Date.now()-a.time<4*86400000).sort((a,b)=>b.time-a.time).filter(a=>{const key=a.url.split('?')[0];if(seen.has(key))return false;seen.add(key);return true;}).slice(0,24);
   });
 }
 async function futuresContext(symbol:string){
@@ -165,33 +173,156 @@ async function futuresContext(symbol:string){
   });
 }
 async function botSignals(symbol:string,port:number){
-  const urls=['http://127.0.0.1:'+port+'/api/signal-desk/deep/'+symbol,'http://127.0.0.1:8792/api/radar?mode=all&limit=10&force=0'];
-  const results=await Promise.allSettled(urls.map(url=>remoteJson(url,9000)));
-  const deep=results[0].status==='fulfilled'?results[0].value:null;
-  const radar=results[1].status==='fulfilled'?results[1].value:null;
-  const matched=[...(Array.isArray(radar?.candidates)?radar.candidates:[]),...(Array.isArray(radar?.trackedCandidates)?radar.trackedCandidates:[])].find((x:any)=>String(x?.asset||'').toUpperCase()===symbol);
-  const ts=num(matched?.ts_ms),radarFresh=ts>0&&Date.now()-ts<300000;
-  return {
-    signalDesk:deep?.ok===true?{
-      source:'AURELIS Signal Desk',direction:deep.direction,readiness:deep.readiness,label:deep.label,
-      reasons:deep.reasons?.slice(0,5),contradictions:deep.contradictions?.slice(0,4),levels:deep.levels,generatedAt:deep.generatedAt
-    }:null,
-    radar:radar?.ok===true&&matched&&radarFresh?{
-      source:'AURELIS Trade Radar',direction:matched.direction,score:matched.score,
-      entry:matched.entry,stop:matched.invalidation,target:matched.target,reasons:matched.reasons?.slice(0,4),
-      generatedAt:ts,qualified:(radar.candidates||[]).includes(matched)
-    }:null,
-    status:{signalDesk:deep?.ok===true?'LIVE':'UNAVAILABLE',radar:radar?.ok===true?(matched&&radarFresh?'MATCH':'NO CURRENT MATCH'):'UNAVAILABLE'}
-  };
+  return cached('botSignals:'+symbol,45000,async()=>{
+    const urls=['http://127.0.0.1:'+port+'/api/signal-desk/deep/'+symbol,'http://127.0.0.1:8792/api/radar?mode=all&limit=10&force=0'];
+    const results=await Promise.allSettled(urls.map(url=>remoteJson(url,13000)));
+    const deep=results[0].status==='fulfilled'&&results[0].value?.ok===true?results[0].value:null;
+    const radar=results[1].status==='fulfilled'&&results[1].value?.ok===true?results[1].value:null;
+    const matched=[...(Array.isArray(radar?.candidates)?radar.candidates:[]),...(Array.isArray(radar?.trackedCandidates)?radar.trackedCandidates:[])]
+      .find((x:any)=>String(x?.asset||'').toUpperCase()===symbol);
+    const radarAt=num(matched?.ts_ms);
+    const radarFresh=radarAt>0&&radarAt<=Date.now()+10000&&Date.now()-radarAt<300000;
+    const deskAt=num(deep?.generatedAt);
+    const deskFresh=deskAt>0&&deskAt<=Date.now()+10000&&Date.now()-deskAt<180000;
+    const signalDesk=deskFresh?{
+      source:'AURELIS Signal Desk',direction:deep.direction,readiness:num(deep.readiness),label:String(deep.label||''),
+      reasons:Array.isArray(deep.reasons)?deep.reasons.slice(0,6):[],
+      contradictions:Array.isArray(deep.contradictions)?deep.contradictions.slice(0,5):[],
+      scores:deep.scores||{},micro:deep.micro||{},timeframes:deep.timeframes||{},
+      levels:deep.levels,generatedAt:deskAt
+    }:null;
+    const radarSignal=radarFresh&&matched?{
+      source:'AURELIS Trade Radar',direction:matched.direction,score:num(matched.score),
+      entry:num(matched.entry||matched.price),stop:num(matched.invalidation),target:num(matched.target),
+      agents:matched.agents||{},structure:matched.structure||{},economics:matched.economics||{},
+      reasons:Array.isArray(matched.reasons)?matched.reasons.slice(0,5):[],
+      contradictions:Array.isArray(matched.contradictions)?matched.contradictions.slice(0,5):[],
+      generatedAt:radarAt,qualified:(radar.candidates||[]).includes(matched)
+    }:null;
+    if(signalDesk){
+      recordMarketObservation({
+        symbol,source:'signal_desk',timeframe:'multi',direction:signalDesk.direction==='LONG'?'LONG':signalDesk.direction==='SHORT'?'SHORT':'WAIT',
+        score:signalDesk.readiness,price:num(signalDesk.levels?.entry)||null,sourceAt:deskAt,
+        evidence:{scores:signalDesk.scores,micro:signalDesk.micro,reasons:signalDesk.reasons,contradictions:signalDesk.contradictions}
+      });
+    }
+    if(radarSignal){
+      recordMarketObservation({
+        symbol,source:'trade_radar',timeframe:'scanner',direction:radarSignal.direction==='LONG'?'LONG':radarSignal.direction==='SHORT'?'SHORT':'WAIT',
+        score:radarSignal.score,price:radarSignal.entry,sourceAt:radarAt,
+        evidence:{qualified:radarSignal.qualified,agents:radarSignal.agents,structure:radarSignal.structure,economics:radarSignal.economics,contradictions:radarSignal.contradictions}
+      });
+    }
+    return {
+      signalDesk,radar:radarSignal,
+      scan:{scannedMarkets:num(radar?.scannedMarkets),deepAnalyzed:num(radar?.deepAnalyzed),source:radar?.source||null},
+      derivedBots:[
+        {id:'hunter',label:'Hunter',status:'RADAR-DERIVED',signalSource:'trade_radar'},
+        {id:'scope',label:'Scope',status:'RADAR-DERIVED',signalSource:'trade_radar'},
+        {id:'dca',label:'DCA',status:'RADAR-DERIVED',signalSource:'trade_radar',execution:'PREVIEW ONLY'},
+        {id:'grid',label:'Grid',status:'RADAR-DERIVED',signalSource:'trade_radar',execution:'PREVIEW ONLY'}
+      ],
+      status:{
+        signalDesk:signalDesk?'LIVE':deep?'STALE':'UNAVAILABLE',
+        radar:radar?(radarSignal?'MATCH':matched?'STALE MATCH':'NO CURRENT MATCH'):'UNAVAILABLE'
+      }
+    };
+  });
 }
-function fallbackReply(market:any,bots:any,mode:string,amount:number){
-  const a=market.analysis,n=(v:number)=>'$'+v.toLocaleString('en-US',{maximumFractionDigits:v<1?6:2});
-  const b=bots.signalDesk,disagree=b&&(a.signal==='BUY'&&b.direction==='SHORT'||a.signal==='SELL'&&b.direction==='LONG');
-  const stance=disagree?'WAIT (signal disagreement)':a.signal;
-  const level=mode==='perps'?'Research-only Perps scenario; real Kraken orders remain locked.':
-    'Spot watch zone '+n(a.entryZone.low)+' to '+n(a.entryZone.high)+'; invalidation near '+n(a.stop)+'.';
-  return market.symbol+' '+market.timeframe+': '+stance+'. '+level+' RSI '+a.rsi.toFixed(1)+', EMA20 '+n(a.ema20)+', volume '+a.volumeRatio.toFixed(2)+'x. Signal Desk '+bots.status.signalDesk+'; Radar '+bots.status.radar+'. No calibrated profit odds are available.';
+
+async function timeframeEvidence(symbol:string){
+  return cached('broker:timeframes:'+symbol,90000,async()=>{
+    const frames:Frame[]=['5m','15m','1h','4h','1d'];
+    const results=await Promise.allSettled(frames.map(tf=>snapshot(symbol,tf)));
+    const items=results.map((result,i)=>{
+      const tf=frames[i];
+      if(result.status!=='fulfilled'||!result.value.analysis.dataFresh)
+        return {timeframe:tf,status:'UNAVAILABLE',signal:null,rsi:null,price:null,score:null,asOf:null,source:'Kraken Spot'};
+      const {analysis,observedAt}=result.value;
+      return {timeframe:tf,status:'LIVE',signal:analysis.signal,rsi:analysis.rsi,price:analysis.price,
+        score:analysis.score,asOf:observedAt,source:'Kraken Spot'};
+    });
+    const directionCounts={
+      buy:items.filter(x=>x.signal==='BUY').length,
+      sell:items.filter(x=>x.signal==='SELL').length,
+      wait:items.filter(x=>x.signal==='WAIT').length
+    };
+    const valid=items.filter(x=>x.status==='LIVE').length;
+    return {items,directionCounts,checked:frames.length,live:valid,
+      alignment:valid<3?'INSUFFICIENT':directionCounts.buy>=3&&directionCounts.sell===0?'BULLISH':directionCounts.sell>=3&&directionCounts.buy===0?'BEARISH':'MIXED',
+      note:'Timeframes are correlated Kraken Spot candles, not independent bot votes.'};
+  });
 }
+async function dexPublicEvidence(symbol:string){
+  return cached('broker:dex:'+symbol,120000,async()=>{
+    const params=new URLSearchParams({bot:'trade_radar',asset:symbol,side:'long',notional:'25'});
+    const [strategy,funding]=await Promise.allSettled([
+      remoteJson('http://127.0.0.1:8895/paper-dex-strategy?'+params,19000),
+      remoteJson('http://127.0.0.1:8895/funding-observations?asset='+symbol,10000)
+    ]);
+    const s=strategy.status==='fulfilled'?strategy.value:null;
+    const f=funding.status==='fulfilled'?funding.value:null;
+    const assessments=(Array.isArray(s?.venueAssessments)?s.venueAssessments:[]).slice(0,8).map((v:any)=>({
+      venue:String(v.venue||''),spreadBps:v.spreadBps!=null&&Number.isFinite(Number(v.spreadBps))?Number(v.spreadBps):null,
+      depthImbalance:v.observedDepthImbalance!=null&&Number.isFinite(Number(v.observedDepthImbalance))?Number(v.observedDepthImbalance):null,
+      marketObservation:String(v.marketObservation||'inconclusive'),
+      directionalSignalVerified:v.directionalSignalVerified===true,
+      executionReady:false,
+      hourlyFundingRate:v.fundingObservation?.hourlyRate!=null&&Number.isFinite(Number(v.fundingObservation.hourlyRate))?Number(v.fundingObservation.hourlyRate):null,
+      observedAt:Number(v.fundingObservation?.observedAt||0)*1000||null
+    }));
+    const venues=Object.entries(f?.venues||{}).map(([venue,item]:[string,any])=>({
+      venue,hourlyFundingRate:typeof item?.hourlyFundingRate==='number'?item.hourlyFundingRate:null,
+      nextFundingRate:typeof item?.nextFundingRate==='number'?item.nextFundingRate:null,
+      asOf:typeof item?.observedAt==='number'?item.observedAt*1000:null
+    }));
+    return {
+      mode:'PAPER OBSERVATION',strategy:'depth, spread & public funding; NO verified directional signal',
+      available:assessments.length>0||venues.length>0,assessments,funding:venues,asOf:Date.now(),
+      notIndependentBots:true,executionVerified:false,
+      warnings:['Venue observations are not trade recommendations.','Cost, collateral and execution conditions are not verified.']
+    };
+  });
+}
+
+
+async function arbitrageEvidence(symbol:string){
+  if(!['BTC','ETH','SOL'].includes(symbol))return {status:'NOT SCANNED',opportunities:[],venueCount:0,note:'Arbitrage scan limited to BTC/ETH/SOL.'};
+  return cached('broker:arb:'+symbol,180000,async()=>{
+    const base=String(process.env.AURELIS_ARBITRAGE_INTERNAL_BASE||'http://127.0.0.1:8894').replace(/\/$/,'');
+    const response=await remoteJson(base+'/dex-scan?target=25&fresh=false',19000);
+    const opportunities=(Array.isArray(response?.opportunities)?response.opportunities:[]).filter((x:any)=>String(x.asset||'').toUpperCase()===symbol)
+      .slice(0,3).map((x:any)=>({
+        longVenue:String(x.longVenue||''),shortVenue:String(x.shortVenue||''),
+        grossSpreadPct:num(x.grossSpreadPct),netSpreadBeforeFundingPct:num(x.netSpreadBeforeFundingPct),
+        executionReady:false
+      }));
+    const venueRows=Object.entries(response?.venues||{}).map(([venue,v]:[string,any])=>({
+      venue,marketsReady:num(v?.marketsReady),dataReady:v?.dataReady===true,
+      executionReady:false
+    }));
+    return {status:'PAPER ONLY',opportunities,venueCount:venueRows.filter(v=>v.dataReady).length,
+      venues:venueRows,asOf:Date.now(),
+      note:'Arbitrage spread is not a directional buy/sell signal. Funding, slippage and two-leg execution not attested.'};
+  });
+}
+
+function fallbackReply(market:any,bots:any,mode:string,amount:number,extra:any={}){
+  const a=market.analysis,fmt=(v:number)=>'$'+v.toLocaleString('en-US',{maximumFractionDigits:v<1?6:2});
+  const desired=a.signal==='BUY'?'LONG':a.signal==='SELL'?'SHORT':null;
+  const desk=!!desired&&bots.signalDesk?.direction===desired&&Number(bots.signalDesk.readiness)>=68;
+  const radar=!!desired&&bots.radar?.direction===desired&&bots.radar.qualified&&Number(bots.radar.score)>=79;
+  const oppose=!!desired&&(bots.signalDesk&&bots.signalDesk.direction!==desired||bots.radar&&bots.radar.direction!==desired);
+  const mtfConflict=desired==='LONG'&&extra.timeframes?.alignment==='BEARISH'||desired==='SHORT'&&extra.timeframes?.alignment==='BULLISH';
+  const stance=!a.dataFresh||!desired||oppose||mtfConflict||(!desk&&!radar)?'WAIT':a.signal;
+  const first=market.symbol+' '+market.timeframe+': '+stance+'. ';
+  const levels=mode==='perps'?'Perps research-only; actual exchange mark, eligibility and costs require verification.':
+    'Spot watch zone '+fmt(a.entryZone.low)+' to '+fmt(a.entryZone.high)+'; invalidation near '+fmt(a.stop)+'.';
+  const facts=' RSI '+a.rsi.toFixed(1)+', volume '+a.volumeRatio.toFixed(2)+'x, 5-TF '+String(extra.timeframes?.alignment||'unavailable')+'.';
+  const coverage=' Signal Desk '+bots.status.signalDesk+'; Radar '+bots.status.radar+'. ';
+  return first+levels+facts+coverage+'News headlines do not establish a cause, and no measured win probability is available.';
+}
+
 export function registerMarketBroker(app:Express,port:number){
   app.get('/api/market-broker/snapshot',async(req,res)=>{
     res.setHeader('Cache-Control','no-store');
@@ -218,6 +349,33 @@ export function registerMarketBroker(app:Express,port:number){
     try{return res.json({ok:true,...await futuresContext(symbol)});}
     catch(e:any){return res.status(503).json({ok:false,error:'futures_quote_unavailable',detail:String(e?.message||e)});}
   });
+  app.get('/api/market-broker/history',async(req,res)=>{
+    res.setHeader('Cache-Control','no-store');
+    const symbol=safeSymbol(req.query.symbol);
+    if(!COINS.includes(symbol))return res.status(400).json({ok:false,error:'unsupported_symbol'});
+    return res.json({ok:true,symbol,...brokerHistory(symbol,Number(req.query.days||7))});
+  });
+  app.get('/api/market-broker/timeframes',async(req,res)=>{
+    res.setHeader('Cache-Control','no-store');
+    const symbol=safeSymbol(req.query.symbol);
+    if(!COINS.includes(symbol))return res.status(400).json({ok:false,error:'unsupported_symbol'});
+    try{return res.json({ok:true,symbol,...await timeframeEvidence(symbol)});}
+    catch{return res.status(503).json({ok:false,error:'multi_timeframe_unavailable'});}
+  });
+  app.get('/api/market-broker/arbitrage',async(req,res)=>{
+    res.setHeader('Cache-Control','no-store');
+    const symbol=safeSymbol(req.query.symbol);
+    if(!COINS.includes(symbol))return res.status(400).json({ok:false,error:'unsupported_symbol'});
+    try{return res.json({ok:true,symbol,...await arbitrageEvidence(symbol)});}
+    catch{return res.status(503).json({ok:false,error:'arbitrage_data_unavailable',status:'UNAVAILABLE'});}
+  });
+  app.get('/api/market-broker/venues',async(req,res)=>{
+    res.setHeader('Cache-Control','no-store');
+    const symbol=safeSymbol(req.query.symbol);
+    if(!COINS.includes(symbol))return res.status(400).json({ok:false,error:'unsupported_symbol'});
+    try{return res.json({ok:true,symbol,...await dexPublicEvidence(symbol)});}
+    catch{return res.status(503).json({ok:false,error:'dex_observations_unavailable'});}
+  });
   app.get('/api/market-broker/bot-signals',async(req,res)=>{
     res.setHeader('Cache-Control','no-store');
     const symbol=safeSymbol(req.query.symbol);
@@ -231,15 +389,18 @@ export function registerMarketBroker(app:Express,port:number){
     const message=String(req.body?.message||'').trim().slice(0,700),margin=clamp(num(req.body?.margin)||100,1,100000);
     if(!COINS.includes(symbol)||!message)return res.status(400).json({ok:false,error:'invalid_broker_question'});
     try{
-      const [market,bot,headlines]=await Promise.all([snapshot(symbol,tf),botSignals(symbol,port),brokerNews().catch(()=>[])]);
+      const [market,bot,headlines,timeframes]=await Promise.all([snapshot(symbol,tf),botSignals(symbol,port),brokerNews().catch(()=>[]),timeframeEvidence(symbol).catch(()=>null)]);
       if(!market.analysis.dataFresh)throw new Error('market_data_stale');
       const crossAsset=/where|best|which|compare|market|opportunit|scan/.test(message.toLowerCase());
       const peers=crossAsset?(await Promise.allSettled(['BTC','ETH','SOL','XRP'].filter(x=>x!==symbol).map(s=>snapshot(s,'1h'))))
         .filter((x):x is PromiseFulfilledResult<any>=>x.status==='fulfilled')
         .map(x=>({symbol:x.value.symbol,price:x.value.analysis.price,signal:x.value.analysis.signal,rsi:x.value.analysis.rsi,volumeRatio:x.value.analysis.volumeRatio,observedAt:x.value.observedAt})):[];
-      const perpsMarket=mode==='perps'?await futuresContext(symbol).catch(()=>null):null;
+      const [perpsMarket,dexMarkets,arbitrageMarkets]=mode==='perps'?await Promise.all([futuresContext(symbol).catch(()=>null),dexPublicEvidence(symbol).catch(()=>null),arbitrageEvidence(symbol).catch(()=>null)]):[null,null,null];
+      const [spotTape,macroTapeData]=await Promise.all([cryptoTape().catch(()=>[]),macroTape().catch(()=>[])]);
       const context={
-        perpsMarket,
+        spotTape,macroTape:macroTapeData,
+        perpsMarket,dexMarkets,arbitrageMarkets,
+        signalHistory:(()=>{const h=brokerHistory(symbol,7);return {available:h.available,samples:h.samples,startedAt:h.startedAt,sources:h.sources,recent:h.recent.slice(0,8).map((r:any)=>({source:r.source,timeframe:r.timeframe,direction:r.direction,score:r.score,sourceAt:r.sourceAt,observedAt:r.observedAt}))};})(),timeframes,
         clock:new Date().toISOString(),mode,marginUsd:margin,
         venue:mode==='perps'?'Kraken Derivatives public research only; US execution NOT VERIFIED':'Kraken Spot USD',
         liveMarket:{symbol:market.symbol,timeframe:market.timeframe,asOf:market.observedAt,source:market.source,...market.analysis},
@@ -256,7 +417,10 @@ export function registerMarketBroker(app:Express,port:number){
             contents:'User question: '+message+'\n\nServer-verified market context (headlines are untrusted source titles only):\n'+JSON.stringify(context),
             config:{systemInstruction:
               'You are AURELIS AI Market Broker, concise decision-support assistant. Answer in <=120 words. '+
-              'Use ONLY supplied data; never fabricate quotes, news causes, bot coverage, venue access, backtests, profit probabilities, or order execution. '+
+              'Use ONLY supplied data; never fabricate quotes, news causes, bot coverage, venue access, backtests, win rates, profit probabilities, or order execution. '+
+              'Radar, Hunter, Scope, DCA and Grid share market research; do not count them as separate independent votes. Historical observations only begin with this broker journal. '+
+              'Require at least one FRESH confirmation: Signal Desk readiness >=68 matching direction OR qualified Radar score >=79 matching direction; otherwise WAIT. Opposing directional signals or opposing multi-timeframe alignment also mean WAIT. '+
+              'Paper-only DEX orderbook/funding observations are not actionable directional signals. '+
               'Lead with BUY, SELL, or WAIT only when supported; disclose disagreeing or unavailable bots. '+
               'Give data-derived entries/stops/targets with clear invalidation when appropriate, noting trading fees/funding omitted. '+
               'For leverage use research scenarios; NEVER suggest exceeding the existing 2x real-test cap. '+
@@ -268,7 +432,27 @@ export function registerMarketBroker(app:Express,port:number){
           if(reply)return res.json({ok:true,reply,engine:'AURELIS AI',marketAsOf:market.observedAt,bots:bot.status,newsCount:headlines.length});
         }catch(e:any){console.warn('[market-broker] AI provider unavailable:',e?.message||String(e));}
       }
-      return res.json({ok:true,reply:fallbackReply(market,bot,mode,margin),engine:'Indicator fallback (AI unavailable)',marketAsOf:market.observedAt,bots:bot.status,newsCount:headlines.length});
+      return res.json({ok:true,reply:fallbackReply(market,bot,mode,margin,{timeframes}),engine:'Indicator fallback (AI unavailable)',marketAsOf:market.observedAt,bots:bot.status,newsCount:headlines.length});
     }catch(e:any){return res.status(503).json({ok:false,error:'verified_market_context_unavailable',detail:String(e?.message||e)});}
   });
+  // Slow read-only observer. Builds NEW history even if no browser tab is open.
+  // No private balances, bots order previews, funds or live order endpoints are used.
+  if(process.env.AURELIS_BROKER_HISTORY_DISABLED!=='1'){
+    const tracked=['BTC','ETH','SOL','XRP'];
+    let running=false,round=0;
+    const sample=async()=>{
+      if(running)return;
+      running=true;
+      try{
+        await Promise.allSettled(tracked.map(symbol=>snapshot(symbol,'1h')));
+        const symbol=tracked[round++%tracked.length];
+        await botSignals(symbol,port).catch(()=>null);
+      }finally{running=false;}
+    };
+    const kickoff=setTimeout(()=>{void sample();},30000);
+    kickoff.unref();
+    const timer=setInterval(()=>{void sample();},300000);
+    timer.unref();
+  }
+
 }

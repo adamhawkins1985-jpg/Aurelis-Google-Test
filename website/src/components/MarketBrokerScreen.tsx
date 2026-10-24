@@ -9,7 +9,22 @@ type Bar={time:number;open:number;high:number;low:number;close:number;volume:num
 type Signal={price:number;signal:'BUY'|'SELL'|'WAIT';score:number;rsi:number;ema20:number;ema50:number;volumeRatio:number;atr:number;support:number;resistance:number;stop:number;target:number;dataFresh:boolean;entryZone:{low:number;high:number};reasons:string[]};
 type Snapshot={ok:boolean;symbol:string;timeframe:Frame;bars:Bar[];observedAt:number;source:string;analysis:Signal};
 type Quote={symbol:string;label:string;price:number|null;changePct:number|null;source:string;asOf:number|null;delayed:boolean};
-type BrokerBots={status:{signalDesk:string;radar:string};signalDesk:{direction:'LONG'|'SHORT';readiness:number;label:string;reasons:string[];contradictions:string[];levels?:{entry:number;stop:number;target:number};generatedAt:number}|null;radar:{direction:'LONG'|'SHORT';score:number;qualified:boolean;entry:number;stop:number;target:number;reasons:string[];generatedAt:number}|null};
+type BrokerBots={
+  status:{signalDesk:string;radar:string};
+  signalDesk:{direction:'LONG'|'SHORT';readiness:number;label:string;reasons:string[];contradictions:string[];
+    levels?:{entry:number;stop:number;target:number};generatedAt:number;
+    scores?:Record<string,number>;micro?:{tapeImbalance?:number;bookImbalance?:number;spreadBps?:number};timeframes?:Record<string,any>}|null;
+  radar:{direction:'LONG'|'SHORT';score:number;qualified:boolean;entry:number;stop:number;target:number;
+    reasons:string[];contradictions?:string[];agents?:Record<string,number>;economics?:Record<string,number>;generatedAt:number}|null;
+  derivedBots?:{id:string;label:string;status:string;signalSource:string}[];
+  scan?:{scannedMarkets:number;deepAnalyzed:number;source:string|null};
+};
+type Timeframes={live:number;checked:number;alignment:string;items:{timeframe:string;status:string;signal:'BUY'|'SELL'|'WAIT'|null;rsi:number|null;asOf:number|null}[];directionCounts:{buy:number;sell:number;wait:number}};
+type EvidenceRow={source:string;timeframe:string;direction:string;score:number|null;sourceAt:number;observedAt:number};
+type History={available:boolean;samples:number;startedAt:number|null;notice:string;sources:{source:string;timeframe:string;samples:number;lastAt:number}[];recent:EvidenceRow[]};
+type Arbitrage={status:string;venueCount:number;asOf?:number;opportunities:{longVenue:string;shortVenue:string;netSpreadBeforeFundingPct:number}[];note?:string};
+type Venues={available:boolean;asOf:number;assessments:{venue:string;spreadBps:number|null;depthImbalance:number|null;marketObservation:string;directionalSignalVerified:boolean}[];funding:{venue:string;hourlyFundingRate:number|null;nextFundingRate:number|null;asOf:number|null}[]};
+
 type Article={title:string;url:string;source:string;published:string;time:number};
 type Futures={symbol:string;contract:string;markPrice:number;indexPrice:number;fundingRate:number;openInterest:number;asOf:number;executionVerified:false};
 type Message={role:'user'|'assistant';text:string;engine?:string;at:number};
@@ -32,6 +47,11 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
   const [mode,setMode]=useState<Mode>('spot');
   const [snapshot,setSnapshot]=useState<Snapshot|null>(null);
   const [bots,setBots]=useState<BrokerBots|null>(null);
+  const [timeframes,setTimeframes]=useState<Timeframes|null>(null);
+  const [history,setHistory]=useState<History|null>(null);
+  const [venues,setVenues]=useState<Venues|null>(null);
+  const [arbitrage,setArbitrage]=useState<Arbitrage|null>(null);
+  const [evidenceError,setEvidenceError]=useState('');
   const [ticker,setTicker]=useState<Quote[]>([]);
   const [futures,setFutures]=useState<Futures|null>(null);
   const [news,setNews]=useState<Article[]>([]);
@@ -117,13 +137,53 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
     return ()=>{mounted=false;window.clearInterval(timer);};
   },[mode,symbol,refreshKey]);
 
+
+  // Independent evidence requests; failed sources never inherit prior coin data.
+  useEffect(()=>{
+    let mounted=true;
+    const load=async()=>{
+      const results=await Promise.allSettled([
+        request<Timeframes&{ok:boolean}>('/api/market-broker/timeframes?symbol='+symbol),
+        request<History&{ok:boolean}>('/api/market-broker/history?symbol='+symbol+'&days=7')
+      ]);
+      if(!mounted)return;
+      const [t,h]=results;
+      setTimeframes(t.status==='fulfilled'?t.value:null);
+      setHistory(h.status==='fulfilled'?h.value:null);
+      setEvidenceError(t.status==='rejected'?'Multi-timeframe feed unavailable':h.status==='rejected'?'History storage unavailable':'');
+    };
+    setTimeframes(null);setHistory(null);void load();
+    const timer=window.setInterval(()=>void load(),120000);
+    return()=>{mounted=false;window.clearInterval(timer);};
+  },[symbol,refreshKey]);
+  useEffect(()=>{
+    if(mode!=='perps'){setVenues(null);setArbitrage(null);return;}
+    let mounted=true;
+    const load=async()=>{
+      const [dex,arb]=await Promise.allSettled([
+        request<Venues&{ok:boolean}>('/api/market-broker/venues?symbol='+symbol),
+        request<Arbitrage&{ok:boolean}>('/api/market-broker/arbitrage?symbol='+symbol)
+      ]);
+      if(!mounted)return;
+      setVenues(dex.status==='fulfilled'?dex.value:null);
+      setArbitrage(arb.status==='fulfilled'?arb.value:null);
+    };
+    setVenues(null);setArbitrage(null);void load();
+    const timer=window.setInterval(()=>void load(),180000);
+    return()=>{mounted=false;window.clearInterval(timer);};
+  },[symbol,mode,refreshKey]);
+
   const onPrice=useCallback((price:number)=>{if(Number.isFinite(price)&&price>0)setLivePrice(price)},[]);
   const price=livePrice&&snapshot?.analysis?livePrice:snapshot?.analysis.price||null;
   const a=snapshot?.analysis;
   const longBias=a?.signal==='BUY',shortBias=a?.signal==='SELL';
   const contradicts=!!a&&((longBias&&(bots?.signalDesk?.direction==='SHORT'||bots?.radar?.direction==='SHORT'))
     ||(shortBias&&(bots?.signalDesk?.direction==='LONG'||bots?.radar?.direction==='LONG')));
-  const decision:Signal['signal']=!a||!a.dataFresh||contradicts?'WAIT':a.signal;
+  const timeframeConflict=!!a&&timeframes?.live!==undefined&&timeframes.live>=3&&((longBias&&timeframes.alignment==='BEARISH')||(shortBias&&timeframes.alignment==='BULLISH'));
+  const desiredDirection: 'LONG'|'SHORT'|null=longBias?'LONG':shortBias?'SHORT':null;
+  const deskSupport=!!desiredDirection&&bots?.signalDesk?.direction===desiredDirection&&(bots?.signalDesk?.readiness??0)>=68;
+  const radarSupport=!!desiredDirection&&bots?.radar?.direction===desiredDirection&&bots?.radar?.qualified===true&&(bots?.radar?.score??0)>=79;
+  const decision:Signal['signal']=!a||!a.dataFresh||contradicts||timeframeConflict||(!deskSupport&&!radarSupport)?'WAIT':a.signal;
   const marginUsd=inRange(Number(margin),0,100000);
   const notional=marginUsd*leverage;
   const direction=decision==='SELL'?'SHORT':'LONG';
@@ -244,11 +304,52 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
               </div>)}
             </div>
             <div className="text-[10px] text-text-muted">
-              {contradicts?'Bots disagree with the chart; WAIT overrides the directional setup.':
-                bots?.radar?'Radar candidate is current; compare its entry and risk levels before acting.':
-                'Radar has no current verified setup for this asset. Missing bots do not count as confirmation.'}
+              {contradicts||timeframeConflict?'Conflicting verified signals; WAIT overrides the chart direction.':
+                deskSupport||radarSupport?'A current bot supports this indicator direction. Entry, execution and costs still need review.':
+                'No sufficiently strong matching bot confirmation. Missing bots do not count as confirmation.'}
             </div>
             {botsError&&<div className="text-[10px] text-rose-400 mt-1">{botsError}</div>}
+
+            <div className="flex flex-wrap items-center gap-1.5 mt-3 border-t border-white/10 pt-2" aria-label="Multiple timeframe analysis">
+              <span className="text-[10px] font-semibold text-text-secondary mr-1">5-timeframe view</span>
+              {timeframes?.items?.length?timeframes.items.map(item=><span key={item.timeframe} title={item.status==='LIVE'?'RSI '+item.rsi?.toFixed(1):'Not available'}
+                className={'rounded border px-1.5 py-1 text-[10px] font-mono '+(item.signal==='BUY'?'border-primary-container/30 text-primary-container':item.signal==='SELL'?'border-rose-500/30 text-rose-400':'border-white/10 text-text-muted')}>
+                {item.timeframe} {item.signal||'OFF'}
+              </span>):<span className="text-[10px] text-text-muted">{evidenceError||'Checking timeframes…'}</span>}
+              <span className="text-[10px] text-text-muted ml-auto">{timeframes?.alignment||'No alignment yet'} · {timeframes?.live??0}/5 live</span>
+            </div>
+            <details className="mt-2 border-t border-white/10 pt-2 text-[10px] text-text-secondary">
+              <summary className="cursor-pointer font-semibold text-text-primary flex justify-between items-center">
+                <span>All bot evidence & recorded history</span>
+                <span className="text-text-muted font-normal">{history?.samples??0} saved observations / 7d</span>
+              </summary>
+              <div className="space-y-2 pt-2">
+                <div className="flex flex-wrap gap-x-3 gap-y-1">
+                  <span>Radar {bots?.status.radar||'UNAVAILABLE'} {bots?.radar?'· '+money(bots.radar.entry):''}</span>
+                  <span>Signal Desk {bots?.status.signalDesk||'UNAVAILABLE'}</span>
+                  <span>{bots?.scan?.scannedMarkets||0} Radar markets scanned</span>
+                </div>
+                {bots?.signalDesk&&<div>
+                  <span className="font-semibold">Desk flow:</span> tape {signed((bots.signalDesk.micro?.tapeImbalance??0)*100)} · book {signed((bots.signalDesk.micro?.bookImbalance??0)*100)} · spread {bots.signalDesk.micro?.spreadBps?.toFixed(1)??'—'} bps
+                  <span className="text-text-muted"> · as of {time(bots.signalDesk.generatedAt)}</span>
+                  {bots.signalDesk.contradictions?.length>0&&<p className="mt-1 text-rose-400">{bots.signalDesk.contradictions.slice(0,2).join(' · ')}</p>}
+                </div>}
+                {bots?.radar&&<div><span className="font-semibold">Radar agent scoring:</span> {Object.entries(bots.radar.agents||{}).slice(0,5).map(([key,value])=>key+' '+Number(value).toFixed(0)).join(' · ')||'Unavailable'}
+                  <span className="text-text-muted"> · as of {time(bots.radar.generatedAt)}</span>
+                </div>}
+                <p className="text-text-muted">Hunter, Scope, DCA and Grid currently reuse Radar-derived inputs. They are not four independent signal confirmations. DEX venue observations are paper-only.</p>
+                <div className="border-t border-white/10 pt-1.5">
+                  <strong>Evidence journal</strong> · {history?.available?'Recording new observations':'Storage unavailable'} · {history?.samples??0} samples
+                  {history?.recent?.length?<div className="mt-1 space-y-1">
+                    {history.recent.slice(0,5).map((item,i)=><div key={item.source+'-'+item.observedAt+'-'+i} className="flex justify-between gap-2 font-mono text-[10px]">
+                      <span className="truncate">{item.source.replaceAll('_',' ')} · {item.timeframe} · {item.direction}</span>
+                      <span className="shrink-0 text-text-muted">{time(item.observedAt)}</span>
+                    </div>)}
+                  </div>:<p className="text-text-muted mt-1">Historical samples begin with this upgrade. No older trade performance has been imported.</p>}
+                </div>
+              </div>
+            </details>
+
           </div>
         </div>
 
@@ -309,6 +410,25 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
                   <ShieldAlert size={13} className="shrink-0 mt-0.5"/>
                   <span>Kraken Derivatives US trading not verified. Spot-derived stop/target moves are translated to the current public perp mark; figures exclude fees, funding, slippage and liquidation rules. {duration}h is a scenario, not a forecast. Live test cap remains 2x and $10 first notional.</span>
                 </div>
+
+                <details className="mt-2 border-t border-white/10 pt-2 text-[10px] text-text-secondary">
+                  <summary className="cursor-pointer font-semibold text-text-primary">Cross-DEX liquidity & funding · {venues?.assessments?.length??0} venues</summary>
+                  <div className="space-y-1.5 pt-2">
+                    {venues?.assessments?.length?venues.assessments.map(row=><div key={row.venue} className="flex justify-between gap-2">
+                      <span>{row.venue}</span>
+                      <span>{row.spreadBps==null?'No validated book':row.spreadBps.toFixed(1)+' bps'} · {row.depthImbalance==null?'no depth':signed(row.depthImbalance*100)+' depth'}</span>
+                    </div>):<div>No verified venue observations available</div>}
+                    {venues?.funding?.length?venues.funding.map(row=><div key={row.venue} className="flex justify-between gap-2">
+                      <span>{row.venue} funding</span><span>{row.hourlyFundingRate!=null?signed(row.hourlyFundingRate*100):row.nextFundingRate!=null?signed(row.nextFundingRate*100):'unavailable'}</span>
+                    </div>):null}
+                    <div className="border-t border-white/10 pt-1.5 mt-1.5 flex flex-wrap items-center justify-between gap-2">
+                      <span>Arbitrage paper scan · {arbitrage?.status||'UNAVAILABLE'} · {arbitrage?.venueCount??0} venues reporting</span>
+                      <span>{arbitrage?.opportunities?.length?arbitrage.opportunities[0].longVenue+' → '+arbitrage.opportunities[0].shortVenue+' · '+signed(arbitrage.opportunities[0].netSpreadBeforeFundingPct):'No spread qualified'}</span>
+                    </div>
+                    <p className="text-text-muted">Paper/public market observations only. No directional signal, funding cost guarantee or U.S. execution eligibility is inferred.</p>
+                  </div>
+                </details>
+
                 <button type="button" onClick={()=>void ask('Evaluate a '+duration+'h '+symbol+' perp scenario with $'+marginUsd+' margin at '+leverage+'x. Is a long or short supported? Explain entry, stop and risk.')} className="mt-2 text-[11px] text-primary-container hover:underline">Ask AURELIS to assess this bet <ChevronRight size={12} className="inline"/></button>
               </>
             )}
@@ -338,7 +458,7 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
 
       <div className="rounded-lg border border-white/10 bg-surface-panel px-3 py-2">
         <div className="flex flex-wrap justify-between gap-2 items-center mb-2">
-          <h2 className="text-xs font-bold">Today's market drivers</h2>
+          <h2 className="text-xs font-bold">Latest market headlines</h2>
           <span className="text-[10px] text-text-muted">Publisher headlines, not proven causes</span>
         </div>
         {symbolNews.length?<div className="grid sm:grid-cols-2 gap-1.5">
