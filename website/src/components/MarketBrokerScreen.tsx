@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, Bot, ChevronRight, ExternalLink, RefreshCw, Send, ShieldAlert } from 'lucide-react';
 import { KrakenLiveChart } from './KrakenLiveChart';
+import { calculatePerpsResearch, MAX_RESEARCH_LEVERAGE, REAL_KRAKEN_TEST_LEVERAGE_CAP, REAL_KRAKEN_FIRST_TEST_NOTIONAL_USD, type ResearchSide } from '../services/perpsResearch';
 import type { NavigationTab } from '../types';
 
 type Frame='5m'|'15m'|'30m'|'1h'|'4h'|'8h'|'12h'|'1d'|'3d'|'7d';
@@ -80,6 +81,9 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
   const [refreshKey,setRefreshKey]=useState(0);
   const [margin,setMargin]=useState('100');
   const [leverage,setLeverage]=useState(2);
+  const [researchSide,setResearchSide]=useState<ResearchSide>('LONG');
+  const [favorableMove,setFavorableMove]=useState('2');
+  const [adverseMove,setAdverseMove]=useState('1');
   const [duration,setDuration]=useState(4);
   const [question,setQuestion]=useState('');
   const [messages,setMessages]=useState<Message[]>([]);
@@ -227,17 +231,18 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
   const radarSupport=!!desiredDirection&&bots?.radar?.direction===desiredDirection&&bots?.radar?.qualified===true&&(bots?.radar?.score??0)>=79;
   const decision:Signal['signal']=!a||!a.dataFresh||contradicts||timeframeConflict||(!deskSupport&&!radarSupport)?'WAIT':a.signal;
   const marginUsd=inRange(Number(margin),0,100000);
-  const notional=marginUsd*leverage;
-  const direction=decision==='SELL'?'SHORT':'LONG';
-  const deskLevels=bots?.signalDesk?.levels;
-  const referencePrice=a?.price||0;
-  const entry=mode==='perps'?(futures?.markPrice||0):referencePrice;
-  const spotStop=deskLevels?.stop&&bots?.signalDesk?.direction===direction?deskLevels.stop:(a?.stop||0);
-  const spotTarget=deskLevels?.target&&bots?.signalDesk?.direction===direction?deskLevels.target:(a?.target||0);
-  const stop=mode==='perps'&&referencePrice>0?entry*(spotStop/referencePrice):spotStop;
-  const target=mode==='perps'&&referencePrice>0?entry*(spotTarget/referencePrice):spotTarget;
-  const pnlTarget=entry>0?((target-entry)/entry)*notional*(direction==='LONG'?1:-1):0;
-  const pnlStop=entry>0?((stop-entry)/entry)*notional*(direction==='LONG'?1:-1):0;
+  const perpMarkFresh=!!futures&&futures.markPrice>0&&Date.now()-futures.asOf<90000;
+  const scenario=calculatePerpsResearch({
+    marginUsd,leverage,entryPrice:perpMarkFresh?futures?.markPrice:null,
+    side:researchSide,
+    favorableMovePct:Number(favorableMove),
+    adverseMovePct:Number(adverseMove)
+  });
+  const researchWarning=scenario.adverseMoveExceedsMargin
+    ? 'The modeled adverse move would exhaust the entire initial margin before accounting for maintenance and fees.'
+    : scenario.marginRiskPctAtAdverseMove>=50
+      ? 'The adverse scenario consumes at least half the initial margin before costs.'
+      : null;
   const chartTimeframe=frame==='1h'?'1H':frame==='4h'?'4H':frame;
   const symbolNews=useMemo(()=>{
     const names:Record<string,string>={BTC:'bitcoin',ETH:'ethereum',SOL:'solana',XRP:'ripple'};
@@ -255,7 +260,9 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
     try{
       const answer=await request<{reply:string;engine:string;marketAsOf:number}>('/api/market-broker/chat',{
         method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({message:query,symbol,tf:frame,mode,margin:marginUsd})
+        body:JSON.stringify({message:query,symbol,tf:frame,mode,margin:marginUsd,
+          researchLeverage:leverage,researchSide,
+          favorableMovePct:Number(favorableMove),adverseMovePct:Number(adverseMove)})
       });
       setMessages(current=>[...current,{role:'assistant',text:answer.reply,engine:answer.engine,at:answer.marketAsOf||Date.now()}]);
     }catch(e:any){
@@ -317,7 +324,7 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
             </div>
             <div className="h-[310px] md:h-[365px] relative">
               {snapshot?.bars?.length ? (
-                <KrakenLiveChart symbol={symbol} timeframe={chartTimeframe as any} bars={snapshot.bars} stop={a?.dataFresh?stop:undefined} target={a?.dataFresh?target:undefined} onPrice={onPrice}/>
+                <KrakenLiveChart symbol={symbol} timeframe={chartTimeframe as any} bars={snapshot.bars} stop={a?.dataFresh?a.stop:undefined} target={a?.dataFresh?a.target:undefined} onPrice={onPrice}/>
               ) : <div className="absolute inset-0 flex items-center justify-center text-xs text-text-muted">{chartError||'Loading verified candles…'}</div>}
             </div>
             <div className="flex flex-wrap justify-between gap-2 border-t border-white/10 px-3 py-2 text-[10px] font-mono text-text-muted">
@@ -474,28 +481,53 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
                 </div>
                 <div className="grid grid-cols-3 gap-1.5 mb-2">
                   <label className="text-[10px] text-text-muted">Margin USD
-                    <input aria-label="Perps margin USD" type="number" min="1" max="100000" step="1" value={margin} onChange={e=>setMargin(e.target.value)} className="mt-1 w-full rounded-md bg-surface-canvas border border-white/10 px-2 py-2 font-mono text-xs text-text-primary"/>
+                    <input aria-label="Perps research margin USD" type="number" min="1" max="100000" step="1" value={margin} onChange={e=>setMargin(e.target.value)} className="mt-1 w-full rounded-md bg-surface-canvas border border-white/10 px-2 py-2 font-mono text-xs text-text-primary"/>
                   </label>
-                  <label className="text-[10px] text-text-muted">Leverage
-                    <select aria-label="Leverage" value={leverage} onChange={e=>setLeverage(Number(e.target.value))} className="mt-1 w-full rounded-md bg-surface-canvas border border-white/10 px-2 py-2 font-mono text-xs text-text-primary">
-                      {[1,2].map(x=><option key={x} value={x}>{x}x</option>)}
+                  <label className="text-[10px] text-text-muted">Research leverage
+                    <select aria-label="Research leverage from 1x to 20x" value={leverage} onChange={e=>setLeverage(Number(e.target.value))} className="mt-1 w-full rounded-md bg-surface-canvas border border-white/10 px-2 py-2 font-mono text-xs text-text-primary">
+                      {Array.from({length:MAX_RESEARCH_LEVERAGE},(_,i)=>i+1).map(x=><option key={x} value={x}>{x}x</option>)}
                     </select>
                   </label>
                   <label className="text-[10px] text-text-muted">Horizon
-                    <select aria-label="Trade horizon" value={duration} onChange={e=>setDuration(Number(e.target.value))} className="mt-1 w-full rounded-md bg-surface-canvas border border-white/10 px-2 py-2 font-mono text-xs text-text-primary">
+                    <select aria-label="Research horizon" value={duration} onChange={e=>setDuration(Number(e.target.value))} className="mt-1 w-full rounded-md bg-surface-canvas border border-white/10 px-2 py-2 font-mono text-xs text-text-primary">
                       {[1,4,8,12,24].map(x=><option key={x} value={x}>{x}h</option>)}
                     </select>
                   </label>
                 </div>
+                <div className="grid grid-cols-3 gap-1.5 mb-2">
+                  <label className="text-[10px] text-text-muted">Scenario side
+                    <select aria-label="Hypothetical position direction" value={researchSide} onChange={e=>setResearchSide(e.target.value==='SHORT'?'SHORT':'LONG')} className="mt-1 w-full rounded-md bg-surface-canvas border border-white/10 px-2 py-2 font-mono text-xs text-text-primary">
+                      <option value="LONG">Long</option>
+                      <option value="SHORT">Short</option>
+                    </select>
+                  </label>
+                  <label className="text-[10px] text-text-muted">Favorable move %
+                    <input aria-label="Favorable price move percentage" type="number" min="0" max="100" step="0.25" value={favorableMove} onChange={e=>setFavorableMove(e.target.value)} className="mt-1 w-full rounded-md bg-surface-canvas border border-white/10 px-2 py-2 font-mono text-xs text-text-primary"/>
+                  </label>
+                  <label className="text-[10px] text-text-muted">Adverse move %
+                    <input aria-label="Adverse price move percentage" type="number" min="0" max="100" step="0.25" value={adverseMove} onChange={e=>setAdverseMove(e.target.value)} className="mt-1 w-full rounded-md bg-surface-canvas border border-white/10 px-2 py-2 font-mono text-xs text-text-primary"/>
+                  </label>
+                </div>
                 <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div className="rounded-md bg-surface-canvas p-2"><span className="block text-[10px] text-text-muted">Notional / bias</span><strong>{money(notional)} · {decision==='WAIT'?'NO TRADE':direction}</strong></div>
-                  <div className="rounded-md bg-surface-canvas p-2"><span className="block text-[10px] text-text-muted">Reference entry</span><strong>{money(entry)}</strong></div>
-                  <div className="rounded-md bg-surface-canvas p-2"><span className="block text-[10px] text-text-muted">At hypothetical target {money(target)}</span><strong className="text-primary-container">{a?.dataFresh&&futures?(pnlTarget>=0?'+':'')+money(pnlTarget):'Unavailable'}</strong></div>
-                  <div className="rounded-md bg-surface-canvas p-2"><span className="block text-[10px] text-text-muted">At hypothetical stop {money(stop)}</span><strong className="text-rose-400">{a?.dataFresh&&futures?(pnlStop>=0?'+':'')+money(pnlStop):'Unavailable'}</strong></div>
+                  <div className="rounded-md bg-surface-canvas p-2"><span className="block text-[10px] text-text-muted">Hypothetical notional / direction</span><strong>{money(scenario.notionalUsd)} · {researchSide}</strong><span className="block text-[9px] text-text-muted">Current signal: {decision==='WAIT'?'WAIT':decision}</span></div>
+                  <div className="rounded-md bg-surface-canvas p-2"><span className="block text-[10px] text-text-muted">Live perp mark reference</span><strong>{perpMarkFresh?money(scenario.entryPrice):'Unavailable / stale'}</strong></div>
+                  <div className="rounded-md bg-surface-canvas p-2"><span className="block text-[10px] text-text-muted">If favorable {scenario.favorableMovePct}% · {money(scenario.favorablePrice)}</span><strong className="text-primary-container">{scenario.valid?'+'+money(scenario.favorablePnlUsd):'Unavailable'}</strong></div>
+                  <div className="rounded-md bg-surface-canvas p-2"><span className="block text-[10px] text-text-muted">If adverse {scenario.adverseMovePct}% · {money(scenario.adversePrice)}</span><strong className="text-rose-400">{scenario.valid?'-'+money(Math.abs(scenario.adversePnlUsd||0)):'Unavailable'}</strong></div>
+                </div>
+                <div className="mt-2 rounded-md border border-white/10 bg-surface-canvas p-2 text-[10px]">
+                  <div className="flex flex-wrap justify-between gap-1">
+                    <span className="font-semibold">Margin exhaustion illustration (NOT actual liquidation)</span>
+                    <span className="font-mono">{scenario.theoreticalMarginExhaustionMovePct.toFixed(2)}% adverse</span>
+                  </div>
+                  <div className="flex flex-wrap justify-between gap-1 mt-1 text-text-muted">
+                    <span>Theoretical zero-equity price: {scenario.valid?money(scenario.theoreticalMarginExhaustionPrice):'Unavailable'}</span>
+                    <span>Modeled margin loss: {scenario.marginRiskPctAtAdverseMove.toFixed(1)}%</span>
+                  </div>
+                  {researchWarning&&<p className="mt-1 text-rose-400">{researchWarning}</p>}
                 </div>
                 <div className="flex items-start gap-1.5 mt-2 text-[10px] text-text-muted">
                   <ShieldAlert size={13} className="shrink-0 mt-0.5"/>
-                  <span>Kraken Derivatives US trading not verified. Spot-derived stop/target moves are translated to the current public perp mark; figures exclude fees, funding, slippage and liquidation rules. {duration}h is a scenario, not a forecast. Live test cap remains 2x and $10 first notional.</span>
+                  <span>Research only, not an order. Price moves are assumptions, not predictions or stop/target orders. Real exchange liquidation may occur earlier; collateral, maintenance, fees, funding and slippage are excluded. {duration}h is a scenario horizon, not a forecast. Live Kraken test stays capped at {REAL_KRAKEN_TEST_LEVERAGE_CAP}x and ${REAL_KRAKEN_FIRST_TEST_NOTIONAL_USD} first notional with explicit approval; Kraken Derivatives execution is unverified.</span>
                 </div>
 
                 <details className="mt-2 border-t border-white/10 pt-2 text-[10px] text-text-secondary">
@@ -516,7 +548,7 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
                   </div>
                 </details>
 
-                <button type="button" onClick={()=>void ask('Evaluate a '+duration+'h '+symbol+' perp scenario with $'+marginUsd+' margin at '+leverage+'x. Is a long or short supported? Explain entry, stop and risk.')} className="mt-2 text-[11px] text-primary-container hover:underline">Ask AURELIS to assess this bet <ChevronRight size={12} className="inline"/></button>
+                <button type="button" onClick={()=>void ask('Evaluate this HYPOTHETICAL '+duration+'h '+symbol+' '+researchSide+' perp scenario with $'+marginUsd+' margin at '+leverage+'x. Model favorable '+scenario.favorableMovePct+'% and adverse '+scenario.adverseMovePct+'% moves. Compare it with actual bot signals and explain risks, clearly separating research leverage from the real 2x test cap.')} className="mt-2 text-[11px] text-primary-container hover:underline">Ask AURELIS to assess this bet <ChevronRight size={12} className="inline"/></button>
               </>
             )}
           </div>
