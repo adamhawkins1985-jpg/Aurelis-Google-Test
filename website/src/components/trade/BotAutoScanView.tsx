@@ -6,6 +6,8 @@ import {
 } from 'lucide-react';
 import type { SetupCandidate } from './TradeRadarView';
 import { BetScenarioCalculator } from './BetScenarioCalculator';
+import { BotQuickBetPreview } from './BotQuickBetPreview';
+import { guideForOpportunity } from '../../services/botTradeGuide';
 import {
   dedupeOpportunities, filterAndSortOpportunities, readOpportunity, toReviewedSetup,
   type MarketOpportunity, type OpportunityFilter, type OpportunitySort,
@@ -124,6 +126,7 @@ export const BotAutoScanView: React.FC<Props> = ({enabled, onEnabledChange, onBe
   const selected = listed.find(row => row.id === selectedId) ?? listed[0] ?? null;
   const selectedCheck = selected ? venueChecks[selected.id] : undefined;
   const selectedStatus = selected ? classify(selected, selectedCheck, now) : 'unverified';
+  const guidance = selected ? guideForOpportunity(selected, selectedStatus, selectedCheck?.message) : null;
   const eligibleCount = opportunities.filter(row => row.status === 'ELIGIBLE').length;
   const blockedCount = opportunities.filter(row => classify(row, venueChecks[row.id], now) === 'blocked').length;
 
@@ -246,6 +249,24 @@ export const BotAutoScanView: React.FC<Props> = ({enabled, onEnabledChange, onBe
     };
   }, [enabled, scanNonce, autoAdvance, onBetReady]);
 
+  const verifySelected = async (row: MarketOpportunity) => {
+    if (reviewBusy || row.localFailure) return;
+    setReviewBusy(true);
+    setReviewError('');
+    setVenueChecks(previous=>({...previous,[row.id]:{state:'checking',message:'Checking Kraken now…'}}));
+    try {
+      const check = await verifyVenue(row);
+      setVenueChecks(previous=>({...previous,[row.id]:check}));
+      if (check.state !== 'ready') setReviewError(check.message);
+    } catch (error:any) {
+      const message = String(error?.message || 'Kraken price check failed').slice(0,160);
+      setVenueChecks(previous=>({...previous,[row.id]:{state:'unavailable',message}}));
+      setReviewError(message);
+    } finally {
+      setReviewBusy(false);
+    }
+  };
+
   const scanAgain = () => {
     if (!enabled) onEnabledChange(true);
     else setScanNonce(value => value + 1);
@@ -253,7 +274,7 @@ export const BotAutoScanView: React.FC<Props> = ({enabled, onEnabledChange, onBe
   const inspectionCount = Object.values(venueChecks).filter(item => item.state !== 'checking').length;
 
   return (
-    <div className="font-mono text-xs text-text-primary space-y-3">
+    <div className="font-sans text-sm text-text-primary space-y-3">
       <section className="relative overflow-hidden rounded-2xl border border-primary-container/20 bg-gradient-to-br from-primary-container/10 via-surface-panel to-surface-panel p-4 sm:p-5">
         <div className="absolute -right-8 -top-12 h-44 w-44 rounded-full bg-primary-container/10 blur-3xl pointer-events-none" />
         <div className="relative flex flex-wrap items-start justify-between gap-4">
@@ -261,10 +282,9 @@ export const BotAutoScanView: React.FC<Props> = ({enabled, onEnabledChange, onBe
             <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.18em] text-primary-container">
               <Crosshair className="h-4 w-4" /> AURELIS / OPPORTUNITY DESK
             </div>
-            <h1 className="text-xl sm:text-3xl font-headline font-extrabold tracking-tight text-text-primary">Find the trade. Understand the risk.</h1>
+            <h1 className="text-xl sm:text-2xl font-headline font-extrabold tracking-tight text-text-primary">AURELIS Bet Finder</h1>
             <p className="text-[11px] text-text-secondary leading-relaxed">
-              Live Kraken signals, ranked by the scanner. Inspect the setup, test leverage and projected returns,
-              then choose what reaches Live Bet. No automatic orders.
+              Find a possible trade, see why it matters, and test your profit or loss in seconds.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -282,48 +302,72 @@ export const BotAutoScanView: React.FC<Props> = ({enabled, onEnabledChange, onBe
           </div>
         </div>
 
-        <div className="relative mt-4 grid grid-cols-2 lg:grid-cols-4 gap-2">
-          {metric('Markets screened',String(meta.scanned),'Exchange universe checked')}
-          {metric('Deep analyzed',String(meta.deep),'Full technical checks')}
-          {metric('Ranked signals',String(meta.qualified),'Returned by AURELIS')}
-          {metric('Kraken verified',String(readyIds.size),'Fresh, actionable quotes')}
+
+        <div className="mt-4 p-3 sm:p-4 rounded-xl border border-white/10 bg-surface-panel/85" role="status">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <div className={`rounded-xl p-2.5 ${readyIds.size?'bg-primary-container/15 text-primary-container':'bg-amber-500/10 text-text-primary'}`}>
+              {readyIds.size
+                ? <CheckCircle2 className="w-7 h-7"/>
+                : <AlertTriangle className="w-7 h-7 text-amber-500"/>}
+            </div>
+            <div className="min-w-0 flex-1">
+              <h2 className="text-base sm:text-xl font-headline font-bold">
+                {readyIds.size
+                  ? `${readyIds.size} ${readyIds.size===1?'bet is':'bets are'} verified for review`
+                  : meta.qualified
+                    ? `Found ${meta.qualified} ideas. None ready to trade yet.`
+                    : step==='scanning' ? 'Searching for possible bets…' : 'No qualifying trades found yet'}
+              </h2>
+              <p className="text-[12px] text-text-secondary mt-1">
+                {readyIds.size
+                  ? 'Review the verified opportunities below. No orders have been placed.'
+                  : meta.qualified
+                    ? 'These are research ideas, not approved bets. Select a coin to understand the risks.'
+                    : 'AURELIS will keep looking for trades that pass its checks.'}
+              </p>
+            </div>
+          </div>
+          <div className="mt-3 flex items-center flex-wrap gap-x-3 gap-y-1 text-[11px] text-text-secondary">
+            <span><strong className="text-text-primary">{meta.scanned}</strong> markets checked</span>
+            <span>·</span>
+            <span><strong className="text-text-primary">{meta.deep}</strong> closely analyzed</span>
+            <span>·</span>
+            <span>Updated {timestamp(lastScanAt)}</span>
+          </div>
         </div>
-        <div className="mt-3 grid grid-cols-3 gap-1" aria-label="Scanner coverage funnel">
-          <div className="h-1.5 rounded-full bg-primary-container/70"/>
-          <div className="h-1.5 rounded-full bg-primary-container/45"/>
-          <div className="h-1.5 rounded-full bg-primary-container/25"/>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-2 mt-3 text-[10px] text-text-muted">
-          <span className="inline-flex items-center gap-1.5"><Activity className="h-3.5 w-3.5 text-primary-container"/>
-            {activity}
-          </span>
-          <span>{meta.source} · Last checked: {timestamp(lastScanAt)} · Auto-refresh 30s</span>
-        </div>
-        {meta.scanned > meta.deep && <p className="mt-1 text-[10px] text-text-muted">
-          Coverage transparency: {meta.scanned} markets screened, {meta.deep} deep analyzed by the current backend. Not every screened market receives full analysis.
-        </p>}
+        <details className="mt-2 text-[11px] text-text-secondary">
+          <summary className="cursor-pointer font-semibold hover:text-text-primary">How thorough was this scan?</summary>
+          <div className="mt-2 grid grid-cols-2 lg:grid-cols-4 gap-2">
+            {metric('Markets screened',String(meta.scanned),'Quick checks')}
+            {metric('Deep analyzed',String(meta.deep),'Closer technical checks')}
+            {metric('Ranked signals',String(meta.qualified),'Possible trade ideas')}
+            {metric('Kraken verified',String(readyIds.size),'Fresh compatible quotes')}
+          </div>
+          <p className="mt-2">
+            {activity} · {meta.source}. The backend screens more coins than it analyzes deeply;
+            the score measures signal strength, not the probability of making money.
+          </p>
+        </details>
       </section>
 
-      <section className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 bg-surface-panel px-3 py-2">
-        <label className="inline-flex items-center gap-2 text-[11px] text-text-secondary cursor-pointer">
-          <input type="checkbox" checked={autoAdvance} onChange={e=>setAutoAdvance(e.target.checked)}
-            className="h-4 w-4 accent-emerald-500"/>
-          Auto-open first verified bet in Live Bet
+      <details className="rounded-xl border border-white/10 bg-surface-panel p-3 text-[12px] text-text-secondary">
+        <summary className="cursor-pointer font-semibold text-text-primary">Scanner preferences</summary>
+        <label className="mt-3 flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" checked={autoAdvance} onChange={e=>setAutoAdvance(e.target.checked)} className="h-4 w-4 accent-emerald-500"/>
+          Automatically open the first exchange-verified setup in Live Bet
         </label>
-        <span className="text-[10px] text-text-muted inline-flex items-center gap-1.5">
-          <ShieldCheck className="h-3.5 w-3.5"/> Manual approval required for every real order
-        </span>
-      </section>
+        <p className="mt-2 text-[11px]">Off by default so you can compare coins. Even when enabled, placing a real order requires your separate approval.</p>
+      </details>
 
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-3 items-start">
         <section className="xl:col-span-5 rounded-2xl border border-white/10 bg-surface-panel overflow-hidden min-w-0">
           <div className="p-3 sm:p-4 border-b border-white/10 space-y-3">
             <div className="flex items-center justify-between gap-2">
               <div>
-                <div className="text-[10px] font-bold tracking-wider text-primary-container">LIVE OPPORTUNITY RANKING</div>
-                <h2 className="text-base sm:text-lg font-headline font-bold">Best signals this scan</h2>
+                <div className="text-[10px] font-bold tracking-wider text-primary-container">POSSIBLE BETS</div>
+                <h2 className="text-base sm:text-lg font-headline font-bold">Pick a coin to explore</h2>
               </div>
-              <span className="text-[10px] text-text-muted">{eligibleCount} locally eligible · {blockedCount} blocked</span>
+              <span className="text-[11px] text-text-muted">{opportunities.length} found · {readyIds.size} verified</span>
             </div>
             <div className="flex gap-2 flex-wrap">
               {([
@@ -364,35 +408,24 @@ export const BotAutoScanView: React.FC<Props> = ({enabled, onEnabledChange, onBe
                 className={`w-full text-left px-3 sm:px-4 py-3 transition-colors border-l-[3px] ${active
                   ? 'border-primary-container bg-primary-container/10'
                   : 'border-transparent hover:bg-surface-base/80'}`}>
-                <div className="flex justify-between items-start gap-2">
+                <div className="flex justify-between items-center gap-2">
                   <div className="flex gap-2 items-center min-w-0">
-                    <span className="text-[10px] text-text-muted tabular-nums w-4">{String(index+1).padStart(2,'0')}</span>
+                    <span className="text-[11px] text-text-muted tabular-nums w-5">{index+1}.</span>
                     <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-base font-headline font-bold text-text-primary">{row.asset}</span>
-                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${row.direction==='LONG'
-                          ? 'text-primary-container bg-primary-container/10' : 'text-rose-400 bg-rose-500/10'}`}>
-                          {row.direction==='LONG'?'LONG ↗':'SHORT ↘'}
+                      <div className="flex flex-wrap gap-2 items-center">
+                        <span className="text-lg font-headline font-bold text-text-primary">{row.asset}</span>
+                        <span className={`text-[11px] font-semibold ${row.direction==='LONG'?'text-primary-container':'text-rose-500'}`}>
+                          {row.direction==='LONG'?'Possible rise':'Possible fall'}
                         </span>
                       </div>
-                      <div className="text-[10px] text-text-muted mt-0.5">
-                        Entry ${precision(row.entry)} · R:R ${row.rewardRisk.toFixed(2)}
-                      </div>
+                      <p className="text-[11px] text-text-secondary mt-1">
+                        {row.direction==='LONG'?'Bet on price going up':'Bet on price going down'}
+                      </p>
                     </div>
                   </div>
-                  <div className="text-right shrink-0">
-                    <div className="font-headline font-bold text-base tabular-nums">{row.score.toFixed(1)}<span className="text-[9px] text-text-muted">/100</span></div>
-                    <div className={`text-[9px] font-bold mt-0.5 ${state==='ready'?'text-primary-container'
-                      : state==='blocked'?'text-rose-400':'text-text-muted'}`}>
-                      {state==='ready'?'● Kraken verified':state==='checking'?'◌ Verifying':state==='blocked'?'× Not executable':'○ Research'}
-                    </div>
+                  <div className={`text-right shrink-0 text-[11px] font-bold ${state==='ready'?'text-primary-container':state==='blocked'?'text-rose-500':'text-text-muted'}`}>
+                    {state==='ready'?'Ready to review':state==='checking'?'Checking…':state==='blocked'?'Not eligible':'Research only'}
                   </div>
-                </div>
-                <div className="ml-6 mt-2 grid grid-cols-[1fr_auto] gap-2 items-center">
-                  <div className="h-1.5 rounded-full bg-surface-base overflow-hidden">
-                    <div className="h-full rounded-full bg-primary-container/75" style={{width:Math.max(0,Math.min(row.score,100))+'%'}}/>
-                  </div>
-                  <span className="text-[10px] text-text-muted tabular-nums">Target {percent(row.targetPct)}</span>
                 </div>
               </button>;
             })}
@@ -416,32 +449,29 @@ export const BotAutoScanView: React.FC<Props> = ({enabled, onEnabledChange, onBe
             </div>
           ) : (
             <div className="p-3 sm:p-5 space-y-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <div className="text-[10px] text-text-muted uppercase tracking-widest">Opportunity intelligence · Kraken</div>
-                  <div className="flex gap-2 items-center mt-1">
-                    <h2 className="text-2xl sm:text-3xl font-headline font-bold">{selected.asset}</h2>
-                    <span className={`inline-flex gap-1.5 items-center rounded-full px-2.5 py-1 text-[10px] font-bold ${selected.direction==='LONG'
-                      ? 'bg-primary-container/15 text-primary-container' : 'bg-rose-500/10 text-rose-400'}`}>
-                      {selected.direction==='LONG'?<TrendingUp className="h-3.5 w-3.5"/>:<TrendingDown className="h-3.5 w-3.5"/>}
-                      {selected.direction}
-                    </span>
-                    <span className="text-[10px] text-text-muted">{selected.score.toFixed(1)}/100 signal score</span>
-                  </div>
-                  <div className="text-[10px] text-text-muted mt-1">{selected.market || 'Kraken market'} · 15m signal research</div>
+                  <div className="text-[11px] font-semibold text-text-muted">AURELIS EXPLAINS</div>
+                  <h2 className="text-2xl font-headline font-bold mt-1">{selected.asset}: {selected.direction==='LONG'?'Could go up':'Could go down'}</h2>
                 </div>
-                <div className="flex flex-col items-start sm:items-end gap-1">
-                  <div className={`font-bold text-[10px] inline-flex items-center gap-1.5 ${selectedStatus==='ready'?'text-primary-container'
-                    : selectedStatus==='blocked'?'text-rose-400':'text-text-secondary'}`}>
-                    {selectedStatus==='ready'?<CheckCircle2 className="w-4 h-4"/>:
-                     selectedStatus==='blocked'?<XCircle className="w-4 h-4"/>:<Clock3 className="w-4 h-4"/>}
-                    {selectedStatus==='ready'?'Exchange quote verified':selectedStatus==='blocked'?'Not currently executable':
-                     selectedStatus==='checking'?'Checking exchange market…':'Venue verification required'}
+                <span className="text-[11px] text-text-muted">{selectedStatus==='ready'?'Exchange checked':'Not approved to trade'}</span>
+              </div>
+              <div className={`rounded-xl border p-3 sm:p-4 ${guidance?.verdict==='ready'
+                ? 'bg-primary-container/10 border-primary-container/25'
+                : 'bg-amber-500/5 border-amber-500/25'}`} role="status">
+                <div className="flex items-start gap-3">
+                  {guidance?.verdict==='ready'
+                    ? <CheckCircle2 className="w-6 h-6 mt-0.5 shrink-0 text-primary-container"/>
+                    : <AlertTriangle className="w-6 h-6 mt-0.5 shrink-0 text-amber-500"/>}
+                  <div className="space-y-2">
+                    <h3 className="text-lg font-headline font-bold">{guidance?.headline}</h3>
+                    <p className="text-[13px] leading-relaxed text-text-primary">{guidance?.direction}</p>
+                    <p className="text-[12px] leading-relaxed text-text-secondary"><strong className="text-text-primary">Why:</strong> {guidance?.signal}</p>
+                    <p className="text-[12px] leading-relaxed text-text-secondary"><strong className="text-text-primary">Concern:</strong> {guidance?.caution}</p>
+                    <p className="text-[12px] font-medium text-text-primary">{guidance?.action}</p>
                   </div>
-                  <span className="text-[10px] text-text-muted">Signal {Math.max(0,Math.floor((now-selected.timestampMs)/1000))}s old</span>
                 </div>
               </div>
-
               <div className="rounded-xl bg-surface-base border border-white/10 p-3 space-y-2">
                 <div className="text-[10px] text-text-secondary leading-relaxed">
                   <span className="font-bold text-text-primary">Why it matters: </span>
@@ -471,7 +501,12 @@ export const BotAutoScanView: React.FC<Props> = ({enabled, onEnabledChange, onBe
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <BotQuickBetPreview key={selected.id} opportunity={selected} />
+
+              <details className="rounded-xl border border-white/10 bg-surface-base p-3 text-[12px] text-text-secondary">
+                <summary className="cursor-pointer font-semibold text-text-primary">Why AURELIS picked this coin · Full market analysis</summary>
+                <div className="mt-3 space-y-3">
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 <div className="bg-surface-base rounded-xl p-2.5 border border-white/10">
                   <div className="text-[9px] text-text-muted">Reward / risk</div>
                   <div className="font-headline font-bold text-xl mt-1">1 : {selected.rewardRisk.toFixed(2)}</div>
@@ -539,12 +574,14 @@ export const BotAutoScanView: React.FC<Props> = ({enabled, onEnabledChange, onBe
                 roundTripCostPct={selected.roundTripCostPct}
                 signalLeverage={selected.leverageReported} />
 
+                </div>
+              </details>
               <div className="rounded-xl border border-primary-container/25 bg-primary-container/5 p-3 space-y-2">
                 <div className="flex flex-wrap gap-2 items-center justify-between">
                   <div>
-                    <div className="text-[11px] font-bold">Trade readiness · Kraken Spot/Margin</div>
+                    <div className="text-[14px] font-bold">What can I do now?</div>
                     <div className="text-[10px] text-text-secondary mt-1">
-                      {selected.localFailure || selectedCheck?.message || 'Verify the current market before preparing a live order.'}
+                      {guidance?.reason}
                     </div>
                   </div>
                   {selectedCheck?.quote && <div className="text-[10px] text-text-muted">
@@ -553,13 +590,13 @@ export const BotAutoScanView: React.FC<Props> = ({enabled, onEnabledChange, onBe
                 </div>
                 {reviewError && <p role="alert" className="text-rose-400 text-[10px]">{reviewError}</p>}
                 <button type="button" disabled={reviewBusy || Boolean(selected.localFailure)}
-                  onClick={()=>void freshCheckAndHandoff(selected)}
+                  onClick={()=>selectedStatus==='ready'?void freshCheckAndHandoff(selected):void verifySelected(selected)}
                   className="w-full rounded-xl bg-primary-container p-3 font-bold text-on-primary-container flex items-center justify-center gap-2 disabled:opacity-40 hover:brightness-110">
                   {reviewBusy?<RefreshCw className="h-4 w-4 animate-spin"/>:<ArrowRight className="h-4 w-4"/>}
-                  {reviewBusy?'Refreshing Kraken quote…':'Review '+selected.asset+' '+selected.direction+' in Live Bet'}
+                  {reviewBusy?'Checking Kraken…':selectedStatus==='ready'?'Review this bet in Live Bet':'Check if Kraken can trade this bet'}
                 </button>
                 <div className="flex justify-between flex-wrap gap-2 text-[10px] text-text-muted">
-                  <span>Fresh preflight runs on every click. Incompatible prices block handoff.</span>
+                  <span>First, check the exchange price. If compatible, review the bet. No trade is placed here.</span>
                   <span>First real order: $10 notional max · 2× max · manual approval</span>
                 </div>
               </div>

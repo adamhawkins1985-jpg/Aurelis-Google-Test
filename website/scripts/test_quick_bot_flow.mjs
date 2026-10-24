@@ -8,6 +8,8 @@ const live=readFileSync('src/components/trade/LiveBetView.tsx','utf8');
 const auto=readFileSync('src/components/trade/BotAutoScanView.tsx','utf8');
 const calculator=readFileSync('src/components/trade/BetScenarioCalculator.tsx','utf8');
 const opportunity=readFileSync('src/services/botOpportunity.ts','utf8');
+const plainGuide=readFileSync('src/services/botTradeGuide.ts','utf8');
+const quickPreview=readFileSync('src/components/trade/BotQuickBetPreview.tsx','utf8');
 
 assert(screen.includes("{ id: 'radar', label: 'AUTO SCAN' }"), 'Auto Scan must be the primary bot entry');
 assert(screen.includes("{ id: 'live', label: 'LIVE BET' }"), 'Live Bet must remain one click away');
@@ -20,10 +22,18 @@ assert(screen.includes('setPendingTradeSetup(setup)') && screen.includes("setAct
   'Auto-detected vetted setups must go directly to Live Bet');
 assert(auto.includes('/api/trade-radar?mode=all&limit=100&force=1') && auto.includes('const candidates = result.candidates;'),
   'Auto Scan must request and evaluate the complete ranked response instead of truncating at five');
-assert(auto.includes('filterAndSortOpportunities') && auto.includes('Best signals this scan') && auto.includes('setSelectedId('),
+assert(auto.includes('filterAndSortOpportunities') && auto.includes('Pick a coin to explore') && auto.includes('setSelectedId('),
   'Opportunity Desk must display an interactive ranked shortlist rather than one blind auto-handoff');
 assert(auto.includes('BetScenarioCalculator') && auto.includes('Why it matters:') && auto.includes('What could invalidate it'),
   'Opportunity Desk must explain signals, counter-evidence and interactive P&L');
+assert(auto.includes('Check if Kraken can trade this bet') && auto.includes('selectedStatus===\'ready\'?void freshCheckAndHandoff(selected):void verifySelected(selected)'),
+  'Unverified trade must show separate exchange-check action, not masquerade as ready-to-order');
+assert(auto.includes('How thorough was this scan?') && auto.includes('Full market analysis') && auto.includes('Found ${meta.qualified} ideas. None ready to trade yet.'),
+  'Scanner telemetry and advanced market diagnostics must be secondary to plain-language findings');
+assert(auto.includes('<BotQuickBetPreview') && quickPreview.includes('Money you put in ($)') && quickPreview.includes('If price reaches target'),
+  'Bot must show a simple two-input what-if calculator before advanced signals');
+assert(plainGuide.includes('The exchange has not confirmed this bet') && plainGuide.includes('Recent volume is very low.'),
+  'Bot must explain blocked or weak signals in plain English');
 assert(auto.includes('/api/bots/kraken-margin-handoff/'), 'Hunter executable quote and risk check must still run before Live Bet');
 assert(auto.includes('verdict?.compatible !== true') && auto.includes('const checkedAt = Number(verdict.checkedAt)'),
   'Unverified or stale venue quotes must block the pipeline');
