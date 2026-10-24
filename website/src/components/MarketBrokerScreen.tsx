@@ -275,6 +275,10 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
   const suggestions=[
     'Markets are down. Scan our supported coins and explain which might be worth accumulating, and why.',
     'I have $100 total. Screen for a potential perp setup, explain the risks, or tell me to wait.',
+    'Show the three closest setups even if none qualifies. Explain exactly what each is missing.',
+    'Conservative: rank our current watchlist by confirmation and downside risk.',
+    'Balanced: show promising opportunities and what would make them actionable.',
+    'Aggressive: find early momentum setups worth watching, with strict hypothetical loss limits.',
     'Teach me why our bots disagree on '+symbol+' and what would change the setup.'
   ];
   const ask=async(prompt?:string)=>{
