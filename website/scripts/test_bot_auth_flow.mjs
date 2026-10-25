@@ -27,8 +27,8 @@ assert(live.includes('explainKrakenBlock') && live.includes('krakenBlockedGuide.
   'Live Bet needs visible actionable error diagnosis');
 assert(live.includes('onFindNewBet') && screen.includes('onFindNewBet={() =>'),
   'Stale Kraken setup needs a direct return to a fresh scan');
-assert(live.includes('Live orders are currently locked'),
-  'Preview-only UI must disclose the production protection lock');
+assert(live.includes('AURELIS API orders locked · Kraken Pro protected handoff available') && live.includes('<KrakenProProtectedHandoff'),
+  'Preview-only UI must disclose the API protection lock and offer an explicit user-approved native bracket handoff');
 assert(live.includes('Check $10 Kraken order · No trade placed'),
   'Preview/validation must not masquerade as an order');
 assert(backend.includes("if (!KRAKEN_LINKED_OCO_LIFECYCLE_VERIFIED)"),

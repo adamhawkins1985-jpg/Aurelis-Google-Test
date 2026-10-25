@@ -3,6 +3,7 @@ import { CheckCircle2, ImagePlus, Loader2, ShieldCheck, Upload, X } from 'lucide
 import { formatCurrency, playHudSound } from '../../services/marketData';
 import type { SetupCandidate } from './TradeRadarView';
 import { BetScenarioCalculator } from './BetScenarioCalculator';
+import { KrakenProProtectedHandoff } from './KrakenProProtectedHandoff';
 import { explainKrakenBlock } from '../../services/krakenBlockGuide';
 
 interface LiveBetViewProps {
@@ -665,14 +666,29 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
             signalLeverage={initialSetup?.symbol === normalized.asset ? initialSetup.leverageOptions : undefined}
           />
 
-          <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 p-2 text-[10px] text-text-secondary">
-            Live order uses the verified setup, fixed $10 notional and up to 2× leverage, not the scenario inputs.
-            Stop requested only after the entry fills. ¹ Target NOT placed as an order.
-          </div>
+          <p className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-2 text-[11px] text-text-secondary">
+            Current REST-only entry: Stop requested only after the entry fills. Target NOT placed as an order.
+            This is why API execution remains disabled. For two linked exits, use the native Kraken Pro protected-order handoff below.
+          </p>
+          <KrakenProProtectedHandoff
+            asset={normalized.asset}
+            direction={normalized.direction === 'SHORT' ? 'SHORT' : 'LONG'}
+            entry={Number(normalized.entry || 0)}
+            stop={Number(normalized.stop || 0)}
+            target={Number(normalized.target || 0)}
+            leverage={Number(leverage)}
+            market={preview?.pairId || null}
+          />
+          <details className="rounded-lg border border-white/10 bg-surface-base p-3 text-[10px] text-text-muted">
+            <summary className="cursor-pointer font-bold">Kraken API preview and validation (no trade)</summary>
+            <p className="mt-2">The original AURELIS API can preview and validate a conditional-stop order only.
+              It cannot submit the fully linked stop-and-target bracket. Order submission is locked.
+              The $10 total notional and 2× safeguards apply separately from the scenario calculator.</p>
+          </details>
           {!executionEnabled && executionCapabilityMessage !== 'Checking execution safeguards…' && (
             <div role="status" className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-[12px] text-text-secondary space-y-1">
-              <strong className="block text-text-primary">Live orders are currently locked</strong>
-              <p>You can check and validate this $10 Kraken test order without trading. Actual order submission is disabled until the required position-protection lifecycle is verified and server access is enabled.</p>
+              <strong className="block text-text-primary">AURELIS API orders locked · Kraken Pro protected handoff available</strong>
+              <p>You can copy this setup and place an eligible order in Kraken Pro with both TP and SL attached. AURELIS will not send an unsafe single-exit API trade.</p>
               <p className="text-[11px]">Status: {executionCapabilityMessage}</p>
             </div>
           )}

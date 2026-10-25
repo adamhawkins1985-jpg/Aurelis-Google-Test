@@ -51,6 +51,7 @@ jobs:
           node scripts/test_bot_auth_flow.mjs
           npx tsx scripts/test_wallet_auth_challenges.ts
           npx tsx scripts/test_kraken_block_guide.ts
+          npx tsx scripts/test_kraken_pro_handoff.ts
           npx tsx scripts/test_kraken_protection_review.ts
           npx tsx scripts/test_kraken_position_protection.ts
           npx tsx scripts/test_hunter_margin_handoff.ts
