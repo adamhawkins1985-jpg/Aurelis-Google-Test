@@ -290,13 +290,13 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
     setMessages(current=>[...current.slice(-12),{role:'user',text:query,at:Date.now()}]);
     setAsking(true);
     try{
-      const answer=await request<{reply:string;engine:string;providerStatus?:string;cloudflareStatus?:string;marketAsOf:number}>('/api/market-broker/chat',{
+      const answer=await request<{reply:string;engine:string;providerStatus?:string;cloudflareStatus?:string;existingWorkerStatus?:string;marketAsOf:number}>('/api/market-broker/chat',{
         method:'POST',headers:{'Content-Type':'application/json'},
         body:JSON.stringify({message:query,symbol,tf:frame,mode:intentMode,margin:marginUsd,
           researchLeverage:leverage,researchSide,
           favorableMovePct:Number(favorableMove),adverseMovePct:Number(adverseMove)})
       });
-      if(contextRef.current===scope)setMessages(current=>[...current,{role:'assistant',text:answer.reply,engine:answer.engine+(answer.cloudflareStatus&&answer.cloudflareStatus!=='online'?' · Cloudflare '+answer.cloudflareStatus.replaceAll('_',' '):'')+(answer.providerStatus&&answer.providerStatus!=='online'?' · Gemini '+answer.providerStatus.replaceAll('_',' '):''),at:answer.marketAsOf||Date.now()}]);
+      if(contextRef.current===scope)setMessages(current=>[...current,{role:'assistant',text:answer.reply,engine:answer.engine+(answer.existingWorkerStatus&&answer.existingWorkerStatus!=='online'?' · Existing AURELIS AI '+answer.existingWorkerStatus.replaceAll('_',' '):'')+(answer.cloudflareStatus&&answer.cloudflareStatus!=='online'?' · Cloudflare '+answer.cloudflareStatus.replaceAll('_',' '):'')+(answer.providerStatus&&answer.providerStatus!=='online'?' · Gemini '+answer.providerStatus.replaceAll('_',' '):''),at:answer.marketAsOf||Date.now()}]);
     }catch(e:any){
       if(contextRef.current===scope)setMessages(current=>[...current,{role:'assistant',text:'Live analysis unavailable: '+(e?.message||'data source offline')+'. No recommendation generated.',engine:'Unavailable',at:Date.now()}]);
     }finally{setAsking(false);}
