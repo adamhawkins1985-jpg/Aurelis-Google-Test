@@ -33,6 +33,9 @@ assert(live.includes('Check $10 Kraken order · No trade placed'),
   'Preview/validation must not masquerade as an order');
 assert(backend.includes("if (!KRAKEN_LINKED_OCO_LIFECYCLE_VERIFIED)"),
   'The hard protection gate stays in place despite wallet/auth repairs');
+assert(backend.includes("COINBASE_TRUSTED_RUNTIME_DIR='/home/ubuntu/.aurelis-coinbase-execution'") &&
+  backend.includes('(st.mode&0o077)===0') && backend.includes('(parent.mode&0o022)===0'),
+  'Trading activation must require an isolated owner-only audit store under a safe home directory');
 assert(backend.includes('coinbaseBracketAuditDurable') && backend.includes('AURELIS_COINBASE_BRACKET_AUDIT_DB') &&
   backend.includes('first_live_coinbase_test'),
   'Native Coinbase real-order submission requires a durable cross-release idempotency audit');

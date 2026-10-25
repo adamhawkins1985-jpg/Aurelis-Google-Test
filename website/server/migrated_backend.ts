@@ -1256,14 +1256,16 @@ const brokerStatuses:{at:number,data:any|null}={at:0,data:null};
 type CoinbaseBracketConfirmation={sid:string;createdAt:number;used:boolean;plan:ReturnType<typeof buildCoinbaseSpotBracket>;entry:number;ask:number;previewId:string};
 const coinbaseBracketPreviews=new Map<string,CoinbaseBracketConfirmation>();
 let coinbaseBracketOrderInFlight=false;
-const COINBASE_TRUSTED_RUNTIME_DIR='/home/ubuntu/.config/aurelis';
+const COINBASE_TRUSTED_RUNTIME_DIR='/home/ubuntu/.aurelis-coinbase-execution';
 const COINBASE_TRUSTED_AUDIT=path.join(COINBASE_TRUSTED_RUNTIME_DIR,'coinbase-bracket-audit.sqlite3');
 const COINBASE_TRUSTED_TOGGLE=path.join(COINBASE_TRUSTED_RUNTIME_DIR,'coinbase-bracket-trading.enabled');
 function trustedCoinbaseRuntimeDir():boolean {
   try{
     const st=fs.statSync(COINBASE_TRUSTED_RUNTIME_DIR);
     fs.accessSync(COINBASE_TRUSTED_RUNTIME_DIR,fs.constants.W_OK);
-    return st.isDirectory()&&typeof process.getuid==='function'&&st.uid===process.getuid()&&(st.mode&0o022)===0;
+    const parent=fs.statSync('/home/ubuntu');
+    return st.isDirectory()&&typeof process.getuid==='function'&&st.uid===process.getuid()&&
+      (st.mode&0o077)===0&&parent.isDirectory()&&(parent.mode&0o022)===0;
   }catch{return false}
 }
 // Reuse the existing ubuntu-owned private config, independent of website release
