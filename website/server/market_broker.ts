@@ -556,6 +556,38 @@ export function registerMarketBroker(app:Express,port:number){
         recentHeadlines:headlines.slice(0,9).map(x=>({title:x.title,source:x.source,published:x.published,url:x.url})),
         riskPolicy:'Hypothetical research may model up to '+MAX_RESEARCH_LEVERAGE+'x but authorizes no orders. Real Kraken Spot/Margin first test still requires explicit approval and a maximum of '+REAL_KRAKEN_TEST_LEVERAGE_CAP+'x at $'+REAL_KRAKEN_FIRST_TEST_NOTIONAL_USD+' notional. This endpoint cannot place or prepare orders. Kraken Derivatives execution is not verified.'
       };
+      // Existing AURELIS Worker endpoint takes priority over a new Workers AI account integration.
+      // Configure with the existing server-side AURELIS_AI_WORKER_URL, if present.
+      const existingWorkerUrl=process.env.AURELIS_AI_WORKER_URL||process.env.CLOUDFLARE_AI_WORKER_URL||'';
+      let existingWorkerStatus=existingWorkerUrl?'provider_error':'not_configured';
+      if(existingWorkerUrl){
+        try{
+          const workerUrl=new URL(existingWorkerUrl);
+          const allowed=workerUrl.protocol==='https:'&&
+            (workerUrl.hostname.endsWith('.workers.dev')||
+             workerUrl.hostname==='wallet.ahconceptsai.com'||
+             workerUrl.hostname.endsWith('.ahconceptsai.com'))&&
+            !workerUrl.username&&!workerUrl.password;
+          if(!allowed)existingWorkerStatus='invalid_endpoint';
+          else {
+            const auth=process.env.AURELIS_AI_WORKER_TOKEN||process.env.CLOUDFLARE_AI_WORKER_TOKEN||'';
+            const workerResponse=await fetch(workerUrl.toString(),{
+              method:'POST',redirect:'error',
+              headers:{'Content-Type':'application/json',...(auth?{Authorization:'Bearer '+auth}:{})},
+              body:JSON.stringify({message,context,mode:'market_research',readOnly:true}),
+              signal:AbortSignal.timeout(14000)
+            });
+            if(!workerResponse.ok)existingWorkerStatus=workerResponse.status===401||workerResponse.status===403?'authentication_or_permission':workerResponse.status===429?'quota_or_rate_limit':'provider_error';
+            else {
+              const workerBody:any=await workerResponse.json();
+              const workerReply=String(workerBody?.reply||workerBody?.response||workerBody?.result?.response||'').trim();
+              if(workerReply&&workerReply.length<=12000)
+                return res.json({ok:true,reply:workerReply,engine:'AURELIS Existing Cloudflare AI',providerStatus:'online',existingWorkerStatus:'online',marketAsOf:market.observedAt,bots:bot.status,newsCount:headlines.length});
+              existingWorkerStatus='empty_response';
+            }
+          }
+        }catch(e:any){existingWorkerStatus=e?.name==='TimeoutError'?'timeout':'provider_error';}
+      }
       // Cloudflare Workers AI primary. Credentials remain server-side.
       // Uses the documented Cloudflare account AI run API, not an unverified private Worker URL.
       const cfAccount=process.env.CLOUDFLARE_ACCOUNT_ID||'';
@@ -627,7 +659,7 @@ export function registerMarketBroker(app:Express,port:number){
           console.warn('[market-broker] AI provider status:',providerStatus,detail.slice(0,250));
         }
       }
-      return res.json({ok:true,reply:marketWide?marketWideFallback(marketWide,mode,message):fallbackReply(market,bot,mode,margin,{timeframes,researchScenario}),engine:'Verified rules fallback',providerStatus,cloudflareStatus,marketAsOf:market.observedAt,bots:bot.status,newsCount:headlines.length});
+      return res.json({ok:true,reply:marketWide?marketWideFallback(marketWide,mode,message):fallbackReply(market,bot,mode,margin,{timeframes,researchScenario}),engine:'Verified rules fallback',providerStatus,cloudflareStatus,existingWorkerStatus,marketAsOf:market.observedAt,bots:bot.status,newsCount:headlines.length});
     }catch(e:any){return res.status(503).json({ok:false,error:'verified_market_context_unavailable',detail:String(e?.message||e)});}
   });
   // Slow read-only observer. Builds NEW history even if no browser tab is open.
