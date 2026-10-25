@@ -42,4 +42,9 @@ assert.ok(brokerServer.includes('watchlist|rank|closest setups'),'chat must rout
 assert.ok(screen.includes('Conservative: rank')&&screen.includes('Aggressive: find early momentum'),'risk-style suggestions should remain accessible');
 assert.ok(brokerServer.includes('HYPOTHETICAL RISK EXAMPLE'),'cross-market perps fallback must include concrete profit/loss illustration');
 assert.ok(brokerServer.includes("'gemini-2.5-flash'"),'default AI model must use stable supported identifier');
+assert.ok(brokerServer.includes("if(!crossAsset&&!market.analysis.dataFresh)"),'broad queries must not depend on default coin freshness');
+assert.ok(brokerServer.includes("if(crossAsset&&!marketWide)"),'scan failure must not silently downgrade to single coin');
+assert.ok(brokerServer.includes("process.env.GOOGLE_API_KEY"),'support alternative Gemini key variable');
+assert.ok(brokerServer.includes("providerStatus='empty_response'"),'empty AI responses must be visible');
+assert.ok(screen.includes("answer.providerStatus"),'UI should show AI connectivity diagnostics');
 console.log('PASS: conversational broker guidance, bot disagreements, freshness, education, historical labels and focused chat.');
