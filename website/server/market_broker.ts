@@ -562,7 +562,7 @@ export function registerMarketBroker(app:Express,port:number){
       const cfToken=process.env.CLOUDFLARE_WORKERS_AI_TOKEN||'';
       const cfModel=process.env.AURELIS_CLOUDFLARE_AI_MODEL||'@cf/meta/llama-3.1-8b-instruct';
       let cloudflareStatus=cfAccount&&cfToken?'provider_error':'not_configured';
-      if(cfAccount&&cfToken&&/^[a-f0-9]{32}$/i.test(cfAccount)&&cfModel.startsWith('@cf/')&&!/[^a-z0-9@._/-]/i.test(cfModel)){
+      if(cfAccount&&cfToken&&/^[a-f0-9]{32}$/i.test(cfAccount)&&cfModel.startsWith('@cf/')&&!/[^a-z0-9@._\/-]/i.test(cfModel)){
         try{
           const cfResponse=await fetch('https://api.cloudflare.com/client/v4/accounts/'+cfAccount+'/ai/run/'+cfModel,{
             method:'POST',
