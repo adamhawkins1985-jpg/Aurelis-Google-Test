@@ -47,4 +47,8 @@ assert.ok(brokerServer.includes("if(crossAsset&&!marketWide)"),'scan failure mus
 assert.ok(brokerServer.includes("process.env.GOOGLE_API_KEY"),'support alternative Gemini key variable');
 assert.ok(brokerServer.includes("providerStatus='empty_response'"),'empty AI responses must be visible');
 assert.ok(screen.includes("answer.providerStatus"),'UI should show AI connectivity diagnostics');
+assert.ok(brokerServer.includes("CLOUDFLARE_ACCOUNT_ID")&&brokerServer.includes("CLOUDFLARE_WORKERS_AI_TOKEN"),'Cloudflare primary must use server-only credentials');
+assert.ok(brokerServer.includes("api.cloudflare.com/client/v4/accounts/"),'Cloudflare primary must use official API');
+assert.ok(brokerServer.indexOf("const cfAccount=")<brokerServer.indexOf("const apiKey=process.env.GEMINI_API_KEY"),'Cloudflare must be attempted before Gemini');
+assert.ok(screen.includes("answer.cloudflareStatus"),'Cloudflare diagnostic status must appear in chat');
 console.log('PASS: conversational broker guidance, bot disagreements, freshness, education, historical labels and focused chat.');
