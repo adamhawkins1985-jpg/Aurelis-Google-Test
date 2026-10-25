@@ -54,4 +54,7 @@ assert.ok(screen.includes("answer.cloudflareStatus"),'Cloudflare diagnostic stat
 assert.ok(brokerServer.includes('AURELIS_AI_WORKER_URL'),'existing Cloudflare AI endpoint must be supported');
 assert.ok(brokerServer.indexOf('const existingWorkerUrl=')<brokerServer.indexOf('const cfAccount='),'existing Worker should take priority');
 assert.ok(screen.includes('answer.existingWorkerStatus'),'Worker failure reason must be shown');
+assert.ok(brokerServer.includes('https://aurelis-ai.ahconceptsai.workers.dev/v1/chat/completions'),'original AURELIS Cloudflare endpoint should be default');
+assert.ok(brokerServer.includes("workerBody?.choices?.[0]?.message?.content"),'OpenAI-compatible response must be extracted');
+assert.ok(brokerServer.includes("stream:false"),'Worker must return a complete chat completion');
 console.log('PASS: conversational broker guidance, bot disagreements, freshness, education, historical labels and focused chat.');
