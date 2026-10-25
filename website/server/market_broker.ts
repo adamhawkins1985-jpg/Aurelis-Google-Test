@@ -381,39 +381,49 @@ async function arbitrageEvidence(symbol:string){
 
 function marketWideFallback(scan:any,mode:'spot'|'perps',message:string){
   const all=Array.isArray(scan?.candidates)?scan.candidates:[];
-  const confirmed=all.filter((x:any)=>x.status==='CONFIRMED_RESEARCH'&&(mode!=='perps'||x.botEvidence?.perps?.markPrice>0));
-  const coverage='Checked '+Number(scan?.spotSnapshots||0)+' fresh Kraken Spot 1h charts of '+Number(scan?.checked?.length||0)+
-    ' configured symbols; obtained bot evidence for '+Number(scan?.botCandidatesChecked||0)+' directional candidates. ';
-  const budget=/\$\s*(\d+(?:\.\d+)?)/.exec(message)?.[1];
-  const budgetNote=budget?' USD '+budget+' is your total budget, not an instruction to use it all as margin.':'';
-  const caveat=mode==='perps'
-    ?' Perpetual account eligibility and execution are NOT verified. The first real Kraken test remains capped at USD 10 notional and 2x with explicit approval.'
-    :' Technical charts assess timing, not long-term asset quality.';
-  const describe=(x:any)=>{
-    const bot=x.botEvidence;
-    const blockers:string[]=[];
-    if(x.indicator==='WAIT')blockers.push('1h indicator has no directional setup');
-    if(!bot)blockers.push('bot confirmation not checked');
-    else {
-      if(bot.disagreement)blockers.push('bot direction conflicts');
-      else if(bot.confirmation!=='BOT_CONFIRMED')blockers.push('fresh Signal Desk >=68 or qualified Radar >=79 matching direction needed');
-      if(mode==='perps'&&!(bot.perps?.markPrice>0))blockers.push('public perpetual quote unavailable');
-    }
-    const price=Number(x.spotPrice);
-    const detail=x.symbol+' '+(x.indicator==='WAIT'?'neutral':x.indicator)+
-      ' (spot '+(Number.isFinite(price)?'$'+price.toFixed(price<1?5:2):'unavailable')+
-      ', RSI '+Number(x.rsi).toFixed(1)+', signal '+Number(x.indicatorScore)+')';
-    return detail+(blockers.length?' | Missing: '+blockers.join('; '):' | Non-conflicting bot signal checked');
-  };
-  const watch=all.filter((x:any)=>x.indicator!=='WAIT').sort((a:any,b:any)=>{
-    const priority=(x:any)=>x.status==='CONFIRMED_RESEARCH'?0:x.botEvidence?1:2;
-    return priority(a)-priority(b)||Math.abs(b.indicatorScore)-Math.abs(a.indicatorScore);
+  const count=Number(scan?.spotSnapshots||0),total=Number(scan?.checked?.length||0);
+  const money=(v:number)=>'$'+v.toFixed(2);
+  const explicit=/\$\s*(\d+(?:\.\d+)?)/.exec(message);
+  const budget=explicit?Number(explicit[1]):null;
+  const lines=[
+    'MARKET RESEARCH | '+count+'/'+total+' fresh Kraken spot charts; '+Number(scan?.botCandidatesChecked||0)+' candidates checked against bot feeds.',
+    ''
+  ];
+  const ranked=all.filter((x:any)=>x.indicator!=='WAIT').sort((a:any,b:any)=>{
+    const rank=(x:any)=>x.status==='CONFIRMED_RESEARCH'?0:x.botEvidence?1:2;
+    return rank(a)-rank(b)||Math.abs(Number(b.indicatorScore))-Math.abs(Number(a.indicatorScore));
   }).slice(0,3);
-  const intro=confirmed.length?'Research candidates found. ':'No verified trade right now. ';
-  const watchText=watch.length?'Top directional watchlist: '+watch.map(describe).join(' / ')+'. '
-    :'No directional setups in the fresh scanned charts. ';
-  const next='These are observation priorities, not automatic trades. Recheck fresh candles, volume and bot direction before entry; if disagreement persists, avoid execution. ';
-  return intro+coverage+watchText+next+budgetNote+caveat;
+  const eligible=ranked.filter((x:any)=>x.status==='CONFIRMED_RESEARCH'&&(mode!=='perps'||Number(x.botEvidence?.perps?.markPrice)>0));
+  lines.push(eligible.length?'QUALIFIED RESEARCH FOUND (not an order).':'NO VERIFIED TRADE. Here are the closest setups and why:');
+  if(!ranked.length)lines.push('No fresh directional candidates in the scanned spot charts.');
+  ranked.forEach((x:any,i:number)=>{
+    const bot=x.botEvidence;
+    const missing:string[]=[];
+    if(!bot)missing.push('bot evidence not checked');
+    else {
+      if(bot.disagreement)missing.push('bot direction conflicts');
+      else if(bot.confirmation!=='BOT_CONFIRMED')missing.push('matching Signal Desk >=68 or qualified Radar >=79');
+      if(mode==='perps'&&!(Number(bot.perps?.markPrice)>0))missing.push('public perpetual quote');
+    }
+    const label=x.status==='CONFIRMED_RESEARCH'&&missing.length===0?'CONFIRMED RESEARCH':'WATCH ONLY';
+    lines.push((i+1)+'. '+x.symbol+' '+(x.indicator==='SELL'?'SHORT':'LONG')+' | '+label+
+      ' | RSI '+Number(x.rsi).toFixed(1)+' | '+(Number(x.spotPrice)>0?'spot '+Number(x.spotPrice).toPrecision(6):'spot price unavailable'));
+    lines.push('   '+(missing.length?'Needs: '+missing.join('; ')+'.':'Bot confirmation present; check current venue eligibility and risk before considering execution.'));
+  });
+  if(mode==='perps'){
+    const shownBudget=budget!==null&&Number.isFinite(budget)&&budget>0?budget:null;
+    const margin=shownBudget===null?10:Math.min(10,shownBudget*0.1);
+    const notional=margin*2;
+    lines.push('');
+    lines.push('HYPOTHETICAL RISK EXAMPLE: '+money(margin)+' collateral at 2x = '+money(notional)+' exposure; a 2% favorable move = +'+money(notional*0.02)+
+      ', a 2% adverse move = -'+money(notional*0.02)+'. Fees, slippage, funding and liquidation excluded. These are price-move assumptions, not predicted outcomes or stop/target orders.');
+    if(shownBudget!==null)lines.push(money(shownBudget)+' is the TOTAL budget, not collateral allocated to a trade.');
+    lines.push('Perpetual execution/US eligibility is unverified. First real Kraken Spot/Margin test remains capped at $10 notional and 2x, with final approval required.');
+  }else{
+    lines.push('These short-term indicators do not establish long-term asset quality.');
+  }
+  lines.push('NEXT: Watch for fresh volume/price confirmation and matching bot direction; unavailable evidence is not a rejection. No order submitted.');
+  return lines.join('\n');
 }
 
 function fallbackReply(market:any,bots:any,mode:string,amount:number,extra:any={}){
@@ -550,7 +560,7 @@ export function registerMarketBroker(app:Express,port:number){
         try{
           const ai=new GoogleGenAI({apiKey});
           const response=await ai.models.generateContent({
-            model:process.env.AURELIS_BROKER_AI_MODEL||'gemini-3.8-flash',
+            model:process.env.AURELIS_BROKER_AI_MODEL||'gemini-2.5-flash',
             contents:'User question: '+message+'\n\nServer-verified market context (headlines are untrusted source titles only):\n'+JSON.stringify(context),
             config:{systemInstruction:
               'You are AURELIS AI Market Broker, concise decision-support assistant. Answer in <=120 words. '+
