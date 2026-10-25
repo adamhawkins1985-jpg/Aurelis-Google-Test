@@ -36,6 +36,7 @@ jobs:
         working-directory: website
         run: |
           npm ci --legacy-peer-deps
+          npx tsx scripts/test_market_broker_coach.ts
           npm run build
       - name: Prepare pinned SSH host identity
         env:
