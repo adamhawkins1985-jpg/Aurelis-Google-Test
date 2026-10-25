@@ -532,9 +532,10 @@ export function registerMarketBroker(app:Express,port:number){
     if(!COINS.includes(symbol)||!message)return res.status(400).json({ok:false,error:'invalid_broker_question'});
     try{
       const [market,bot,headlines,timeframes,analogs]=await Promise.all([snapshot(symbol,tf),botSignals(symbol,port),brokerNews().catch(()=>[]),timeframeEvidence(symbol).catch(()=>null),historicalAnalogs(symbol,mode)]);
-      if(!market.analysis.dataFresh)throw new Error('market_data_stale');
       const crossAsset=/where|best|which|compare|market|opportunit|scan|accumulat|find me|good coin|what should i buy|down|watchlist|rank|closest setups|\$\d/.test(message.toLowerCase());
       const marketWide=crossAsset?await crossAssetResearch(mode,port).catch(()=>null):null;
+      if(!crossAsset&&!market.analysis.dataFresh)throw new Error('market_data_stale');
+      if(crossAsset&&!marketWide)throw new Error('market_wide_scan_unavailable');
       const [perpsMarket,dexMarkets,arbitrageMarkets]=mode==='perps'?await Promise.all([futuresContext(symbol).catch(()=>null),dexPublicEvidence(symbol).catch(()=>null),arbitrageEvidence(symbol).catch(()=>null)]):[null,null,null];
       const researchScenario=mode==='perps'&&!crossAsset?calculatePerpsResearch({
         marginUsd:margin,leverage:researchLeverage,side:researchSide,
@@ -555,7 +556,8 @@ export function registerMarketBroker(app:Express,port:number){
         recentHeadlines:headlines.slice(0,9).map(x=>({title:x.title,source:x.source,published:x.published,url:x.url})),
         riskPolicy:'Hypothetical research may model up to '+MAX_RESEARCH_LEVERAGE+'x but authorizes no orders. Real Kraken Spot/Margin first test still requires explicit approval and a maximum of '+REAL_KRAKEN_TEST_LEVERAGE_CAP+'x at $'+REAL_KRAKEN_FIRST_TEST_NOTIONAL_USD+' notional. This endpoint cannot place or prepare orders. Kraken Derivatives execution is not verified.'
       };
-      const apiKey=process.env.GEMINI_API_KEY;
+      const apiKey=process.env.GEMINI_API_KEY||process.env.GOOGLE_API_KEY;
+      let providerStatus=apiKey?'provider_error':'not_configured';
       if(apiKey){
         try{
           const ai=new GoogleGenAI({apiKey});
@@ -585,10 +587,15 @@ export function registerMarketBroker(app:Express,port:number){
             }
           });
           const reply=String(response.text||'').trim();
-          if(reply)return res.json({ok:true,reply,engine:'AURELIS AI',marketAsOf:market.observedAt,bots:bot.status,newsCount:headlines.length});
-        }catch(e:any){console.warn('[market-broker] AI provider unavailable:',e?.message||String(e));}
+          if(reply)return res.json({ok:true,reply,engine:'AURELIS AI',providerStatus:'online',marketAsOf:market.observedAt,bots:bot.status,newsCount:headlines.length});
+          providerStatus='empty_response';
+        }catch(e:any){
+          const detail=String(e?.message||e);
+          providerStatus=/429|quota|resource.exhausted/i.test(detail)?'quota_or_rate_limit':/401|403|api.key|permission/i.test(detail)?'authentication_or_permission':/404|model.not.found|not supported/i.test(detail)?'model_unavailable':'provider_error';
+          console.warn('[market-broker] AI provider status:',providerStatus,detail.slice(0,250));
+        }
       }
-      return res.json({ok:true,reply:marketWide?marketWideFallback(marketWide,mode,message):fallbackReply(market,bot,mode,margin,{timeframes,researchScenario}),engine:'Verified rules fallback (AI unavailable)',marketAsOf:market.observedAt,bots:bot.status,newsCount:headlines.length});
+      return res.json({ok:true,reply:marketWide?marketWideFallback(marketWide,mode,message):fallbackReply(market,bot,mode,margin,{timeframes,researchScenario}),engine:'Verified rules fallback',providerStatus,marketAsOf:market.observedAt,bots:bot.status,newsCount:headlines.length});
     }catch(e:any){return res.status(503).json({ok:false,error:'verified_market_context_unavailable',detail:String(e?.message||e)});}
   });
   // Slow read-only observer. Builds NEW history even if no browser tab is open.
