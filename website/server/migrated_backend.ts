@@ -1255,9 +1255,17 @@ const brokerStatuses:{at:number,data:any|null}={at:0,data:null};
 type CoinbaseBracketConfirmation={sid:string;createdAt:number;used:boolean;plan:ReturnType<typeof buildCoinbaseSpotBracket>;entry:number;ask:number;previewId:string};
 const coinbaseBracketPreviews=new Map<string,CoinbaseBracketConfirmation>();
 let coinbaseBracketOrderInFlight=false;
-const coinbaseBracketDb=new Database(path.join(DATA_DIR,'coinbase-bracket-audit.sqlite3'));
+const COINBASE_BRACKET_AUDIT_PATH=String(process.env.AURELIS_COINBASE_BRACKET_AUDIT_DB||'').trim();
+// Live permission requires a separately configured persistent audit path.
+// An app-local path may be replaced during website releases; never use it for
+// cross-restart duplicate-order prevention once live orders are authorized.
+const coinbaseBracketAuditDurable=path.isAbsolute(COINBASE_BRACKET_AUDIT_PATH)&&
+  !path.resolve(COINBASE_BRACKET_AUDIT_PATH).startsWith(path.resolve(APP_ROOT)+path.sep);
+const coinbaseBracketDb=new Database(coinbaseBracketAuditDurable?COINBASE_BRACKET_AUDIT_PATH:
+  path.join(DATA_DIR,'coinbase-bracket-audit.sqlite3'));
 coinbaseBracketDb.pragma('journal_mode = WAL');
 coinbaseBracketDb.exec('CREATE TABLE IF NOT EXISTS submissions (client_id TEXT PRIMARY KEY, state TEXT NOT NULL, order_id TEXT, created_at INTEGER NOT NULL)');
+coinbaseBracketDb.exec("CREATE UNIQUE INDEX IF NOT EXISTS first_live_coinbase_test ON submissions ((1)) WHERE state IN ('initiated','unverified','submitted')");
 
 function cexMoney(value:any):string | null {
   const n=Number(value);
@@ -2255,12 +2263,14 @@ function registerMarketAndBotRoutes(app:Express) {
   app.get('/api/bots/coinbase-bracket/capability',(req,res)=>{
     if(!requireBotAccountOwner(req,res))return;
     const configured=coinbaseAdvancedConfigured();
-    const enabled=configured&&process.env.AURELIS_COINBASE_SPOT_BRACKET_EXECUTION_ENABLED==='1';
+    const enabled=configured&&coinbaseBracketAuditDurable&&
+      process.env.AURELIS_COINBASE_SPOT_BRACKET_EXECUTION_ENABLED==='1';
     return sendNoStore(res,{ok:true,venue:'Coinbase Advanced Spot',configured,enabled,
       requiresExchangePreview:true,manualApprovalRequired:true,
       maxNotionalUsd:10,leverage:1,shortsAllowed:false,
-      bridgeOnly:!configured,
+      bridgeOnly:!configured,durableAuditConfigured:coinbaseBracketAuditDurable,
       reason:!configured?'coinbase_trade_credentials_not_configured':
+        !coinbaseBracketAuditDurable?'durable_execution_audit_not_configured':
         enabled?'account_preview_required':'coinbase_live_bracket_execution_not_enabled'});
   });
 
@@ -2291,7 +2301,7 @@ function registerMarketAndBotRoutes(app:Express) {
         stop:plan.attached_order_configuration.trigger_bracket_gtc.stop_trigger_price,
         takeProfit:plan.attached_order_configuration.trigger_bracket_gtc.limit_price,
         estimatedCommissionUsd:valid.fees,token,expiresAt:Date.now()+30000,
-        executionEnabled:process.env.AURELIS_COINBASE_SPOT_BRACKET_EXECUTION_ENABLED==='1',
+        executionEnabled:coinbaseBracketAuditDurable&&process.env.AURELIS_COINBASE_SPOT_BRACKET_EXECUTION_ENABLED==='1',
         warning:'Native attached TP/SL was previewed by Coinbase. Stop-limit exits can fail to fill in fast markets.'});
     }catch(e:any){return sendNoStore(res,{ok:false,orderPlaced:false,error:String(e?.message||e).slice(0,190)},409)}
   });
@@ -2334,7 +2344,8 @@ function registerMarketAndBotRoutes(app:Express) {
       const origin=String(req.headers.origin||'');
       if(origin!==authOrigin(req))throw new Error('coinbase_approval_origin_invalid');
       if(process.env.AURELIS_COINBASE_SPOT_BRACKET_EXECUTION_ENABLED!=='1'
-        ||!coinbaseAdvancedConfigured())throw new Error('coinbase_live_execution_disabled');
+        ||!coinbaseAdvancedConfigured()||!coinbaseBracketAuditDurable)
+        throw new Error('coinbase_live_execution_disabled_or_audit_not_durable');
       if(req.body?.approveRealTrade!==true || req.body?.acknowledgeStopLimitRisk!==true)
         throw new Error('explicit_single_order_approval_required');
       const token=String(req.body?.confirmationToken||'');

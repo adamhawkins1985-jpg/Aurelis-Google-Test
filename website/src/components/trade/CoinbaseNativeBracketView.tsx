@@ -2,7 +2,7 @@ import React,{useEffect,useState} from 'react';
 import {CheckCircle2,ShieldAlert} from 'lucide-react';
 
 interface Props {asset:string;direction:'LONG'|'SHORT';entry:number;stop:number;target:number}
-type Capability={ok:boolean;configured:boolean;enabled:boolean;reason:string;bridgeOnly:boolean};
+type Capability={ok:boolean;configured:boolean;enabled:boolean;reason:string;bridgeOnly:boolean;durableAuditConfigured?:boolean};
 type Preview={ok:boolean;token:string;expiresAt:number;asset:string;side:string;
   quoteUsd:number;notionalUsd:number;stop:string;takeProfit:string;
   estimatedCommissionUsd:string;executionEnabled:boolean;warning:string};
@@ -108,8 +108,10 @@ export const CoinbaseNativeBracketView:React.FC<Props>=({asset,direction,entry,s
       In-app execution cannot be enabled until Coinbase Advanced trading permissions are verified securely on the server.
     </p>}
     {cap?.configured&&!cap.enabled&&<p className="rounded-lg p-2 bg-surface-panel text-amber-400">
-      Trading credentials are configured, but live Coinbase bracket submission is not enabled.
-      Preview is read-only. AURELIS won't trade until server-side permissions and protection checks have been approved.
+      {cap.reason==='durable_execution_audit_not_configured'
+        ? 'The protected trading audit store is not yet configured on the server. Coinbase order submission stays locked to prevent accidental duplicate trades after a restart.'
+        : 'Trading credentials are configured, but live Coinbase bracket submission is not enabled.'}
+      {' '}Preview is read-only until server-side permissions, protection checks, and an auditable execution state have been verified.
     </p>}
     {eligible&&cap?.configured&&!result&&
       <button type="button" disabled={busy} onClick={()=>void review()}

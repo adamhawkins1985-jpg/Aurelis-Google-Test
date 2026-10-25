@@ -33,4 +33,7 @@ assert(live.includes('Check $10 Kraken order · No trade placed'),
   'Preview/validation must not masquerade as an order');
 assert(backend.includes("if (!KRAKEN_LINKED_OCO_LIFECYCLE_VERIFIED)"),
   'The hard protection gate stays in place despite wallet/auth repairs');
+assert(backend.includes('coinbaseBracketAuditDurable') && backend.includes('AURELIS_COINBASE_BRACKET_AUDIT_DB') &&
+  backend.includes('first_live_coinbase_test'),
+  'Native Coinbase real-order submission requires a durable cross-release idempotency audit');
 console.log('PASS: wallet replay fixes, bot privilege isolation, margin readiness and transparent Kraken read-only workflow.');
