@@ -4,6 +4,7 @@ import { formatCurrency, playHudSound } from '../../services/marketData';
 import type { SetupCandidate } from './TradeRadarView';
 import { BetScenarioCalculator } from './BetScenarioCalculator';
 import { KrakenProProtectedHandoff } from './KrakenProProtectedHandoff';
+import { CoinbaseNativeBracketView } from './CoinbaseNativeBracketView';
 import { explainKrakenBlock } from '../../services/krakenBlockGuide';
 
 interface LiveBetViewProps {
@@ -670,6 +671,17 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
             Current REST-only entry: Stop requested only after the entry fills. Target NOT placed as an order.
             This is why API execution remains disabled. For two linked exits, use the native Kraken Pro protected-order handoff below.
           </p>
+          <CoinbaseNativeBracketView
+            key={normalized.asset+'-'+normalized.direction+'-'+normalized.entry}
+            asset={normalized.asset}
+            direction={normalized.direction === 'SHORT' ? 'SHORT' : 'LONG'}
+            entry={Number(normalized.entry || 0)}
+            stop={Number(normalized.stop || 0)}
+            target={Number(normalized.target || 0)}
+          />
+          <details className="rounded-xl border border-white/10 bg-surface-base p-3 space-y-2 text-[11px] text-text-secondary">
+            <summary className="cursor-pointer font-semibold text-text-primary">Alternative: manually place a linked bracket in Kraken Pro</summary>
+          <div className="pt-3">
           <KrakenProProtectedHandoff
             asset={normalized.asset}
             direction={normalized.direction === 'SHORT' ? 'SHORT' : 'LONG'}
@@ -679,6 +691,8 @@ export const LiveBetView: React.FC<LiveBetViewProps> = ({
             leverage={Number(leverage)}
             market={preview?.pairId || null}
           />
+          </div>
+          </details>
           <details className="rounded-lg border border-white/10 bg-surface-base p-3 text-[10px] text-text-muted">
             <summary className="cursor-pointer font-bold">Kraken API preview and validation (no trade)</summary>
             <p className="mt-2">The original AURELIS API can preview and validate a conditional-stop order only.

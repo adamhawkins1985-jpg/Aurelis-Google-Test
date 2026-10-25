@@ -7,6 +7,7 @@ import { getAddress, verifyMessage } from 'ethers';
 import { WalletChallengeStore } from './wallet_auth_challenges';
 import { assessKrakenProtection, assessKrakenMarginHandoff, krakenExecutablePrice } from './kraken_protection_review';
 import { auditKrakenMarginProtection, krakenLiveExecutionPermitted, KRAKEN_LINKED_OCO_LIFECYCLE_VERIFIED } from './kraken_position_protection';
+import { buildCoinbaseSpotBracket, ensureCoinbaseBracketPreview, coinbaseAuthenticated, type SpotBracketRequest } from './coinbase_spot_bracket';
 
 const APP_ROOT = path.resolve(process.cwd());
 const DATA_DIR = path.join(APP_ROOT, 'data');
@@ -1251,6 +1252,13 @@ type CexStatus = {
   autoFundingEnabled:boolean;
 };
 const brokerStatuses:{at:number,data:any|null}={at:0,data:null};
+type CoinbaseBracketConfirmation={sid:string;createdAt:number;used:boolean;plan:ReturnType<typeof buildCoinbaseSpotBracket>;entry:number;ask:number;previewId:string};
+const coinbaseBracketPreviews=new Map<string,CoinbaseBracketConfirmation>();
+let coinbaseBracketOrderInFlight=false;
+const coinbaseBracketDb=new Database(path.join(DATA_DIR,'coinbase-bracket-audit.sqlite3'));
+coinbaseBracketDb.pragma('journal_mode = WAL');
+coinbaseBracketDb.exec('CREATE TABLE IF NOT EXISTS submissions (client_id TEXT PRIMARY KEY, state TEXT NOT NULL, order_id TEXT, created_at INTEGER NOT NULL)');
+
 function cexMoney(value:any):string | null {
   const n=Number(value);
   if(!Number.isFinite(n) || n<0)return null;
@@ -2239,6 +2247,151 @@ function registerMarketAndBotRoutes(app:Express) {
       linkedStopTargetVerified:KRAKEN_LINKED_OCO_LIFECYCLE_VERIFIED,
       blockedReason:enabled?null:'linked_stop_target_lifecycle_unverified',
       manualApprovalRequired:true,ordersTriggered:false});
+  });
+
+  // Separate native Coinbase Advanced Trade bracket route. Only spot BUY, 1×,
+  // $10 notional, and both exchange-native TP/SL. Never convert a short signal.
+  // Read-only bridges do not grant order permissions.
+  app.get('/api/bots/coinbase-bracket/capability',(req,res)=>{
+    if(!requireBotAccountOwner(req,res))return;
+    const configured=coinbaseAdvancedConfigured();
+    const enabled=configured&&process.env.AURELIS_COINBASE_SPOT_BRACKET_EXECUTION_ENABLED==='1';
+    return sendNoStore(res,{ok:true,venue:'Coinbase Advanced Spot',configured,enabled,
+      requiresExchangePreview:true,manualApprovalRequired:true,
+      maxNotionalUsd:10,leverage:1,shortsAllowed:false,
+      bridgeOnly:!configured,
+      reason:!configured?'coinbase_trade_credentials_not_configured':
+        enabled?'account_preview_required':'coinbase_live_bracket_execution_not_enabled'});
+  });
+
+  app.post('/api/bots/coinbase-bracket/preview',async(req,res)=>{
+    if(!requireBotAccountOwner(req,res))return;
+    try{
+      if(!coinbaseAdvancedConfigured())throw new Error('coinbase_trade_credentials_not_configured');
+      const payload=req.body as SpotBracketRequest;
+      const asset=String(payload?.asset||'').trim().toUpperCase();
+      if(!/^[A-Z0-9]{2,15}$/.test(asset))throw new Error('invalid_asset');
+      if(payload?.direction!=='LONG'||Number(payload.leverage)!==1||Number(payload.notionalUsd)!==10)
+        throw new Error('coinbase_only_10_usd_spot_long_1x');
+      const product:any=await coinbaseAuthenticated('/api/v3/brokerage/products/'+asset+'-USD');
+      const ask=Number(product?.best_ask_price);
+      const plan=buildCoinbaseSpotBracket({...payload,asset,leverage:1,notionalUsd:10},product,ask);
+      const orderArgs={product_id:plan.productId,side:plan.side,
+        order_configuration:plan.order_configuration,
+        attached_order_configuration:plan.attached_order_configuration};
+      const response=await coinbaseAuthenticated('/api/v3/brokerage/orders/preview','POST',orderArgs);
+      const valid=ensureCoinbaseBracketPreview(response);
+      if(Math.abs(Number(valid.quote)/ask-1)>0.002)throw new Error('coinbase_preview_quote_moved');
+      const token=crypto.randomBytes(32).toString('base64url');
+      coinbaseBracketPreviews.set(token,{sid:sessionId(req,res),createdAt:Date.now(),used:false,
+        plan,entry:Number(payload.entry),ask,previewId:valid.previewId});
+      for(const [t,item] of coinbaseBracketPreviews)if(item.used||Date.now()-item.createdAt>45000)coinbaseBracketPreviews.delete(t);
+      return sendNoStore(res,{ok:true,venue:'Coinbase Advanced Spot',orderPlaced:false,
+        quoteUsd:ask,notionalUsd:10,leverage:1,asset,side:'BUY',
+        stop:plan.attached_order_configuration.trigger_bracket_gtc.stop_trigger_price,
+        takeProfit:plan.attached_order_configuration.trigger_bracket_gtc.limit_price,
+        estimatedCommissionUsd:valid.fees,token,expiresAt:Date.now()+30000,
+        executionEnabled:process.env.AURELIS_COINBASE_SPOT_BRACKET_EXECUTION_ENABLED==='1',
+        warning:'Native attached TP/SL was previewed by Coinbase. Stop-limit exits can fail to fill in fast markets.'});
+    }catch(e:any){return sendNoStore(res,{ok:false,orderPlaced:false,error:String(e?.message||e).slice(0,190)},409)}
+  });
+
+  // Read-only order reconciliation. An unknown or disputed submission is never auto-retried.
+  app.get('/api/bots/coinbase-bracket/latest-order',async(req,res)=>{
+    if(!requireBotAccountOwner(req,res))return;
+    try{
+      const row=coinbaseBracketDb.prepare('SELECT client_id,state,order_id,created_at FROM submissions ORDER BY created_at DESC LIMIT 1').get() as any;
+      if(!row)return sendNoStore(res,{ok:true,order:null,message:'No native Coinbase bracket has been submitted from AURELIS.'});
+      if(!coinbaseAdvancedConfigured())throw new Error('coinbase_trade_credentials_not_configured');
+      const orderId=String(row.order_id||'');
+      if(!/^[a-zA-Z0-9-]{10,120}$/.test(orderId))
+        return sendNoStore(res,{ok:true,order:{state:row.state,createdAt:row.created_at,
+          protectionVerified:false,needsReconciliation:true},
+          message:'Submission outcome cannot be confirmed. Check Coinbase orders before any further trade.'});
+      const response:any=await coinbaseAuthenticated('/api/v3/brokerage/orders/historical/'+orderId);
+      const order=response?.order;
+      const bracket=order?.attached_order_configuration?.trigger_bracket_gtc;
+      const stop=String(bracket?.stop_trigger_price||'');
+      const target=String(bracket?.limit_price||'');
+      const protectionVerified=Boolean(Number(stop)>0&&Number(target)>0);
+      return sendNoStore(res,{ok:true,order:{
+        orderId,clientOrderId:row.client_id,state:row.state,
+        venueStatus:String(order?.status||'UNKNOWN'),
+        productId:String(order?.product_id||''),
+        side:String(order?.side||''),
+        filledSize:String(order?.filled_size||'0'),
+        stopLoss:stop||null,takeProfit:target||null,
+        protectionVerified,createdAt:row.created_at,
+        needsReconciliation:!protectionVerified},
+        message:protectionVerified?'Coinbase order reports attached bracket; confirm actual exit states in Coinbase.':
+          'No linked bracket was verified. Check this order directly in Coinbase.'});
+    }catch(e:any){return sendNoStore(res,{ok:false,error:String(e?.message||e).slice(0,190)},503)}
+  });
+
+  app.post('/api/bots/coinbase-bracket/approve',async(req,res)=>{
+    if(!requireBotAccountOwner(req,res))return;
+    try{
+      const origin=String(req.headers.origin||'');
+      if(origin!==authOrigin(req))throw new Error('coinbase_approval_origin_invalid');
+      if(process.env.AURELIS_COINBASE_SPOT_BRACKET_EXECUTION_ENABLED!=='1'
+        ||!coinbaseAdvancedConfigured())throw new Error('coinbase_live_execution_disabled');
+      if(req.body?.approveRealTrade!==true || req.body?.acknowledgeStopLimitRisk!==true)
+        throw new Error('explicit_single_order_approval_required');
+      const token=String(req.body?.confirmationToken||'');
+      const item=coinbaseBracketPreviews.get(token);
+      if(!item||item.used||Date.now()-item.createdAt>30000)throw new Error('coinbase_preview_expired_or_used');
+      if(item.sid!==sessionId(req,res))throw new Error('coinbase_owner_session_changed');
+      // Lock before any external await. Never reuse a preview or resubmit on timeout.
+      item.used=true;
+      if(coinbaseBracketOrderInFlight)throw new Error('coinbase_order_already_in_progress');
+      const existing=coinbaseBracketDb.prepare("SELECT client_id FROM submissions WHERE state IN ('initiated','unverified','submitted') LIMIT 1").get();
+      if(existing)throw new Error('previous_coinbase_test_requires_order_reconciliation');
+      coinbaseBracketOrderInFlight=true;
+      try{
+        const product:any=await coinbaseAuthenticated('/api/v3/brokerage/products/'+item.plan.productId);
+        const ask=Number(product?.best_ask_price);
+        const checked=buildCoinbaseSpotBracket({
+          asset:item.plan.productId.split('-')[0],direction:'LONG',
+          entry:item.entry,stop:Number(item.plan.attached_order_configuration.trigger_bracket_gtc.stop_trigger_price),
+          target:Number(item.plan.attached_order_configuration.trigger_bracket_gtc.limit_price),
+          notionalUsd:10,leverage:1,
+        },product,ask);
+        if(JSON.stringify(checked)!==JSON.stringify(item.plan)
+          ||Math.abs(ask/item.ask-1)>0.005)throw new Error('coinbase_price_or_bracket_changed_repreview');
+        const clientId=crypto.randomUUID();
+        coinbaseBracketDb.prepare("INSERT INTO submissions(client_id,state,created_at) VALUES (?,'initiated',?)").run(clientId,Date.now());
+        let response:any;
+        try{
+          response=await coinbaseAuthenticated('/api/v3/brokerage/orders','POST',{
+            client_order_id:clientId,product_id:item.plan.productId,
+            side:'BUY',order_configuration:item.plan.order_configuration,
+            attached_order_configuration:item.plan.attached_order_configuration,preview_id:item.previewId,
+          });
+        }catch(error:any){
+          coinbaseBracketDb.prepare("UPDATE submissions SET state='unverified' WHERE client_id=?").run(clientId);
+          throw new Error('coinbase_submission_outcome_unknown_check_coinbase_account:'+String(error?.message||error).slice(0,90));
+        }
+        const orderId=String(response?.success_response?.order_id||'');
+        if(response?.success!==true||!orderId){
+          coinbaseBracketDb.prepare("UPDATE submissions SET state='unverified' WHERE client_id=?").run(clientId);
+          throw new Error('coinbase_order_outcome_not_confirmed_check_account');
+        }
+        coinbaseBracketDb.prepare("UPDATE submissions SET state='submitted',order_id=? WHERE client_id=?").run(orderId,clientId);
+        let protectionVerified=false;
+        try{
+          const order:any=await coinbaseAuthenticated('/api/v3/brokerage/orders/historical/'+encodeURIComponent(orderId));
+          const exits=order?.order?.attached_order_configuration?.trigger_bracket_gtc;
+          const want=item.plan.attached_order_configuration.trigger_bracket_gtc;
+          protectionVerified=Boolean(exits&&exits.limit_price===want.limit_price&&
+            exits.stop_trigger_price===want.stop_trigger_price);
+        }catch{ /* This is not proof protection is absent; request manual exchange check. */ }
+        return sendNoStore(res,{ok:true,submitted:true,orderId,venue:'Coinbase Advanced Spot',
+          protectionVerified,orderPlaced:true,notionalUsd:10,leverage:1,
+          warning:protectionVerified?'Verify the active order and exits in Coinbase Advanced Trade.':
+            'ORDER SUBMITTED, but linked exits could not be confirmed via the order readback. CHECK COINBASE IMMEDIATELY.'});
+      }finally{coinbaseBracketOrderInFlight=false}
+    }catch(e:any){return sendNoStore(res,{ok:false,error:String(e?.message||e).slice(0,190),
+      orderPlaced:'unknown'},409)}
   });
 
   app.post('/api/signal-desk/order/prepare', async (req,res)=>{
