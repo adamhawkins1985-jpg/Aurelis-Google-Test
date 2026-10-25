@@ -51,4 +51,7 @@ assert.ok(brokerServer.includes("CLOUDFLARE_ACCOUNT_ID")&&brokerServer.includes(
 assert.ok(brokerServer.includes("api.cloudflare.com/client/v4/accounts/"),'Cloudflare primary must use official API');
 assert.ok(brokerServer.indexOf("const cfAccount=")<brokerServer.indexOf("const apiKey=process.env.GEMINI_API_KEY"),'Cloudflare must be attempted before Gemini');
 assert.ok(screen.includes("answer.cloudflareStatus"),'Cloudflare diagnostic status must appear in chat');
+assert.ok(brokerServer.includes('AURELIS_AI_WORKER_URL'),'existing Cloudflare AI endpoint must be supported');
+assert.ok(brokerServer.indexOf('const existingWorkerUrl=')<brokerServer.indexOf('const cfAccount='),'existing Worker should take priority');
+assert.ok(screen.includes('answer.existingWorkerStatus'),'Worker failure reason must be shown');
 console.log('PASS: conversational broker guidance, bot disagreements, freshness, education, historical labels and focused chat.');
