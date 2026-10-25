@@ -2,9 +2,10 @@ import React,{useEffect,useState} from 'react';
 import {CheckCircle2,ShieldAlert} from 'lucide-react';
 
 interface Props {asset:string;direction:'LONG'|'SHORT';entry:number;stop:number;target:number}
-type Capability={ok:boolean;configured:boolean;enabled:boolean;reason:string;bridgeOnly:boolean;durableAuditConfigured?:boolean};
+type Capability={ok:boolean;configured:boolean;enabled:boolean;reason:string;bridgeOnly:boolean;
+  permissionsVerified?:boolean;fundedQuoteCurrency?:'USD'|'USDC'|null;USDCAmount?:string;durableAuditConfigured?:boolean};
 type Preview={ok:boolean;token:string;expiresAt:number;asset:string;side:string;
-  quoteUsd:number;notionalUsd:number;stop:string;takeProfit:string;
+  quoteUsd:number;quotePrice:number;quoteCurrency:'USD'|'USDC';quoteSize:string;stop:string;takeProfit:string;
   estimatedCommissionUsd:string;executionEnabled:boolean;warning:string};
 type Result={ok:boolean;submitted?:boolean;protectionVerified?:boolean;orderId?:string;error?:string;warning?:string};
 const price=(n:number)=>'$'+Number(n).toLocaleString('en-US',{maximumFractionDigits:10});
@@ -68,9 +69,11 @@ export const CoinbaseNativeBracketView:React.FC<Props>=({asset,direction,entry,s
   };
   const approve=async()=>{
     if(!preview||now>=preview.expiresAt||!cap?.enabled)return;
-    if(!window.confirm('REAL COINBASE SPOT BUY: Spend $10 USD on '+asset+' (1×, no short). Attach take profit at '+
-      price(Number(preview.takeProfit))+' and stop loss at '+price(Number(preview.stop))+
-      '. The stop becomes a stop-limit exit and may not fill during fast price moves. Submit this real order?'))return;
+    const quote=preview.quoteCurrency;
+    if(!window.confirm('REAL COINBASE SPOT BUY: Spend '+preview.quoteSize+' '+quote+' on '+asset+
+      ' (1× spot, under $10 equivalent). Attach take profit at '+
+      Number(preview.takeProfit)+' '+quote+' and stop loss at '+Number(preview.stop)+' '+quote+
+      '. The stop uses a stop-limit exit that may fail to fill during fast price moves. Submit this ONE real order?'))return;
     setBusy(true);setError('');setResult(null);
     try{
       const data=await send('approve',{confirmationToken:preview.token,
@@ -98,7 +101,7 @@ export const CoinbaseNativeBracketView:React.FC<Props>=({asset,direction,entry,s
       Choose a long setup, or use a separately verified trading venue.
     </p>}
     {eligible&&<div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-      {[['Buy',' $10 total'],['Leverage','1× spot'],['Take profit',price(target)],['Stop loss',price(stop)]]
+      {[['Maximum exposure','Under $10 USD'],['Leverage','1× spot'],['Take profit',price(target)],['Stop loss',price(stop)]]
         .map(([label,value])=><div key={label} className="p-2 rounded-lg bg-surface-panel border border-white/10">
           <div className="text-[10px] text-text-muted">{label}</div><strong>{value}</strong>
         </div>)}
@@ -106,6 +109,10 @@ export const CoinbaseNativeBracketView:React.FC<Props>=({asset,direction,entry,s
     {cap&&!cap.configured&&<p className="rounded-lg p-2 bg-surface-panel text-amber-400">
       Coinbase account visibility is currently via a read-only connection, not authorized order credentials.
       In-app execution cannot be enabled until Coinbase Advanced trading permissions are verified securely on the server.
+    </p>}
+    {cap?.configured&&cap.fundedQuoteCurrency&&<p className="rounded-lg p-2 bg-surface-panel text-text-secondary">
+      Exchange balance eligible: {cap.fundedQuoteCurrency}. {cap.fundedQuoteCurrency==='USDC'?'First protected order will use 9.50 USDC, below the $10 USD-equivalent limit.':'First protected order will use up to 10.00 USD.'}
+      {' '}Your wallet is connected to a trading-enabled Coinbase key, but no purchase happens until you approve an exchange preview.
     </p>}
     {cap?.configured&&!cap.enabled&&<p className="rounded-lg p-2 bg-surface-panel text-amber-400">
       {cap.reason==='durable_execution_audit_not_configured'
@@ -120,13 +127,14 @@ export const CoinbaseNativeBracketView:React.FC<Props>=({asset,direction,entry,s
       </button>}
     {preview&&<div className="rounded-xl bg-surface-panel border border-white/10 p-3 space-y-2">
       <h4 className="font-bold">Coinbase exchange preview</h4>
-      <div className="text-text-secondary">Current ask {price(preview.quoteUsd)} · estimated entry commission {price(Number(preview.estimatedCommissionUsd))}</div>
-      <div className="text-text-secondary">Target {price(Number(preview.takeProfit))} · Stop {price(Number(preview.stop))} · $10 notional</div>
+      <div className="text-text-secondary">Current ask {Number(preview.quotePrice).toLocaleString('en-US',{maximumFractionDigits:10})} {preview.quoteCurrency} · estimated entry commission {Number(preview.estimatedCommissionUsd).toLocaleString('en-US',{maximumFractionDigits:5})} {preview.quoteCurrency}</div>
+      <div className="text-text-secondary">Target {preview.takeProfit} {preview.quoteCurrency} · Stop {preview.stop} {preview.quoteCurrency}</div>
+      <strong className="text-primary-container">Buy for {preview.quoteSize} {preview.quoteCurrency} · 1× · at most $10 USD equivalent</strong>
       <p className="text-amber-400">A stop-limit order does not guarantee an exit or limit the maximum loss in a gap.</p>
       {now>=preview.expiresAt?<p role="status" className="text-amber-400">Preview expired. Get another exchange quote.</p>:
         cap?.enabled?<button type="button" disabled={busy} onClick={()=>void approve()}
           className="w-full py-3 rounded-xl bg-primary-container text-on-primary-container font-bold disabled:opacity-40">
-          Approve this REAL $10 Coinbase bracket order
+          Approve this REAL {preview.quoteSize} {preview.quoteCurrency} bracket order
         </button>:
         <p>Real order submission is locked until the exchange credentials and server protection configuration are verified.</p>}
     </div>}
@@ -146,6 +154,6 @@ export const CoinbaseNativeBracketView:React.FC<Props>=({asset,direction,entry,s
     </div>}
     {error&&<p className="rounded-lg bg-amber-500/10 p-3 text-amber-400 break-words" role="alert">{error}</p>}
     <p className="text-[10px] text-text-muted">Your existing Kraken Spot/Margin test remains $10 notional and 2× maximum with submission locked.
-      This separate Coinbase order uses $10 USD and no leverage. Neither AURELIS nor an exchange can guarantee a stop-limit fill.</p>
+      This separate Coinbase order uses the available USD or USDC and no leverage, with total USD-equivalent exposure below $10. Neither AURELIS nor an exchange can guarantee a stop-limit fill.</p>
   </section>;
 };

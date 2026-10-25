@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readOpportunity, filterAndSortOpportunities, toReviewedSetup } from '../src/services/botOpportunity';
+import { readOpportunity, filterAndSortOpportunities, toReviewedSetup, toCoinbaseReviewedSetup } from '../src/services/botOpportunity';
 
 const now = 1800000000000;
 const base = {
@@ -43,6 +43,18 @@ const long=readOpportunity({
   kraken:{leverageBuy:[1,2],leverageSell:[]},
 },now);
 assert.equal(long.localFailure,null);
+const coinbaseHandoff=toCoinbaseReviewedSetup(long,now);
+assert.equal(coinbaseHandoff.leverage,1,'Coinbase spot always remains 1x');
+assert.equal(coinbaseHandoff.qualified,false,'Kraken preflight is not Coinbase proof');
+assert.match(coinbaseHandoff.indicators,/have not been checked/);
+assert.throws(()=>toCoinbaseReviewedSetup(short,now),/only spot LONG/);
+assert.throws(()=>toCoinbaseReviewedSetup(stale,now),/only spot LONG|stale/);
+const coinbaseUnsupported=readOpportunity({...base,asset:'NEAR',direction:'LONG',entry:4.40,
+  target:4.60,invalidation:4.30,kraken:{leverageBuy:[],leverageSell:[2]}},now);
+assert.match(coinbaseUnsupported.localFailure||'',/No 1× or 2×/);
+assert.equal(toCoinbaseReviewedSetup(coinbaseUnsupported,now).leverage,1,
+  'Kraken margin restrictions must not masquerade as Coinbase spot restrictions');
+
 const rows=[short,long,stale];
 assert.deepEqual(filterAndSortOpportunities(rows,'all','score').map(x=>x.asset),['SOL','ADA'], 'same asset and direction must not repeat');
 assert.deepEqual(filterAndSortOpportunities(rows,'long','score').map(x=>x.asset),['SOL']);

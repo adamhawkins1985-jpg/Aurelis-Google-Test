@@ -9,7 +9,7 @@ import { BetScenarioCalculator } from './BetScenarioCalculator';
 import { BotQuickBetPreview } from './BotQuickBetPreview';
 import { guideForOpportunity } from '../../services/botTradeGuide';
 import {
-  dedupeOpportunities, filterAndSortOpportunities, readOpportunity, toReviewedSetup,
+  dedupeOpportunities, filterAndSortOpportunities, readOpportunity, toReviewedSetup, toCoinbaseReviewedSetup,
   type MarketOpportunity, type OpportunityFilter, type OpportunitySort,
 } from '../../services/botOpportunity';
 
@@ -589,6 +589,19 @@ export const BotAutoScanView: React.FC<Props> = ({enabled, onEnabledChange, onBe
                   </div>}
                 </div>
                 {reviewError && <p role="alert" className="text-rose-400 text-[10px]">{reviewError}</p>}
+                {selected.direction==='LONG' && <button type="button"
+                  disabled={reviewBusy||Date.now()-selected.timestampMs>=5*60_000||
+                    (Boolean(selected.localFailure)&&selected.localFailure!=='No 1× or 2× leverage reported for this direction')}
+                  onClick={()=>{
+                    try{
+                      setReviewError('');
+                      onBetReady(toCoinbaseReviewedSetup(selected));
+                    }catch(error:any){setReviewError(String(error?.message||'Coinbase review unavailable').slice(0,180))}
+                  }}
+                  className="w-full rounded-xl bg-primary-container p-3 font-bold text-on-primary-container flex items-center justify-center gap-2 disabled:opacity-40 hover:brightness-110">
+                  <ArrowRight className="h-4 w-4"/>
+                  Review {selected.asset} as a Coinbase spot buy · Exchange preview next
+                </button>}
                 <button type="button" disabled={reviewBusy || Boolean(selected.localFailure)}
                   onClick={()=>selectedStatus==='ready'?void freshCheckAndHandoff(selected):void verifySelected(selected)}
                   className="w-full rounded-xl bg-primary-container p-3 font-bold text-on-primary-container flex items-center justify-center gap-2 disabled:opacity-40 hover:brightness-110">

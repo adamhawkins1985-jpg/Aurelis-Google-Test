@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import {generateKeyPairSync} from 'node:crypto';
 import {
-  buildCoinbaseSpotBracket,ensureCoinbaseBracketPreview,signedCoinbaseJwt,coinbaseAuthenticated
+  buildCoinbaseSpotBracket,ensureCoinbaseBracketPreview,signedCoinbaseJwt,coinbaseAuthenticated,
+  coinbaseTradingCredentialsConfigured,verifiedUsdcUsdRate
 } from '../server/coinbase_spot_bracket';
 
 const product={
@@ -13,6 +14,16 @@ const product={
 const candidate={asset:'NEAR',direction:'LONG',entry:4.44,stop:4.35,target:4.55,notionalUsd:10,leverage:1};
 const plan=buildCoinbaseSpotBracket(candidate,product,4.44);
 assert.equal(plan.productId,'NEAR-USD');
+const usdcProduct={...product,product_id:'NEAR-USDC',quote_currency_id:'USDC'};
+const usdcPlan=buildCoinbaseSpotBracket({...candidate,quoteCurrency:'USDC'},usdcProduct,4.44);
+assert.equal(usdcPlan.productId,'NEAR-USDC');
+assert.equal(usdcPlan.quoteCurrency,'USDC');
+assert.equal(usdcPlan.quoteSize,'9.50');
+assert.deepEqual(usdcPlan.order_configuration,{market_market_ioc:{quote_size:'9.50'}});
+assert.equal(coinbaseTradingCredentialsConfigured({}),false,'Explicit empty credentials must not silently load VPS secrets');
+assert.throws(()=>buildCoinbaseSpotBracket({...candidate,quoteCurrency:'USDC'},product,4.44),
+  /pair_not_verified_tradeable/,'USD and USDC products cannot be mixed');
+
 assert.deepEqual(plan.order_configuration,{market_market_ioc:{quote_size:'10.00'}});
 assert.deepEqual(plan.attached_order_configuration,{
   trigger_bracket_gtc:{limit_price:'4.5500',stop_trigger_price:'4.3500'}
@@ -76,4 +87,11 @@ try {
     }
   }
 } finally {globalThis.fetch=originalFetch}
+const savedFetch=globalThis.fetch;
+try{
+  globalThis.fetch=async()=>new Response(JSON.stringify({data:{rates:{USD:'1.00'}}}),{status:200});
+  assert.equal(await verifiedUsdcUsdRate(),1);
+  globalThis.fetch=async()=>new Response(JSON.stringify({data:{rates:{USD:'1.10'}}}),{status:200});
+  await assert.rejects(verifiedUsdcUsdRate(),/usdc_usd_reference_unverified/);
+}finally{globalThis.fetch=savedFetch}
 console.log('PASS: Coinbase native bracket exact $10 spot BUY 1x, protection, invalid cases, signed preview transport.');

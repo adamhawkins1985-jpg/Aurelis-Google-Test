@@ -171,3 +171,29 @@ export function toReviewedSetup(candidate: MarketOpportunity): SetupCandidate {
     qualified: true,
   };
 }
+
+/**
+ * Coinbase is an independent SPOT-only execution venue, so missing Kraken
+ * margin leverage cannot reject a valid, fresh, directional LONG research
+ * setup. Coinbase must verify its own tradable quote and attached bracket
+ * before offering any actual order approval.
+ */
+export function toCoinbaseReviewedSetup(candidate:MarketOpportunity,now=Date.now()):SetupCandidate {
+  if(candidate.direction!=='LONG'||!/^[A-Z0-9]{2,15}$/.test(candidate.asset))
+    throw new Error('Coinbase first test supports only spot LONG signals');
+  if(![candidate.entry,candidate.stop,candidate.target].every(x=>Number.isFinite(x)&&x>0)
+    ||!(candidate.stop<candidate.entry&&candidate.entry<candidate.target))
+    throw new Error('Coinbase setup requires a valid rising-price bracket');
+  if((candidate.entry-candidate.stop)/candidate.entry>0.05)
+    throw new Error('Coinbase stop exceeds the five percent safety gate');
+  if(candidate.timestampMs>now+30_000||now-candidate.timestampMs>=5*60_000||candidate.timestampMs<=0)
+    throw new Error('Coinbase setup is stale; scan again');
+  if(candidate.localFailure&&candidate.localFailure!=='No 1× or 2× leverage reported for this direction')
+    throw new Error(candidate.localFailure);
+  const setup=toReviewedSetup({
+    ...candidate,localFailure:null,liveTestLeverage:1,leverageReported:[1],
+  });
+  return {...setup,qualified:false,leverage:1,leverageOptions:[1],
+    indicators:'Coinbase Spot USDC/USD quote and attached TP/SL have not been checked yet',
+    commentary:'Research only. Coinbase market, fees and linked exit preview must pass in Live Bet before you can approve any order.'};
+}

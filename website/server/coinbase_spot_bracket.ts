@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import fs from 'fs';
 
 export interface SpotBracketRequest {
   asset: string;
@@ -8,11 +9,14 @@ export interface SpotBracketRequest {
   target: number;
   notionalUsd: number;
   leverage: number;
+  quoteCurrency?: 'USD' | 'USDC';
 }
 export interface SpotBracketPlan {
   productId: string;
+  quoteCurrency: 'USD' | 'USDC';
+  quoteSize: string;
   side: 'BUY';
-  order_configuration: { market_market_ioc: { quote_size: '10.00' } };
+  order_configuration: { market_market_ioc: { quote_size: string } };
   attached_order_configuration: { trigger_bracket_gtc: { limit_price: string; stop_trigger_price: string } };
 }
 export type CoinbaseBracketProduct = {
@@ -46,24 +50,27 @@ export function buildCoinbaseSpotBracket(
   if (!/^[A-Z0-9]{2,15}$/.test(asset)) throw new Error('coinbase_asset_invalid');
   if (candidate.direction !== 'LONG' || candidate.leverage !== 1) throw new Error('coinbase_only_spot_long_1x_supported');
   if (candidate.notionalUsd !== 10) throw new Error('coinbase_first_test_exactly_10_usd');
+  const quoteCurrency=candidate.quoteCurrency || 'USD';
+  if (quoteCurrency!=='USD'&&quoteCurrency!=='USDC')throw new Error('coinbase_unsupported_quote_currency');
+  const quoteSize=quoteCurrency==='USDC'?'9.50':'10.00';
   const {entry,stop,target}=candidate;
   if (![entry,stop,target,nowAsk].every(legalPrice) || !(stop<nowAsk&&nowAsk<target) || !(stop<entry&&entry<target))
     throw new Error('coinbase_bracket_invalid_or_stale');
   if ((nowAsk-stop)/nowAsk>0.05) throw new Error('coinbase_max_stop_distance_5_percent');
   if (Math.abs(nowAsk/entry-1)>0.01) throw new Error('coinbase_research_price_drift_exceeds_1_percent');
-  if (product.product_id!==asset+'-USD'||String(product.product_type).toUpperCase()!=='SPOT'
-    || product.quote_currency_id!=='USD'||product.is_disabled||product.trading_disabled||
+  if (product.product_id!==asset+'-'+quoteCurrency||String(product.product_type).toUpperCase()!=='SPOT'
+    || product.quote_currency_id!==quoteCurrency||product.is_disabled||product.trading_disabled||
     product.cancel_only||product.limit_only||product.auction_mode||product.view_only)
     throw new Error('coinbase_spot_pair_not_verified_tradeable');
   if (!legalPrice(Number(product.best_ask_price)) || Math.abs(Number(product.best_ask_price)/nowAsk-1)>0.002)
     throw new Error('coinbase_executable_quote_changed');
-  if (!legalPrice(Number(product.quote_min_size)) || 10<Number(product.quote_min_size)
-    || (legalPrice(Number(product.quote_max_size))&&10>Number(product.quote_max_size)))
+  if (!legalPrice(Number(product.quote_min_size)) || Number(quoteSize)<Number(product.quote_min_size)
+    || (legalPrice(Number(product.quote_max_size))&&Number(quoteSize)>Number(product.quote_max_size)))
     throw new Error('coinbase_10_usd_product_size_not_supported');
   const increment=String(product.price_increment || '');
   return {
-    productId:asset+'-USD',side:'BUY',
-    order_configuration:{market_market_ioc:{quote_size:'10.00'}},
+    productId:asset+'-'+quoteCurrency,quoteCurrency,quoteSize,side:'BUY',
+    order_configuration:{market_market_ioc:{quote_size:quoteSize}},
     attached_order_configuration:{trigger_bracket_gtc:{
       limit_price:fixedPrice(target,increment),
       stop_trigger_price:fixedPrice(stop,increment),
@@ -87,10 +94,53 @@ export function ensureCoinbaseBracketPreview(data:any): {previewId:string;fees:s
   return {previewId,fees,quote:String(q)};
 }
 
+const LEGACY_CDP_CONFIGURATION='/opt/aurelis/arbitrage/.env';
+
+/** Read an already provisioned VPS credential in place. No key is copied to the browser or GitHub. */
+function credentialPair(env:NodeJS.ProcessEnv) {
+  const directName=String(env.COINBASE_ADVANCED_API_KEY_NAME||env.COINBASE_API_KEY_NAME||'');
+  const directKey=String(env.COINBASE_ADVANCED_PRIVATE_KEY||env.COINBASE_PRIVATE_KEY||'').replace(/\\n/g,'\n');
+  if(directName&&directKey)return {kid:directName,pem:directKey};
+  if(env!==process.env)return {kid:directName,pem:directKey};
+  try{
+    const info=fs.statSync(LEGACY_CDP_CONFIGURATION);
+    if(!info.isFile()||(info.mode&0o022)!==0) return {kid:'',pem:''};
+    const entries:Record<string,string>={};
+    for(const line of fs.readFileSync(LEGACY_CDP_CONFIGURATION,'utf8').split(/\r?\n/)){
+      const match=line.match(/^\s*(COINBASE_API_KEY|COINBASE_API_SECRET)=(.*)$/);
+      if(!match)continue;
+      let value=match[2].trim();
+      if((value.startsWith('"')&&value.endsWith('"'))||(value.startsWith("'")&&value.endsWith("'")))
+        value=value.slice(1,-1);
+      entries[match[1]]=value.replace(/\\n/g,'\n');
+    }
+    return {kid:String(entries.COINBASE_API_KEY||''),pem:String(entries.COINBASE_API_SECRET||'')};
+  }catch{return {kid:'',pem:''}}
+}
+
+export function coinbaseTradingCredentialsConfigured(env:NodeJS.ProcessEnv=process.env):boolean {
+  const {kid,pem}=credentialPair(env);
+  return Boolean(kid&&pem);
+}
+
+/** Require an exchange-derived stablecoin USD rate before authorizing a USDC-denominated order. */
+export async function verifiedUsdcUsdRate():Promise<number> {
+  const response=await fetch('https://api.coinbase.com/v2/exchange-rates?currency=USDC',{
+    headers:{Accept:'application/json'},signal:AbortSignal.timeout(8000),
+  });
+  if(!response.ok)throw new Error('coinbase_usdc_conversion_rate_unavailable');
+  const data:any=await response.json();
+  const rate=Number(data?.data?.rates?.USD);
+  if(!Number.isFinite(rate)||rate<0.95||rate>1.05)
+    throw new Error('coinbase_usdc_usd_reference_unverified');
+  // 9.50 USDC * 1.05 USD/USDC stays below the hard $10 test notional ceiling.
+  if(9.5*rate>=10)throw new Error('coinbase_usdc_notional_exceeds_first_test_cap');
+  return rate;
+}
+
 /** CoinBase CDP JWT. Only server-side env signing keys; never expose the token to browsers. */
 export function signedCoinbaseJwt(method:'GET'|'POST',path:string,env:NodeJS.ProcessEnv=process.env):string {
-  const kid=String(env.COINBASE_ADVANCED_API_KEY_NAME||env.COINBASE_API_KEY_NAME||'');
-  const pem=String(env.COINBASE_ADVANCED_PRIVATE_KEY||env.COINBASE_PRIVATE_KEY||'').replace(/\\n/g,'\n');
+  const {kid,pem}=credentialPair(env);
   if (!kid || !pem) throw new Error('coinbase_write_credentials_unavailable');
   let key:crypto.KeyObject;
   if (pem.trim().startsWith('-----BEGIN')) key=crypto.createPrivateKey(pem);

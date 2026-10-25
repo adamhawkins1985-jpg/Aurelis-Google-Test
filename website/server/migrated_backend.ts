@@ -7,7 +7,8 @@ import { getAddress, verifyMessage } from 'ethers';
 import { WalletChallengeStore } from './wallet_auth_challenges';
 import { assessKrakenProtection, assessKrakenMarginHandoff, krakenExecutablePrice } from './kraken_protection_review';
 import { auditKrakenMarginProtection, krakenLiveExecutionPermitted, KRAKEN_LINKED_OCO_LIFECYCLE_VERIFIED } from './kraken_position_protection';
-import { buildCoinbaseSpotBracket, ensureCoinbaseBracketPreview, coinbaseAuthenticated, type SpotBracketRequest } from './coinbase_spot_bracket';
+import { buildCoinbaseSpotBracket, ensureCoinbaseBracketPreview, coinbaseAuthenticated,
+  coinbaseTradingCredentialsConfigured, verifiedUsdcUsdRate, type SpotBracketRequest } from './coinbase_spot_bracket';
 
 const APP_ROOT = path.resolve(process.cwd());
 const DATA_DIR = path.join(APP_ROOT, 'data');
@@ -1255,12 +1256,33 @@ const brokerStatuses:{at:number,data:any|null}={at:0,data:null};
 type CoinbaseBracketConfirmation={sid:string;createdAt:number;used:boolean;plan:ReturnType<typeof buildCoinbaseSpotBracket>;entry:number;ask:number;previewId:string};
 const coinbaseBracketPreviews=new Map<string,CoinbaseBracketConfirmation>();
 let coinbaseBracketOrderInFlight=false;
-const COINBASE_BRACKET_AUDIT_PATH=String(process.env.AURELIS_COINBASE_BRACKET_AUDIT_DB||'').trim();
-// Live permission requires a separately configured persistent audit path.
-// An app-local path may be replaced during website releases; never use it for
-// cross-restart duplicate-order prevention once live orders are authorized.
+const COINBASE_TRUSTED_RUNTIME_DIR='/home/ubuntu/.config/aurelis';
+const COINBASE_TRUSTED_AUDIT=path.join(COINBASE_TRUSTED_RUNTIME_DIR,'coinbase-bracket-audit.sqlite3');
+const COINBASE_TRUSTED_TOGGLE=path.join(COINBASE_TRUSTED_RUNTIME_DIR,'coinbase-bracket-trading.enabled');
+function trustedCoinbaseRuntimeDir():boolean {
+  try{
+    const st=fs.statSync(COINBASE_TRUSTED_RUNTIME_DIR);
+    fs.accessSync(COINBASE_TRUSTED_RUNTIME_DIR,fs.constants.W_OK);
+    return st.isDirectory()&&typeof process.getuid==='function'&&st.uid===process.getuid()&&(st.mode&0o022)===0;
+  }catch{return false}
+}
+// Reuse the existing ubuntu-owned private config, independent of website release
+// symlinks and worker restarts. Never silently use release-local audit for trades.
+const requestedCoinbaseAudit=String(process.env.AURELIS_COINBASE_BRACKET_AUDIT_DB||'').trim();
+const COINBASE_BRACKET_AUDIT_PATH=requestedCoinbaseAudit||
+  (trustedCoinbaseRuntimeDir()?COINBASE_TRUSTED_AUDIT:'');
 const coinbaseBracketAuditDurable=path.isAbsolute(COINBASE_BRACKET_AUDIT_PATH)&&
-  !path.resolve(COINBASE_BRACKET_AUDIT_PATH).startsWith(path.resolve(APP_ROOT)+path.sep);
+  (path.resolve(COINBASE_BRACKET_AUDIT_PATH)===COINBASE_TRUSTED_AUDIT&&trustedCoinbaseRuntimeDir() ||
+  !path.resolve(COINBASE_BRACKET_AUDIT_PATH).startsWith(path.resolve(APP_ROOT)+path.sep));
+function coinbaseBracketExecutionConfigured():boolean {
+  if(!coinbaseBracketAuditDurable)return false;
+  if(process.env.AURELIS_COINBASE_SPOT_BRACKET_EXECUTION_ENABLED==='1')return true;
+  try{
+    const st=fs.statSync(COINBASE_TRUSTED_TOGGLE);
+    if(!st.isFile()||typeof process.getuid!=='function'||st.uid!==process.getuid()||(st.mode&0o022)!==0)return false;
+    return fs.readFileSync(COINBASE_TRUSTED_TOGGLE,'utf8').trim()==='1';
+  }catch{return false}
+}
 const coinbaseBracketDb=new Database(coinbaseBracketAuditDurable?COINBASE_BRACKET_AUDIT_PATH:
   path.join(DATA_DIR,'coinbase-bracket-audit.sqlite3'));
 coinbaseBracketDb.pragma('journal_mode = WAL');
@@ -2260,32 +2282,83 @@ function registerMarketAndBotRoutes(app:Express) {
   // Separate native Coinbase Advanced Trade bracket route. Only spot BUY, 1×,
   // $10 notional, and both exchange-native TP/SL. Never convert a short signal.
   // Read-only bridges do not grant order permissions.
-  app.get('/api/bots/coinbase-bracket/capability',(req,res)=>{
+  async function assertCoinbaseSafeKey():Promise<void> {
+    const p:any=await coinbaseAuthenticated('/api/v3/brokerage/key_permissions');
+    if(p?.can_view!==true||p?.can_trade!==true||p?.can_transfer!==false)
+      throw new Error('coinbase_key_requires_view_trade_without_transfer');
+  }
+  async function coinbaseAvailableQuote():Promise<{USD:number;USDC:number}> {
+    const response:any=await coinbaseAuthenticated('/api/v3/brokerage/accounts');
+    if(response?.has_next===true||!Array.isArray(response?.accounts))
+      throw new Error('coinbase_account_balance_coverage_unverified');
+    const balances={USD:0,USDC:0};
+    for(const row of response.accounts){
+      const currency=String(row?.currency||'').toUpperCase();
+      if(currency!=='USD'&&currency!=='USDC')continue;
+      const available=Number(row?.available_balance?.value);
+      if(!Number.isFinite(available)||available<0)
+        throw new Error('coinbase_account_balance_unverified');
+      balances[currency]+=available;
+    }
+    return balances;
+  }
+  function chooseCoinbaseQuote(balances:{USD:number;USDC:number},preferred?:string):'USD'|'USDC' {
+    if(preferred==='USD'){
+      if(balances.USD<10.50)throw new Error('coinbase_usd_balance_insufficient_for_test_and_fees');
+      return 'USD';
+    }
+    if(preferred==='USDC'){
+      if(balances.USDC<10)throw new Error('coinbase_usdc_balance_insufficient_for_test_and_fees');
+      return 'USDC';
+    }
+    if(balances.USD>=10.50)return 'USD';
+    if(balances.USDC>=10)return 'USDC';
+    throw new Error('coinbase_no_eligible_funded_spot_quote_currency');
+  }
+
+  app.get('/api/bots/coinbase-bracket/capability',async(req,res)=>{
     if(!requireBotAccountOwner(req,res))return;
-    const configured=coinbaseAdvancedConfigured();
-    const enabled=configured&&coinbaseBracketAuditDurable&&
-      process.env.AURELIS_COINBASE_SPOT_BRACKET_EXECUTION_ENABLED==='1';
+    const configured=coinbaseTradingCredentialsConfigured();
+    let fundedCurrency:'USD'|'USDC'|null=null;
+    let permissionsVerified=false;
+    let blocker='';
+    if(configured){
+      try{
+        await assertCoinbaseSafeKey();
+        permissionsVerified=true;
+        const balances=await coinbaseAvailableQuote();
+        fundedCurrency=chooseCoinbaseQuote(balances);
+        if(fundedCurrency==='USDC')await verifiedUsdcUsdRate();
+      }catch(e:any){blocker=String(e?.message||'coinbase_readiness_unavailable').slice(0,95)}
+    }
+    const enabled=configured&&permissionsVerified&&Boolean(fundedCurrency)&&
+      coinbaseBracketAuditDurable&&coinbaseBracketExecutionConfigured();
     return sendNoStore(res,{ok:true,venue:'Coinbase Advanced Spot',configured,enabled,
       requiresExchangePreview:true,manualApprovalRequired:true,
       maxNotionalUsd:10,leverage:1,shortsAllowed:false,
       bridgeOnly:!configured,durableAuditConfigured:coinbaseBracketAuditDurable,
+      permissionsVerified,fundedQuoteCurrency:fundedCurrency,USDCAmount:'9.50',
       reason:!configured?'coinbase_trade_credentials_not_configured':
-        !coinbaseBracketAuditDurable?'durable_execution_audit_not_configured':
-        enabled?'account_preview_required':'coinbase_live_bracket_execution_not_enabled'});
+        blocker||(!coinbaseBracketAuditDurable?'durable_execution_audit_not_configured':
+        enabled?'account_preview_required':'coinbase_live_bracket_execution_not_enabled')});
   });
 
   app.post('/api/bots/coinbase-bracket/preview',async(req,res)=>{
     if(!requireBotAccountOwner(req,res))return;
     try{
-      if(!coinbaseAdvancedConfigured())throw new Error('coinbase_trade_credentials_not_configured');
+      if(!coinbaseTradingCredentialsConfigured())throw new Error('coinbase_trade_credentials_not_configured');
+      await assertCoinbaseSafeKey();
       const payload=req.body as SpotBracketRequest;
       const asset=String(payload?.asset||'').trim().toUpperCase();
       if(!/^[A-Z0-9]{2,15}$/.test(asset))throw new Error('invalid_asset');
       if(payload?.direction!=='LONG'||Number(payload.leverage)!==1||Number(payload.notionalUsd)!==10)
         throw new Error('coinbase_only_10_usd_spot_long_1x');
-      const product:any=await coinbaseAuthenticated('/api/v3/brokerage/products/'+asset+'-USD');
+      const balances=await coinbaseAvailableQuote();
+      const quoteCurrency=chooseCoinbaseQuote(balances,payload?.quoteCurrency);
+      if(quoteCurrency==='USDC')await verifiedUsdcUsdRate();
+      const product:any=await coinbaseAuthenticated('/api/v3/brokerage/products/'+asset+'-'+quoteCurrency);
       const ask=Number(product?.best_ask_price);
-      const plan=buildCoinbaseSpotBracket({...payload,asset,leverage:1,notionalUsd:10},product,ask);
+      const plan=buildCoinbaseSpotBracket({...payload,asset,leverage:1,notionalUsd:10,quoteCurrency},product,ask);
       const orderArgs={product_id:plan.productId,side:plan.side,
         order_configuration:plan.order_configuration,
         attached_order_configuration:plan.attached_order_configuration};
@@ -2297,11 +2370,12 @@ function registerMarketAndBotRoutes(app:Express) {
         plan,entry:Number(payload.entry),ask,previewId:valid.previewId});
       for(const [t,item] of coinbaseBracketPreviews)if(item.used||Date.now()-item.createdAt>45000)coinbaseBracketPreviews.delete(t);
       return sendNoStore(res,{ok:true,venue:'Coinbase Advanced Spot',orderPlaced:false,
-        quoteUsd:ask,notionalUsd:10,leverage:1,asset,side:'BUY',
+        quoteUsd:ask,quotePrice:ask,quoteCurrency:plan.quoteCurrency,quoteSize:plan.quoteSize,
+        maxNotionalUsd:10,leverage:1,asset,side:'BUY',
         stop:plan.attached_order_configuration.trigger_bracket_gtc.stop_trigger_price,
         takeProfit:plan.attached_order_configuration.trigger_bracket_gtc.limit_price,
         estimatedCommissionUsd:valid.fees,token,expiresAt:Date.now()+30000,
-        executionEnabled:coinbaseBracketAuditDurable&&process.env.AURELIS_COINBASE_SPOT_BRACKET_EXECUTION_ENABLED==='1',
+        executionEnabled:coinbaseBracketAuditDurable&&coinbaseBracketExecutionConfigured(),
         warning:'Native attached TP/SL was previewed by Coinbase. Stop-limit exits can fail to fill in fast markets.'});
     }catch(e:any){return sendNoStore(res,{ok:false,orderPlaced:false,error:String(e?.message||e).slice(0,190)},409)}
   });
@@ -2312,7 +2386,7 @@ function registerMarketAndBotRoutes(app:Express) {
     try{
       const row=coinbaseBracketDb.prepare('SELECT client_id,state,order_id,created_at FROM submissions ORDER BY created_at DESC LIMIT 1').get() as any;
       if(!row)return sendNoStore(res,{ok:true,order:null,message:'No native Coinbase bracket has been submitted from AURELIS.'});
-      if(!coinbaseAdvancedConfigured())throw new Error('coinbase_trade_credentials_not_configured');
+      if(!coinbaseTradingCredentialsConfigured())throw new Error('coinbase_trade_credentials_not_configured');
       const orderId=String(row.order_id||'');
       if(!/^[a-zA-Z0-9-]{10,120}$/.test(orderId))
         return sendNoStore(res,{ok:true,order:{state:row.state,createdAt:row.created_at,
@@ -2343,8 +2417,7 @@ function registerMarketAndBotRoutes(app:Express) {
     try{
       const origin=String(req.headers.origin||'');
       if(origin!==authOrigin(req))throw new Error('coinbase_approval_origin_invalid');
-      if(process.env.AURELIS_COINBASE_SPOT_BRACKET_EXECUTION_ENABLED!=='1'
-        ||!coinbaseAdvancedConfigured()||!coinbaseBracketAuditDurable)
+      if(!coinbaseBracketExecutionConfigured()||!coinbaseTradingCredentialsConfigured()||!coinbaseBracketAuditDurable)
         throw new Error('coinbase_live_execution_disabled_or_audit_not_durable');
       if(req.body?.approveRealTrade!==true || req.body?.acknowledgeStopLimitRisk!==true)
         throw new Error('explicit_single_order_approval_required');
@@ -2359,13 +2432,17 @@ function registerMarketAndBotRoutes(app:Express) {
       if(existing)throw new Error('previous_coinbase_test_requires_order_reconciliation');
       coinbaseBracketOrderInFlight=true;
       try{
+        await assertCoinbaseSafeKey();
+        const balances=await coinbaseAvailableQuote();
+        chooseCoinbaseQuote(balances,item.plan.quoteCurrency);
+        if(item.plan.quoteCurrency==='USDC')await verifiedUsdcUsdRate();
         const product:any=await coinbaseAuthenticated('/api/v3/brokerage/products/'+item.plan.productId);
         const ask=Number(product?.best_ask_price);
         const checked=buildCoinbaseSpotBracket({
           asset:item.plan.productId.split('-')[0],direction:'LONG',
           entry:item.entry,stop:Number(item.plan.attached_order_configuration.trigger_bracket_gtc.stop_trigger_price),
           target:Number(item.plan.attached_order_configuration.trigger_bracket_gtc.limit_price),
-          notionalUsd:10,leverage:1,
+          notionalUsd:10,leverage:1,quoteCurrency:item.plan.quoteCurrency,
         },product,ask);
         if(JSON.stringify(checked)!==JSON.stringify(item.plan)
           ||Math.abs(ask/item.ask-1)>0.005)throw new Error('coinbase_price_or_bracket_changed_repreview');
@@ -2397,7 +2474,8 @@ function registerMarketAndBotRoutes(app:Express) {
             exits.stop_trigger_price===want.stop_trigger_price);
         }catch{ /* This is not proof protection is absent; request manual exchange check. */ }
         return sendNoStore(res,{ok:true,submitted:true,orderId,venue:'Coinbase Advanced Spot',
-          protectionVerified,orderPlaced:true,notionalUsd:10,leverage:1,
+          protectionVerified,orderPlaced:true,quoteCurrency:item.plan.quoteCurrency,
+          quoteSize:item.plan.quoteSize,maxNotionalUsd:10,leverage:1,
           warning:protectionVerified?'Verify the active order and exits in Coinbase Advanced Trade.':
             'ORDER SUBMITTED, but linked exits could not be confirmed via the order readback. CHECK COINBASE IMMEDIATELY.'});
       }finally{coinbaseBracketOrderInFlight=false}
