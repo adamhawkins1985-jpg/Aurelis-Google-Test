@@ -1,0 +1,60 @@
+name: Recover AURELIS Web Service
+on:
+  push:
+    paths:
+      - '.github/workflows/recover-aurelis-web.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: aurelis-web-recovery
+  cancel-in-progress: false
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 8
+    steps:
+      - name: Safely start existing AURELIS web service
+        env:
+          HOST: ${{ secrets.AURELIS_DEPLOY_HOST }}
+          USER: ${{ secrets.AURELIS_DEPLOY_USER }}
+          KEY: ${{ secrets.AURELIS_DEPLOY_KEY }}
+          HOST_KEY: ${{ secrets.AURELIS_DEPLOY_HOST_KEY }}
+        run: |
+          set -euo pipefail
+          for var in HOST USER KEY HOST_KEY; do
+            test -n "${!var}" || { echo "::error::Missing deploy credential $var"; exit 1; }
+          done
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$HOST_KEY" > ~/.ssh/known_hosts
+          printf '%s\n' "$KEY" > ~/.ssh/aurelis_deploy
+          chmod 600 ~/.ssh/known_hosts ~/.ssh/aurelis_deploy
+          ssh -i ~/.ssh/aurelis_deploy -o StrictHostKeyChecking=yes -o BatchMode=yes "$USER@$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          unit=aurelis-web.service
+          expected=/home/ubuntu/aurelis-vnext
+          test -s "$expected/server.js" || { echo "Backend script absent; no restart"; exit 1; }
+          test "$(systemctl show "$unit" -p LoadState --value)" = loaded || { echo "Web service is not installed"; exit 1; }
+          workdir="$(systemctl show "$unit" -p WorkingDirectory --value)"
+          test "$workdir" = "$expected" || { echo "Unexpected WorkingDirectory: $workdir; no restart"; exit 1; }
+          if systemctl is-active --quiet "$unit"; then
+            echo "Web service already active; no restart"
+          else
+            echo "Starting inactive, validated web service"
+            sudo -n systemctl start "$unit"
+          fi
+          systemctl is-active --quiet "$unit" || { echo "Web service did not become active"; exit 1; }
+          ok=0
+          for i in 1 2 3 4 5; do
+            if curl -fsS --max-time 3 http://127.0.0.1:3000/api/health >/dev/null; then ok=1; break; fi
+            sleep 2
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "Service active but expected health endpoint unavailable"
+            systemctl show "$unit" -p ActiveState -p SubState -p Result -p ExecMainStatus --no-pager
+            exit 1
+          fi
+          echo "AURELIS web backend started and local health passed"
+          REMOTE
