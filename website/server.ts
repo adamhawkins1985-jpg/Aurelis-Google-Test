@@ -1007,13 +1007,10 @@ app.get('/api/signal-desk/deep/:asset', async (req, res) => {
 });
 
 let krakenBalanceNonce=0n;
-app.get('/api/kraken/balances', async (req, res) => {
+// Read-only Kraken Spot balances via existing server credentials. The original
+// wallet route retains its separate owner-wallet authorization.
+async function krakenSpotBalancesRead(res: express.Response) {
   res.setHeader('Cache-Control', 'no-store');
-  const owner = String(process.env.AURELIS_BOTS_OWNER_WALLET_ADDRESS || '').trim().toLowerCase();
-  const address = getVerifiedWalletAddress(req, res);
-  if (!owner || !address || address.toLowerCase() !== owner) {
-    return res.status(403).json({ok:false,error:'bot_account_owner_not_authorized'});
-  }
   const key = process.env.KRAKEN_SPOT_API_KEY || process.env.KRAKEN_API_KEY || '';
   const secret = process.env.KRAKEN_SPOT_API_SECRET || process.env.KRAKEN_API_SECRET || '';
   if (!key || !secret) return res.status(409).json({ ok: false, error: 'kraken_not_configured' });
@@ -1059,6 +1056,27 @@ app.get('/api/kraken/balances', async (req, res) => {
   } catch (error: any) {
     return res.status(502).json({ ok: false, error: 'kraken_balance_unavailable', detail: error?.message || String(error) });
   }
+}
+
+app.get('/api/kraken/balances', async (req, res) => {
+  const owner = String(process.env.AURELIS_BOTS_OWNER_WALLET_ADDRESS || '').trim().toLowerCase();
+  const address = getVerifiedWalletAddress(req, res);
+  if (!owner || !address || address.toLowerCase() !== owner) {
+    return res.status(403).json({ok:false,error:'bot_account_owner_not_authorized'});
+  }
+  return krakenSpotBalancesRead(res);
+});
+
+// Dedicated server-to-server terminal endpoint. Fail closed if the shared
+// origin token is not configured on the VPS. Never accept browser credentials.
+app.get('/api/terminal/kraken/spot-balances', async (req, res) => {
+  const token=String(process.env.AURELIS_TERMINAL_ORIGIN_TOKEN || '');
+  const presented=String(req.headers.authorization || '').startsWith('Bearer ') ? String(req.headers.authorization).slice(7) : '';
+  const a=Buffer.from(token), b=Buffer.from(presented);
+  if (!token || !presented || a.length!==b.length || !crypto.timingSafeEqual(a,b)) {
+    return res.status(401).json({ok:false,error:'unauthorized'});
+  }
+  return krakenSpotBalancesRead(res);
 });
 
 app.get('/api/kraken/margin-info/:asset', async (req, res) => {
