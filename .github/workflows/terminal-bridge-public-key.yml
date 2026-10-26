@@ -1,0 +1,37 @@
+name: Prepare Terminal Bridge Public Key
+on:
+  push:
+    paths:
+      - '.github/workflows/terminal-bridge-public-key.yml'
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Create VPS public encryption key
+        env:
+          HOST: ${{ secrets.AURELIS_DEPLOY_HOST }}
+          USER: ${{ secrets.AURELIS_DEPLOY_USER }}
+          KEY: ${{ secrets.AURELIS_DEPLOY_KEY }}
+          HOST_KEY: ${{ secrets.AURELIS_DEPLOY_HOST_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$HOST_KEY" > ~/.ssh/known_hosts
+          printf '%s\n' "$KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/*
+          ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes -o BatchMode=yes "$USER@$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          umask 077
+          dir=/home/ubuntu/.local/share/aurelis
+          mkdir -p "$dir"
+          if ! test -f "$dir/terminal-bridge-private.pem"; then
+            openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$dir/terminal-bridge-private.pem" 2>/dev/null
+          fi
+          openssl pkey -in "$dir/terminal-bridge-private.pem" -pubout -out "$dir/terminal-bridge-public.pem"
+          echo "=== TERMINAL BRIDGE PUBLIC KEY START ==="
+          cat "$dir/terminal-bridge-public.pem"
+          echo "=== TERMINAL BRIDGE PUBLIC KEY END ==="
+          REMOTE
