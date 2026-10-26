@@ -38,6 +38,13 @@ jobs:
             code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:$port/api/health" || true)
             echo "$port: HTTP $code"
           done
+          echo "=== Node backend service inventory ==="
+          for unit in aurelis-vnext.service aurelis-website.service aurelis-web.service; do
+            echo "UNIT: $unit"
+            systemctl show "$unit" -p LoadState -p ActiveState -p WorkingDirectory -p ExecStart --no-pager 2>/dev/null | sed -E 's/(token|secret|key)=[^ ;]+/\\1=[REDACTED]/Ig' || true
+          done
+          echo "=== backend directory files ==="
+          find /home/ubuntu/aurelis-vnext -maxdepth 1 -type f -printf '%f\n' | grep -E '^(server|package|\.env)' | sed '/env/d' | head -12
           echo "=== aurelis-web service metadata ==="
           systemctl show aurelis-web.service -p LoadState -p ActiveState -p SubState -p Result -p ExecMainStatus -p WorkingDirectory -p FragmentPath --no-pager || true
           echo "=== recent service log metadata (redacted) ==="
