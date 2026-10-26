@@ -34,31 +34,3 @@ jobs:
           result=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $CF_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/workers/scripts/aurelis-terminal/settings")
           test "$result" = 200 || { echo "::error::Cloudflare Worker access unavailable (HTTP $result). No changes performed."; exit 1; }
           echo "Cloudflare authentication verified; no account credentials exposed."
-      - name: Generate and provision matching private token
-        env:
-          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          HOST: ${{ secrets.AURELIS_DEPLOY_HOST }}
-          USER: ${{ secrets.AURELIS_DEPLOY_USER }}
-          KEY: ${{ secrets.AURELIS_DEPLOY_KEY }}
-          HOST_KEY: ${{ secrets.AURELIS_DEPLOY_HOST_KEY }}
-        run: |
-          set -euo pipefail
-          umask 077
-          mkdir -p ~/.ssh
-          printf '%s\n' "$HOST_KEY" > ~/.ssh/known_hosts
-          printf '%s\n' "$KEY" > ~/.ssh/aurelis_deploy
-          chmod 600 ~/.ssh/known_hosts ~/.ssh/aurelis_deploy
-          secret="$(openssl rand -hex 32)"
-          echo "::add-mask::$secret"
-          # Ensure VPS runtime environment file is present before changing Cloudflare.
-          ssh -i ~/.ssh/aurelis_deploy -o BatchMode=yes -o StrictHostKeyChecking=yes "$USER@$HOST" 'test -f /home/ubuntu/aurelis-vnext/.env.runtime-secrets && test -s /home/ubuntu/aurelis-vnext/server.js'
-          payload=$(node -e 'console.log(JSON.stringify({name:"AURELIS_TERMINAL_ORIGIN_TOKEN",text:process.env.SHARED,value:""}))' SHARED="$secret")
-          # Cloudflare script-secret endpoint accepts name and text.
-          payload=$(SHARED="$secret" node -e 'console.log(JSON.stringify({name:"AURELIS_TERMINAL_ORIGIN_TOKEN",text:process.env.SHARED,type:"secret_text"}))')
-          status=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT -H "Authorization: Bearer $CF_TOKEN" -H 'Content-Type: application/json' --data "$payload" "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/workers/scripts/aurelis-terminal/secrets")
-          test "$status" = 200 || { echo "::error::Cloudflare secret provisioning failed (HTTP $status). VPS unchanged."; exit 1; }
-          # Token is passed via SSH stdin, not command-line arguments or log output.
-          printf '%s' "$secret" | ssh -i ~/.ssh/aurelis_deploy -o BatchMode=yes -o StrictHostKeyChecking=yes "$USER@$HOST" 'bash -se' <<'REMOTE'
-          REMOTE
-          echo "Cloudflare secret created. VPS installation requires a separate safely streamed action."
