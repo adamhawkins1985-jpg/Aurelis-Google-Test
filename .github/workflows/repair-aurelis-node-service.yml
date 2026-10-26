@@ -1,0 +1,87 @@
+name: Repair AURELIS Node Backend Service
+on:
+  push:
+    paths:
+      - '.github/workflows/repair-aurelis-node-service.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: aurelis-node-service-repair
+  cancel-in-progress: false
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 9
+    steps:
+      - name: Register isolated Node backend service and health check
+        env:
+          HOST: ${{ secrets.AURELIS_DEPLOY_HOST }}
+          USER: ${{ secrets.AURELIS_DEPLOY_USER }}
+          KEY: ${{ secrets.AURELIS_DEPLOY_KEY }}
+          HOST_KEY: ${{ secrets.AURELIS_DEPLOY_HOST_KEY }}
+        run: |
+          set -euo pipefail
+          for v in HOST USER KEY HOST_KEY; do test -n "${!v}" || exit 1; done
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$HOST_KEY" > ~/.ssh/known_hosts
+          printf '%s\n' "$KEY" > ~/.ssh/aurelis_deploy
+          chmod 600 ~/.ssh/known_hosts ~/.ssh/aurelis_deploy
+          ssh -i ~/.ssh/aurelis_deploy -o StrictHostKeyChecking=yes -o BatchMode=yes "$USER@$HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          dir=/home/ubuntu/aurelis-vnext
+          unit=aurelis-vnext.service
+          test -s "$dir/server.js"
+          test -f "$dir/package.json"
+          nodebin="$(command -v node)"
+          test -x "$nodebin"
+          test "$(systemctl show "$unit" -p LoadState --value)" = not-found || { echo "Existing unit found; refusing to overwrite"; exit 1; }
+          if curl -fsS --max-time 2 http://127.0.0.1:3000/api/health >/dev/null 2>&1; then
+            echo "Port 3000 already serves an app; refusing duplicate startup"; exit 1
+          fi
+          if ss -ltn '( sport = :3000 )' | grep -q ':3000'; then
+            echo "Port 3000 occupied; refusing duplicate startup"; exit 1
+          fi
+          tmp=$(mktemp)
+          cat > "$tmp" <<UNIT
+          [Unit]
+          Description=AURELIS vNext Node backend
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=ubuntu
+          Group=ubuntu
+          WorkingDirectory=$dir
+          ExecStart=$nodebin $dir/server.js
+          Environment=NODE_ENV=production
+          Environment=PORT=3000
+          Environment=HOST=127.0.0.1
+          Restart=on-failure
+          RestartSec=4
+          NoNewPrivileges=true
+
+          [Install]
+          WantedBy=multi-user.target
+          UNIT
+          sudo -n install -m 0644 "$tmp" /etc/systemd/system/"$unit"
+          rm "$tmp"
+          sudo -n systemctl daemon-reload
+          sudo -n systemctl start "$unit"
+          ok=0
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS --max-time 3 http://127.0.0.1:3000/api/health >/dev/null; then ok=1; break; fi
+            sleep 2
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "Health check failed; stopping service and removing only newly created unit"
+            sudo -n systemctl stop "$unit" || true
+            sudo -n rm -f /etc/systemd/system/"$unit"
+            sudo -n systemctl daemon-reload
+            exit 1
+          fi
+          sudo -n systemctl enable "$unit"
+          echo "AURELIS Node backend service installed and healthy"
+          REMOTE
