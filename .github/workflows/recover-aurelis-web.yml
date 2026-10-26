@@ -34,8 +34,8 @@ jobs:
           ssh -i ~/.ssh/aurelis_deploy -o StrictHostKeyChecking=yes -o BatchMode=yes "$USER@$HOST" 'bash -se' <<'REMOTE'
           set -euo pipefail
           unit=aurelis-web.service
-          expected=/home/ubuntu/aurelis-vnext
-          test -s "$expected/server.js" || { echo "Backend script absent; no restart"; exit 1; }
+          expected=/home/ubuntu/aurelis-web-app
+          test -s "$expected/server.js" || { echo "Web app startup script missing; no restart"; ls -1 "$expected" | grep -E "^(server|package|dist)" || true; exit 1; }
           test "$(systemctl show "$unit" -p LoadState --value)" = loaded || { echo "Web service is not installed"; exit 1; }
           workdir="$(systemctl show "$unit" -p WorkingDirectory --value)"
           test "$workdir" = "$expected" || { echo "Unexpected WorkingDirectory: $workdir; no restart"; exit 1; }
