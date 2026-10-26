@@ -1,5 +1,8 @@
 name: AURELIS VPS Service Diagnostics
 on:
+  push:
+    paths:
+      - '.github/workflows/vps-service-diagnostics.yml'
   workflow_dispatch:
 permissions:
   contents: read
