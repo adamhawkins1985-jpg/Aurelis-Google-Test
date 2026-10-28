@@ -1,0 +1,22 @@
+name: AURELIS production release policy checks
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/deploy-website-vps.yml'
+      - '.github/workflows/deploy-market-broker-backend.yml'
+      - '.github/workflows/release-policy-ci.yml'
+      - '.github/scripts/check_release_policy.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify production release workflows remain guarded
+        run: python3 .github/scripts/check_release_policy.py

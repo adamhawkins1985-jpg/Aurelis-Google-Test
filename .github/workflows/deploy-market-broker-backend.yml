@@ -1,11 +1,8 @@
 name: Deploy AURELIS Market Broker backend
 
+# Deliberately manual only. Backend code handles exchange integrations;
+# an unrelated Codex or feature-branch push must never restart production.
 on:
-  push:
-    paths:
-      - 'website/server/**'
-      - 'website/server.ts'
-      - '.github/workflows/deploy-market-broker-backend.yml'
   workflow_dispatch:
 
 permissions:
@@ -17,6 +14,8 @@ concurrency:
 
 jobs:
   deploy:
+    # A manual dispatch against a feature branch must not deploy it.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 20

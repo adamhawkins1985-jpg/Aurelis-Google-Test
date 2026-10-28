@@ -12,6 +12,8 @@ concurrency:
 
 jobs:
   deploy:
+    # Only an explicitly dispatched main-branch release is eligible.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 20
@@ -36,7 +38,28 @@ jobs:
         working-directory: website
         run: |
           npm ci --legacy-peer-deps
+          # The old experimental LlamaSwap/Uniswap/SwapsPro tests target
+          # modules removed from the currently deployed website.
+          # Validate the CURRENT app and manual-execution safety controls.
+          node scripts/test_kraken_manual_cap.mjs
+          node scripts/test_bot_auth_flow.mjs
+          npx tsx scripts/test_wallet_auth_challenges.ts
+          npx tsx scripts/test_kraken_block_guide.ts
+          npx tsx scripts/test_kraken_pro_handoff.ts
+          npx tsx scripts/test_coinbase_spot_bracket.ts
+          npx tsx scripts/test_kraken_protection_review.ts
+          npx tsx scripts/test_kraken_position_protection.ts
+          npx tsx scripts/test_hunter_margin_handoff.ts
+          node scripts/test_hunter_asset_selection.mjs
+          node scripts/test_quick_bot_flow.mjs
+          npx tsx scripts/test_bot_opportunity.ts
+          npx tsx scripts/test_bot_trade_guide.ts
+          npx tsx scripts/test_market_broker_evidence.ts
+          npx tsx scripts/test_market_broker_analogs.ts
+          npx tsx scripts/test_market_broker_research_leverage.ts
+          npx tsx scripts/test_market_broker_evidence_ui.ts
           npx tsx scripts/test_market_broker_coach.ts
+          npx tsc --noEmit -p tsconfig.app-ci.json
           npm run build
       - name: Prepare pinned SSH host identity
         env:
@@ -61,12 +84,22 @@ jobs:
           HOST: ${{ secrets.AURELIS_DEPLOY_HOST }}
           USER: ${{ secrets.AURELIS_DEPLOY_USER }}
         run: |
-          ssh -i ~/.ssh/aurelis_deploy -o StrictHostKeyChecking=yes -o BatchMode=yes "$USER@$HOST" 'bash -se' <<'REMOTE'
+          ssh -i ~/.ssh/aurelis_deploy -o StrictHostKeyChecking=yes -o BatchMode=yes "$USER@$HOST" 'bash -se --' "$GITHUB_RUN_ID" <<'REMOTE'
           set -euo pipefail
           cd /home/ubuntu/aurelis-vnext
           test -f .website-staging/index.html
           test -f dist/index.html
-          if [ -e .website-rollback ]; then echo 'Previous rollback pending; aborting'; exit 1; fi
+          # Never destroy the previous backup. Archive it under a unique run ID,
+          # retaining recovery options while allowing subsequent approved releases.
+          release_run_id="$1"
+          case "$release_run_id" in *[!0-9]*|'') echo 'Invalid run ID'; exit 1;; esac
+          if [ -e .website-rollback ]; then
+            test -f .website-rollback/index.html || { echo 'Invalid previous rollback'; exit 1; }
+            mkdir -p .website-release-history
+            archive=".website-release-history/rollback-before-$release_run_id"
+            test ! -e "$archive" || { echo 'Archive already exists'; exit 1; }
+            mv .website-rollback "$archive"
+          fi
           mv dist .website-rollback
           if mv .website-staging dist; then
             echo 'New website activated; previous build retained in .website-rollback'
