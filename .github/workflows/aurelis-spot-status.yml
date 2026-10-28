@@ -54,7 +54,7 @@ jobs:
           gross_win=sum(float(r['close_profit_abs'] or 0) for r in wins)
           gross_loss=sum(float(r['close_profit_abs'] or 0) for r in losses)
           recent=[{'pair':r['pair'],'net':round(float(r['close_profit_abs'] or 0),2)} for r in closed[:8]]
-          status={'asOf':datetime.datetime.now(datetime.timezone.utc).isoformat(),'mode':'paper','bot':'Aggressive Spot','positions':positions,'closedTrades':len(closed),'profitBasis':'Recorded closed-trade P&L (verify fee inclusion against exchange and Freqtrade records)','closedNetProfit':round(profit,2),'wins':len(wins),'losses':len(losses),'winRate':round(len(wins)/len(closed)*100,1) if closed else None,'grossWin':round(gross_win,2),'grossLoss':round(gross_loss,2),'recentTrades':recent,'liveTradingEnabled':False,'entryTimeoutMinutes':(cfg.get('unfilledtimeout') or {}).get('entry')}
+          status={'asOf':datetime.datetime.now(datetime.timezone.utc).isoformat(),'mode':'paper','bot':'Aggressive Spot','positions':positions,'closedTrades':len(closed),'profitBasis':'Recorded closed-trade P&L (verify fee inclusion against exchange and Freqtrade records)','closedNetProfit':round(profit,2),'wins':len(wins),'losses':len(losses),'winRate':round(len(wins)/len(closed)*100,1) if closed else None,'grossWin':round(gross_win,2),'grossLoss':round(gross_loss,2),'recentTrades':recent,'liveTradingEnabled':False,'paperEntriesPaused':cfg.get('max_open_trades')==0,'entryTimeoutMinutes':(cfg.get('unfilledtimeout') or {}).get('entry')}
           target='/home/ubuntu/aurelis-ai-research/ai-research/spot-status.json'
           os.makedirs(os.path.dirname(target),exist_ok=True)
           tmp=target+'.tmp'
