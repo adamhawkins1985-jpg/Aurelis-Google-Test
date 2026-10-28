@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Bot, ChevronRight, ExternalLink, RefreshCw, Send, ShieldAlert } from 'lucide-react';
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Activity, Bot, ChevronRight, ExternalLink, HelpCircle, RefreshCw, Send, ShieldAlert } from 'lucide-react';
 import { KrakenLiveChart } from './KrakenLiveChart';
 import { makeBrokerCoach } from '../services/brokerCoach';
 import { calculatePerpsResearch, MAX_RESEARCH_LEVERAGE, REAL_KRAKEN_TEST_LEVERAGE_CAP, REAL_KRAKEN_FIRST_TEST_NOTIONAL_USD, type ResearchSide } from '../services/perpsResearch';
@@ -91,6 +91,8 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
   const [question,setQuestion]=useState('');
   const [messages,setMessages]=useState<Message[]>([]);
   const [asking,setAsking]=useState(false);
+  const [conditionsHelpOpen,setConditionsHelpOpen]=useState(false);
+  const conditionsHelpId=useId();
   const contextRef=useRef(symbol+':'+mode);
   contextRef.current=symbol+':'+mode;
   // Preserve the conversation across mode/coin changes; the request is still scoped to its selected context.
@@ -381,7 +383,21 @@ export const MarketBrokerScreen:React.FC<{onNavigate:(tab:NavigationTab)=>void}>
 
       <section className="rounded-xl border border-primary-container/20 bg-surface-panel p-3 sm:p-4 space-y-3" aria-label="AURELIS market coach briefing">
         <div className="flex flex-wrap gap-2 items-center justify-between">
-          <span className="flex items-center gap-2 text-xs font-bold text-primary-container"><Bot size={16}/> AURELIS · YOUR MARKET READ</span>
+          <div className="flex items-center gap-2 text-xs font-bold text-primary-container">
+            <Bot size={16}/> AURELIS · YOUR MARKET READ
+            <span className="relative inline-flex" onMouseEnter={()=>setConditionsHelpOpen(true)} onMouseLeave={()=>setConditionsHelpOpen(false)}
+              onKeyDown={event=>{if(event.key==='Escape')setConditionsHelpOpen(false);}}>
+              <button type="button" aria-label="About Market Conditions" aria-describedby={conditionsHelpOpen?conditionsHelpId:undefined}
+                onFocus={()=>setConditionsHelpOpen(true)} onBlur={()=>setConditionsHelpOpen(false)} onClick={()=>setConditionsHelpOpen(true)}
+                className="inline-flex min-h-6 min-w-6 items-center justify-center rounded text-text-muted hover:text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-container">
+                <HelpCircle size={14} aria-hidden="true"/>
+              </button>
+              {conditionsHelpOpen&&<span id={conditionsHelpId} role="tooltip"
+                className="absolute left-1/2 top-full z-20 w-60 max-w-[80vw] -translate-x-1/2 rounded-lg border border-white/10 bg-surface-panel p-3 text-xs font-normal leading-relaxed text-text-secondary shadow-lg">
+                This panel summarizes the selected coin’s recent price movement, trading activity and available bot signals. It explains what the data suggests, what to watch next and how fresh the data is. Signals can disagree or be out of date; this is research, not a promise of profit.
+              </span>}
+            </span>
+          </div>
           <div className="flex items-center gap-1.5">
             <button type="button" className={pill(mode==='spot')} onClick={()=>setMode('spot')}>Spot advisor</button>
             <button type="button" className={pill(mode==='perps')} onClick={()=>setMode('perps')}>Perps advisor</button>
