@@ -6,6 +6,8 @@ Most live web-app changes are under `website/`. The production VPS may contain r
 
 ## Autonomous development workflow
 - You may inspect code, create feature branches, implement requested code changes, install dependencies in an isolated development environment, run tests, and open pull requests.
+- For Codex Cloud coding tasks, create and push a branch named `codex/<short-descriptive-task>` (not `feat/`). The repository's `codex-draft-pr.yml` workflow attempts to open a draft PR automatically for pushed `codex/` branches; never grant the agent production credentials or broad GitHub admin permission to make a PR.
+- If GitHub rejects Codex's own PR creation, do not retry using credentials or widen access. Push the branch, check the draft-PR workflow, and provide the branch URL and any action error. The draft PR bot requires the repository Actions setting that allows workflows to create PRs.
 - Work on a branch and present a concise summary, tests, risks, and any required operational steps in the PR.
 - Do not merge to `main`, deploy to production, modify production infrastructure, or enable a live feature flag unless the user has specifically authorized that action.
 - Reuse the existing GitHub Actions CI and deployment pipeline; do not invent a new VPS receiver or bypass its checks.

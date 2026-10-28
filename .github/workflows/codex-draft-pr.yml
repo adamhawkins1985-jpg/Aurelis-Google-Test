@@ -1,0 +1,73 @@
+name: Open draft PR for Codex branches
+
+on:
+  push:
+    branches:
+      - 'codex/**'
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Already pushed codex/* branch to open as a draft PR'
+        type: string
+        required: true
+
+# Minimal token permissions: metadata and pull request creation only.
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: codex-draft-pr-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  open-draft:
+    if: github.repository == 'adamhawkins1985-jpg/Aurelis'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Select an explicitly named Codex branch
+        id: branch
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BRANCH: ${{ github.ref_name }}
+          REQUESTED_BRANCH: ${{ inputs.branch }}
+        run: |
+          set -euo pipefail
+          branch="$PUSH_BRANCH"
+          if [ "$EVENT_NAME" = 'workflow_dispatch' ]; then
+            branch="$REQUESTED_BRANCH"
+          fi
+          if [[ ! "$branch" =~ ^codex/[a-zA-Z0-9._/-]+$ ]] || [[ "$branch" == *..* ]]; then
+            echo '::error::Only already-pushed branches under codex/ are eligible.'
+            exit 1
+          fi
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+      - name: Open a draft PR, never merge or deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.branch.outputs.branch }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          existing="$(gh pr list --repo "$GH_REPO" --state open --base main --head "$BRANCH" --json number --jq 'length')"
+          if [ "$existing" != '0' ]; then
+            echo 'An open pull request already exists for this branch.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          ahead="$(gh api "repos/$GH_REPO/compare/main...$BRANCH" --jq '.ahead_by')"
+          if [ "$ahead" = '0' ]; then
+            echo 'No changes relative to main; no PR opened.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          title="Codex: ${BRANCH#codex/}"
+          body='Automatic DRAFT PR for a pushed Codex Cloud branch.
+
+          Review code, safety boundaries, and GitHub Actions results before merging.
+          This automation NEVER merges, deploys, changes credentials, or enables live trading.'
+          if ! url="$(gh pr create --repo "$GH_REPO" --base main --head "$BRANCH" --draft --title "$title" --body "$body")"; then
+            echo '::error::GitHub declined PR creation. A repository admin may need Settings > Actions > General > Workflow permissions > Allow GitHub Actions to create and approve pull requests.'
+            exit 1
+          fi
+          echo "Draft PR: $url" >> "$GITHUB_STEP_SUMMARY"
