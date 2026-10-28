@@ -4,7 +4,7 @@
 
 - **AURELIS website:** existing GitHub Actions workflow `.github/workflows/deploy-website-vps.yml` publishes built static files to the existing OVH VPS directory `/home/ubuntu/aurelis-vnext/dist`; it verifies `https://wallet.ahconceptsai.com/`. This is the **wallet site**, not a new standalone investment-terminal hostname.
 - **Market Broker backend:** `.github/workflows/deploy-market-broker-backend.yml` builds and deploys `server.js` to `/home/ubuntu/aurelis-vnext`, restarts its allowlisted systemd unit and verifies a local /api/health endpoint.
-- **Cloudflare:** the existing public hostname routes to the VPS. These workflows do not edit Cloudflare DNS, tunnels, Workers or tokens. Connecting an entirely new hostname requires a separate, explicitly approved routing task.
+- **Cloudflare (read-only checked 2026-10-28):** DNS `wallet.ahconceptsai.com` and `ai.ahconceptsai.com` are proxied CNAMEs into an active Cloudflare Tunnel; the `aurelis-bot-origin` Tunnel reports healthy. DNS `app.ahconceptsai.com` is a proxied CNAME pointing to `k8mmf3t0.up.railway.app`. **The existing website VPS workflow does NOT deploy to app.ahconceptsai.com.** These workflows do not modify Cloudflare DNS, tunnels, Workers or tokens. A separate inspection and authorized process is required to update the standalone app's actual hosting/deploy target.
 
 ## Safe path from Codex to production
 

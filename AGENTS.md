@@ -3,6 +3,7 @@
 ## Scope
 This repository contains AURELIS website, services, automation and deployment code. Read the files related to the requested task before editing; do not assume the root README describes the current website architecture.
 Most live web-app changes are under `website/`. The production VPS may contain runtime state or services not represented in this repository; never assume a Git checkout is the full production system.
+**Production destination warning (checked 2026-10-28):** The existing wallet website workflow deploys to OVH and verifies `wallet.ahconceptsai.com` through Cloudflare Tunnel. DNS for `app.ahconceptsai.com` points to Railway, not the OVH tunnel. Do not claim that deploying the wallet VPS website updates the standalone app, or alter its DNS/deployment target, without separately mapping the actual application and explicit authorization.
 
 ## Autonomous development workflow
 - You may inspect code, create feature branches, implement requested code changes, install dependencies in an isolated development environment, run tests, and open pull requests.
