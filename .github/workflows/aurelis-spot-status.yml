@@ -1,12 +1,5 @@
 name: AURELIS spot paper status snapshot
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - '.github/workflows/aurelis-spot-status.yml'
-  schedule:
-    - cron: '*/5 * * * *'
   workflow_dispatch:
 permissions:
   contents: read
